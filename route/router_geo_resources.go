@@ -305,7 +305,7 @@ func (r *Router) downloadGeoIPDatabase(savePath string) error {
 	if r.geoIPOptions.DownloadURL != "" {
 		downloadURL = r.geoIPOptions.DownloadURL
 	} else {
-		downloadURL = "https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db"
+		downloadURL = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip-lite.db"
 	}
 	r.logger.Info("downloading geoip database")
 	var detour adapter.Outbound
