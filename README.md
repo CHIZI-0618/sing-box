@@ -117,3 +117,9 @@ https://[2606:4700:4700::1111]:443/dns-query?sni=cloudflare-dns.com
     ]
 }
 ```
+
+- 
+```json5
+geoip-lite.db: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip-lite.db"
+geosite.db: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.db"
+```
