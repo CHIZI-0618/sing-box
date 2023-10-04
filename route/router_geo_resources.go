@@ -357,7 +357,7 @@ func (r *Router) downloadGeositeDatabase(savePath string) error {
 	if r.geositeOptions.DownloadURL != "" {
 		downloadURL = r.geositeOptions.DownloadURL
 	} else {
-		downloadURL = "https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db"
+		downloadURL = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.db"
 	}
 	r.logger.Info("downloading geosite database")
 	var detour adapter.Outbound
