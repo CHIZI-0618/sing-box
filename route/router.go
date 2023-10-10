@@ -52,9 +52,10 @@ type Router struct {
 	started           bool
 
 	quicSniffCache *expiringmap.Map[quicSniffCacheKey, string]
+	reloadChan     chan<- struct{}
 }
 
-func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
+func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions, reloadChan chan<- struct{}) *Router {
 	return &Router{
 		ctx:               ctx,
 		logger:            logFactory.NewLogger("router"),
@@ -74,6 +75,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
 
 		quicSniffCache: expiringmap.New[quicSniffCacheKey, string](quicSniffCacheTTL),
+		reloadChan:     reloadChan,
 	}
 }
 
@@ -322,4 +324,13 @@ func (r *Router) refreshQUICSniff(source, destination M.Socksaddr, sniffHost str
 	r.quicSniffCache.StoreIf(quicSniffCacheKey{source, destination}, sniffHost, func(current string, loaded bool) bool {
 		return !loaded || current == sniffHost
 	})
+}
+
+func (r *Router) Reload() {
+	if r.platformInterface == nil {
+		select {
+		case r.reloadChan <- struct{}{}:
+		default:
+		}
+	}
 }
