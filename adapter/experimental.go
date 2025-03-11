@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/sagernet/sing-box/common/hash"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/varbin"
 )
@@ -47,9 +48,14 @@ type CacheFile interface {
 	StoreGroupExpand(group string, expand bool) error
 	LoadRuleSet(tag string) *SavedBinary
 	SaveRuleSet(tag string, set *SavedBinary) error
+	LoadExternalUI(tag string) *SavedBinary
+	SaveExternalUI(tag string, info *SavedBinary) error
+	LoadSubscription(tag string) *SavedBinary
+	SaveSubscription(tag string, sub *SavedBinary) error
 }
 
 type SavedBinary struct {
+	Hash        hash.HashType
 	Content     []byte
 	LastUpdated time.Time
 	LastEtag    string
@@ -59,6 +65,18 @@ type SavedBinary struct {
 func (s *SavedBinary) MarshalBinary() ([]byte, error) {
 	var buffer bytes.Buffer
 	err := binary.Write(&buffer, binary.BigEndian, uint8(2))
+	if err != nil {
+		return nil, err
+	}
+	hash, err := s.Hash.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	_, err = varbin.WriteUvarint(&buffer, uint64(len(hash)))
+	if err != nil {
+		return nil, err
+	}
+	_, err = buffer.Write(hash)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +115,19 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 	reader := bytes.NewReader(data)
 	var version uint8
 	err := binary.Read(reader, binary.BigEndian, &version)
+	if err != nil {
+		return err
+	}
+	hashLength, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return err
+	}
+	hash := make([]byte, hashLength)
+	_, err = io.ReadFull(reader, hash)
+	if err != nil {
+		return err
+	}
+	err = s.Hash.UnmarshalBinary(hash)
 	if err != nil {
 		return err
 	}
@@ -154,6 +185,14 @@ type OutboundGroup interface {
 	All() []string
 	Selected(network string) Outbound
 	AttachConnection(closer io.Closer) (detach func())
+}
+
+type PreMatchOutboundGroup interface {
+	OutboundGroup
+	// selectOutbound resolves nested groups and returns nil when the selected outbound is not eligible for pre-match.
+	// Implementations must not advance consumptive selection state when selectOutbound returns nil, but may retain
+	// a stable mapping when it is required for the following L4 selection to replay the same outbound.
+	SelectPreMatchOutbound(metadata *InboundContext, selectOutbound func(Outbound) (Outbound, PreMatchAction)) (Outbound, PreMatchAction)
 }
 
 type URLTestGroup interface {
