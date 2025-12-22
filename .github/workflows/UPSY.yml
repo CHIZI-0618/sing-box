@@ -1,0 +1,224 @@
+name: Publish Docker Images to Docker Hub UPSY
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag version you want to build"
+
+env:
+  REGISTRY_IMAGE: woshi17/sing-box-2
+
+jobs:
+  build_binary:
+    name: Build binary
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { arch: amd64, naive: false, docker_platform: "linux/amd64" }
+          - { arch: arm64, naive: false, docker_platform: "linux/arm64" }
+          - { arch: arm, goarm: "7", naive: false, docker_platform: "linux/arm/v7" }
+    steps:
+      - name: Get commit to build
+        id: ref
+        run: |
+          if [[ -z "${{ github.event.inputs.tag }}" ]]; then
+            ref="${{ github.ref_name }}"
+          else
+            ref="${{ github.event.inputs.tag }}"
+          fi
+          echo "ref=$ref" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.25.4
+
+      - name: Set version
+        run: |
+          VERSION=$(go run ./cmd/internal/read_tag)
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Set build tags
+        run: |
+          TAGS="with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_provider"
+          echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
+
+      - name: Build binary
+        run: |
+          go build -v -trimpath -o sing-box -tags "${BUILD_TAGS}" \
+          -ldflags "-X \"github.com/sagernet/sing-box/constant.Version=${VERSION}\" -s -w -buildid= -checklinkname=0" \
+          ./cmd/sing-box
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+
+      - name: Prepare artifact
+        run: |
+          platform=${{ matrix.docker_platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          BINARY_NAME="sing-box-${{ matrix.arch }}"
+          if [[ -n "${{ matrix.goarm }}" ]]; then
+            BINARY_NAME="${BINARY_NAME}v${{ matrix.goarm }}"
+          fi
+          mv sing-box "${BINARY_NAME}"
+          echo "BINARY_NAME=${BINARY_NAME}" >> $GITHUB_ENV
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ env.PLATFORM_PAIR }}
+          path: ${{ env.BINARY_NAME }}
+          if-no-files-found: error
+          retention-days: 1
+
+  build_docker:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+    needs:
+      - build_binary
+    strategy:
+      fail-fast: true
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+          - linux/arm/v7
+    steps:
+      - name: Get commit to build
+        id: ref
+        run: |
+          if [[ -z "${{ github.event.inputs.tag }}" ]]; then
+            ref="${{ github.ref_name }}"
+          else
+            ref="${{ github.event.inputs.tag }}"
+          fi
+          echo "ref=$ref" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Prepare platform
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      - name: Download binary
+        uses: actions/download-artifact@v5
+        with:
+          name: binary-${{ env.PLATFORM_PAIR }}
+          path: .
+
+      - name: Prepare binary
+        run: |
+          chmod +x sing-box-*
+          ls -la sing-box-*
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          platforms: ${{ matrix.platform }}
+          context: .
+          file: Dockerfile.binary
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge manifests
+    runs-on: ubuntu-latest
+    needs:
+      - build_docker
+    steps:
+      - name: Get commit to build
+        id: ref
+        run: |
+          if [[ -z "${{ github.event.inputs.tag }}" ]]; then
+            ref="${{ github.ref_name }}"
+          else
+            ref="${{ github.event.inputs.tag }}"
+          fi
+          echo "ref=$ref" >> $GITHUB_OUTPUT
+          if [[ $ref == *"-"* ]]; then
+            latest=latest-beta
+          else
+            latest=latest
+          fi
+          echo "latest=$latest" >> $GITHUB_OUTPUT
+
+      - name: Download digests
+        uses: actions/download-artifact@v5
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t "${{ env.REGISTRY_IMAGE }}:${{ steps.ref.outputs.latest }}" \
+            -t "${{ env.REGISTRY_IMAGE }}:${{ steps.ref.outputs.ref }}" \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.ref.outputs.latest }}
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.ref.outputs.ref }}
