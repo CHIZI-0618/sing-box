@@ -17,6 +17,7 @@ type EndpointOptions struct {
 	System       bool
 	Handler      tun.Handler
 	UDPTimeout   time.Duration
+	ICMPTimeout  time.Duration
 	Dialer       N.Dialer
 	CreateDialer func(interfaceName string) N.Dialer
 	Name         string
