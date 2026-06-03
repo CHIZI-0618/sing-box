@@ -2,6 +2,10 @@
 icon: material/alert-decagram
 ---
 
+#### 1.13.13
+
+* Fixes and improvements
+
 #### 1.13.12
 
 * Update naiveproxy to v148.0.7778.96-1
