@@ -240,7 +240,8 @@ jobs:
         if: matrix.variant == 'purego' && matrix.naive
         run: |
           cd ~/cronet-go
-          CGO_ENABLED=0 go run -v ./cmd/build-naive extract-lib --target ${{ matrix.os }}/${{ matrix.arch }} -o $GITHUB_WORKSPACE/dist
+          CGO_ENABLED=0 go build -v -o "$RUNNER_TEMP/build-naive" ./cmd/build-naive
+          GOPROXY=direct GOSUMDB=off "$RUNNER_TEMP/build-naive" extract-lib --target ${{ matrix.os }}/${{ matrix.arch }} -o $GITHUB_WORKSPACE/dist
       - name: Build (glibc)
         if: matrix.variant == 'glibc'
         run: |
@@ -594,8 +595,15 @@ jobs:
         if: matrix.naive
         run: |
           $CRONET_GO_VERSION = Get-Content .github/CRONET_GO_VERSION
+          git init "$env:RUNNER_TEMP/cronet-go"
+          git -C "$env:RUNNER_TEMP/cronet-go" remote add origin https://github.com/sagernet/cronet-go.git
+          git -C "$env:RUNNER_TEMP/cronet-go" fetch --depth=1 origin "$CRONET_GO_VERSION"
+          git -C "$env:RUNNER_TEMP/cronet-go" checkout FETCH_HEAD
           $env:CGO_ENABLED = "0"
-          go run -v "github.com/sagernet/cronet-go/cmd/build-naive@$CRONET_GO_VERSION" extract-lib --target windows/${{ matrix.arch }} -o dist
+          go -C "$env:RUNNER_TEMP/cronet-go" build -v -o "$env:RUNNER_TEMP/build-naive.exe" ./cmd/build-naive
+          $env:GOPROXY = "direct"
+          $env:GOSUMDB = "off"
+          & "$env:RUNNER_TEMP/build-naive.exe" extract-lib --target windows/${{ matrix.arch }} -o dist
       - name: Archive
         if: matrix.naive
         run: |
