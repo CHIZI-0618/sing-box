@@ -15,9 +15,9 @@ var (
 
 type platformDefaultInterfaceMonitor struct {
 	*platformInterfaceWrapper
-	logger      logger.Logger
-	callbacks   list.List[tun.DefaultInterfaceUpdateCallback]
-	myInterface string
+	logger       logger.Logger
+	callbacks    list.List[tun.DefaultInterfaceUpdateCallback]
+	myInterfaces []string
 }
 
 func (m *platformDefaultInterfaceMonitor) Start() error {
@@ -106,11 +106,11 @@ func (m *platformDefaultInterfaceMonitor) updateDefaultInterface(interfaceName s
 func (m *platformDefaultInterfaceMonitor) RegisterMyInterface(interfaceName string) {
 	m.defaultInterfaceAccess.Lock()
 	defer m.defaultInterfaceAccess.Unlock()
-	m.myInterface = interfaceName
+	m.myInterfaces = append(m.myInterfaces, interfaceName)
 }
 
-func (m *platformDefaultInterfaceMonitor) MyInterface() string {
+func (m *platformDefaultInterfaceMonitor) MyInterfaces() []string {
 	m.defaultInterfaceAccess.Lock()
 	defer m.defaultInterfaceAccess.Unlock()
-	return m.myInterface
+	return m.myInterfaces
 }

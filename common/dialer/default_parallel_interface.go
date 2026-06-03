@@ -182,10 +182,10 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, listene
 
 func selectInterfaces(networkManager adapter.NetworkManager, strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType) (primaryInterfaces []adapter.NetworkInterface, fallbackInterfaces []adapter.NetworkInterface) {
 	interfaces := networkManager.NetworkInterfaces()
-	myInterface := networkManager.InterfaceMonitor().MyInterface()
-	if myInterface != "" {
+	myInterfaces := networkManager.InterfaceMonitor().MyInterfaces()
+	if len(myInterfaces) > 0 {
 		interfaces = common.Filter(interfaces, func(it adapter.NetworkInterface) bool {
-			return it.Name != myInterface
+			return !common.Contains(myInterfaces, it.Name)
 		})
 	}
 	switch strategy {
