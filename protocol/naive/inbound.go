@@ -107,16 +107,16 @@ func (n *Inbound) Start(stage adapter.StartStage) error {
 				return n.ctx
 			},
 		}
-		go func() {
-			listener := net.Listener(tcpListener)
-			if n.tlsConfig != nil {
-				if len(n.tlsConfig.NextProtos()) == 0 {
-					n.tlsConfig.SetNextProtos([]string{http2.NextProtoTLS, "http/1.1"})
-				} else if !common.Contains(n.tlsConfig.NextProtos(), http2.NextProtoTLS) {
-					n.tlsConfig.SetNextProtos(append([]string{http2.NextProtoTLS}, n.tlsConfig.NextProtos()...))
-				}
-				listener = aTLS.NewListener(tcpListener, n.tlsConfig)
+		listener := net.Listener(tcpListener)
+		if n.tlsConfig != nil {
+			if len(n.tlsConfig.NextProtos()) == 0 {
+				n.tlsConfig.SetNextProtos([]string{http2.NextProtoTLS, "http/1.1"})
+			} else if !common.Contains(n.tlsConfig.NextProtos(), http2.NextProtoTLS) {
+				n.tlsConfig.SetNextProtos(append([]string{http2.NextProtoTLS}, n.tlsConfig.NextProtos()...))
 			}
+			listener = aTLS.NewListener(tcpListener, n.tlsConfig)
+		}
+		go func() {
 			sErr := n.httpServer.Serve(listener)
 			if sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
 				n.logger.Error("http server serve error: ", sErr)
