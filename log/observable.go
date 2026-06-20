@@ -111,13 +111,13 @@ type observableLogger struct {
 
 func (l *observableLogger) Log(ctx context.Context, level Level, args []any) {
 	level = OverrideLevelFromContext(level, ctx)
-	if level > l.level && l.platformWriter == nil {
+	if level > l.level && l.platformWriter == nil && !l.needObservable {
 		return
 	}
 	nowTime := time.Now()
-	if level <= l.level {
-		if l.needObservable {
-			message, messageSimple := l.formatter.FormatWithSimple(ctx, level, l.tag, F.ToString(args...), nowTime)
+	if l.needObservable {
+		message, messageSimple := l.formatter.FormatWithSimple(ctx, level, l.tag, F.ToString(args...), nowTime)
+		if level <= l.level {
 			if level == LevelPanic {
 				panic(message)
 			}
@@ -125,16 +125,16 @@ func (l *observableLogger) Log(ctx context.Context, level Level, args []any) {
 			if level == LevelFatal {
 				os.Exit(1)
 			}
-			l.subscriber.Emit(Entry{level, messageSimple})
-		} else {
-			message := l.formatter.Format(ctx, level, l.tag, F.ToString(args...), nowTime)
-			if level == LevelPanic {
-				panic(message)
-			}
-			l.writer.Write([]byte(message))
-			if level == LevelFatal {
-				os.Exit(1)
-			}
+		}
+		l.subscriber.Emit(Entry{level, messageSimple})
+	} else if level <= l.level {
+		message := l.formatter.Format(ctx, level, l.tag, F.ToString(args...), nowTime)
+		if level == LevelPanic {
+			panic(message)
+		}
+		l.writer.Write([]byte(message))
+		if level == LevelFatal {
+			os.Exit(1)
 		}
 	}
 	if l.platformWriter != nil {
