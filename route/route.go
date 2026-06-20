@@ -700,7 +700,7 @@ func (r *Router) actionSniff(
 			}
 			if err != nil {
 				sniffBuffer.Release()
-				if !errors.Is(err, context.DeadlineExceeded) {
+				if !E.IsTimeout(err) {
 					fatalErr = err
 					return
 				}
