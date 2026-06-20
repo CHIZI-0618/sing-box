@@ -41,9 +41,9 @@ type Client struct {
 	initRDRCFunc       func() adapter.RDRCStore
 	logger             logger.ContextLogger
 	cache              freelru.Cache[dns.Question, *dns.Msg]
-	cacheLock          compatible.Map[dns.Question, chan struct{}]
+	cacheLock          compatible.Map[transportCacheKey, chan struct{}]
 	transportCache     freelru.Cache[transportCacheKey, *dns.Msg]
-	transportCacheLock compatible.Map[dns.Question, chan struct{}]
+	transportCacheLock compatible.Map[transportCacheKey, chan struct{}]
 }
 
 type ClientOptions struct {
@@ -138,8 +138,9 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 		!options.ClientSubnet.IsValid()
 	disableCache := !isSimpleRequest || c.disableCache || options.DisableCache
 	if !disableCache {
+		cacheKey := transportCacheKey{Question: question, transportTag: transport.Tag()}
 		if c.cache != nil {
-			cond, loaded := c.cacheLock.LoadOrStore(question, make(chan struct{}))
+			cond, loaded := c.cacheLock.LoadOrStore(cacheKey, make(chan struct{}))
 			if loaded {
 				select {
 				case <-cond:
@@ -148,12 +149,12 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 				}
 			} else {
 				defer func() {
-					c.cacheLock.Delete(question)
+					c.cacheLock.Delete(cacheKey)
 					close(cond)
 				}()
 			}
 		} else if c.transportCache != nil {
-			cond, loaded := c.transportCacheLock.LoadOrStore(question, make(chan struct{}))
+			cond, loaded := c.transportCacheLock.LoadOrStore(cacheKey, make(chan struct{}))
 			if loaded {
 				select {
 				case <-cond:
@@ -162,7 +163,7 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 				}
 			} else {
 				defer func() {
-					c.transportCacheLock.Delete(question)
+					c.transportCacheLock.Delete(cacheKey)
 					close(cond)
 				}()
 			}
