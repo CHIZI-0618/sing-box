@@ -101,6 +101,13 @@ static const char *singbox_ebpf_cgroup_error_stage(
 	const struct sb_ebpf_cgroup_runtime *runtime) {
 	return runtime == NULL ? NULL : runtime->error_stage;
 }
+
+static int singbox_ebpf_cgroup_program_fd(
+	const struct sb_ebpf_cgroup_runtime *runtime,
+	enum sb_ebpf_cgroup_program_slot slot) {
+	if (runtime == NULL || slot < 0 || slot >= SB_EBPF_CGROUP_PROGRAM_COUNT) return -1;
+	return runtime->program_fds[slot];
+}
 */
 import "C"
 
@@ -368,36 +375,22 @@ func (b *CgroupBackend) AttachedPrograms() []string {
 	if b.runtime == nil {
 		return nil
 	}
-	programs := make([]string, 0, 10)
-	if b.runtime.connect4_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_conn4 (cgroup/connect4)")
-	}
-	if b.enableUDP && b.runtime.udp4_sendmsg_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_udp4 (cgroup/sendmsg4)")
-	}
-	if b.enableUDP && b.runtime.udp4_recvmsg_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_urcv4 (cgroup/recvmsg4)")
-	}
-	if b.runtime.connect6_v4mapped_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_c6v4m (cgroup/connect6)")
-	}
-	if b.runtime.connect6_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_conn6 (cgroup/connect6)")
-	}
-	if b.enableUDP && b.runtime.udp6_v4mapped_sendmsg_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_u6v4m (cgroup/sendmsg6)")
-	}
-	if b.enableUDP && b.runtime.udp6_sendmsg_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_udp6 (cgroup/sendmsg6)")
-	}
-	if b.enableUDP && b.runtime.udp6_v4mapped_recvmsg_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_ur6v4m (cgroup/recvmsg6)")
-	}
-	if b.enableUDP && b.runtime.udp6_recvmsg_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_urcv6 (cgroup/recvmsg6)")
-	}
-	if b.enableUDP && b.runtime.socket_release_prog_fd >= 0 {
-		programs = append(programs, "sb_ebpf_rel (cgroup/sock_release)")
+	programs := make([]string, 0, int(C.SB_EBPF_CGROUP_PROGRAM_COUNT))
+	for _, program := range []struct {
+		slot C.enum_sb_ebpf_cgroup_program_slot
+		name string
+	}{
+		{C.SB_EBPF_CGROUP_PROGRAM_CONNECT4, "sb_ebpf_conn4 (cgroup/connect4)"},
+		{C.SB_EBPF_CGROUP_PROGRAM_UDP4_SENDMSG, "sb_ebpf_udp4 (cgroup/sendmsg4)"},
+		{C.SB_EBPF_CGROUP_PROGRAM_UDP4_RECVMSG, "sb_ebpf_urcv4 (cgroup/recvmsg4)"},
+		{C.SB_EBPF_CGROUP_PROGRAM_CONNECT6, "sb_ebpf_conn6 (cgroup/connect6)"},
+		{C.SB_EBPF_CGROUP_PROGRAM_UDP6_SENDMSG, "sb_ebpf_udp6 (cgroup/sendmsg6)"},
+		{C.SB_EBPF_CGROUP_PROGRAM_UDP6_RECVMSG, "sb_ebpf_urcv6 (cgroup/recvmsg6)"},
+		{C.SB_EBPF_CGROUP_PROGRAM_SOCKET_RELEASE, "sb_ebpf_rel (cgroup/sock_release)"},
+	} {
+		if C.singbox_ebpf_cgroup_program_fd(b.runtime, program.slot) >= 0 {
+			programs = append(programs, program.name)
+		}
 	}
 	return programs
 }
@@ -408,7 +401,10 @@ func (b *CgroupBackend) UsesSocketRelease() bool {
 	}
 	b.access.RLock()
 	defer b.access.RUnlock()
-	return b.runtime != nil && b.runtime.socket_release_prog_fd >= 0
+	return b.runtime != nil && C.singbox_ebpf_cgroup_program_fd(
+		b.runtime,
+		C.SB_EBPF_CGROUP_PROGRAM_SOCKET_RELEASE,
+	) >= 0
 }
 
 func (b *CgroupBackend) LoadPrograms(listenerPort uint16) error {

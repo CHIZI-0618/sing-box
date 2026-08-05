@@ -131,6 +131,17 @@ struct sb_ebpf_program_descriptor {
     int *fd;
 };
 
+enum sb_ebpf_cgroup_program_slot {
+    SB_EBPF_CGROUP_PROGRAM_CONNECT4,
+    SB_EBPF_CGROUP_PROGRAM_UDP4_SENDMSG,
+    SB_EBPF_CGROUP_PROGRAM_UDP4_RECVMSG,
+    SB_EBPF_CGROUP_PROGRAM_CONNECT6,
+    SB_EBPF_CGROUP_PROGRAM_UDP6_SENDMSG,
+    SB_EBPF_CGROUP_PROGRAM_UDP6_RECVMSG,
+    SB_EBPF_CGROUP_PROGRAM_SOCKET_RELEASE,
+    SB_EBPF_CGROUP_PROGRAM_COUNT,
+};
+
 typedef int (*sb_ebpf_map_fd_resolver)(const char *name, void *context);
 
 struct sb_ebpf_cgroup_runtime {
@@ -147,16 +158,7 @@ struct sb_ebpf_cgroup_runtime {
     int bypass_ipv4_cidr_map_fd;
     int bypass_ipv6_cidr_map_fd;
     int ipv6_available_map_fd;
-    int connect4_prog_fd;
-    int connect6_prog_fd;
-    int connect6_v4mapped_prog_fd;
-    int udp4_sendmsg_prog_fd;
-    int udp6_sendmsg_prog_fd;
-    int udp6_v4mapped_sendmsg_prog_fd;
-    int udp4_recvmsg_prog_fd;
-    int udp6_recvmsg_prog_fd;
-    int udp6_v4mapped_recvmsg_prog_fd;
-    int socket_release_prog_fd;
+    int program_fds[SB_EBPF_CGROUP_PROGRAM_COUNT];
     bool socket_release_supported;
     bool self_bypass_tgid;
     bool enable_tcp;

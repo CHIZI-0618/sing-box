@@ -3,27 +3,72 @@
 
 // Included by cgroup.c. Experimental BPF C object loading path.
 
+struct cgroup_program_definition {
+    const char *tgid_section;
+    const char *cookie_section;
+    const char *name;
+    enum bpf_prog_type type;
+    enum bpf_attach_type attach_type;
+};
+
+static const struct cgroup_program_definition cgroup_programs[SB_EBPF_CGROUP_PROGRAM_COUNT] = {
+    [SB_EBPF_CGROUP_PROGRAM_CONNECT4] = {
+        "cgroup/connect4_tgid", "cgroup/connect4_cookie", "sb_ebpf_conn4",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET4_CONNECT},
+    [SB_EBPF_CGROUP_PROGRAM_UDP4_SENDMSG] = {
+        "cgroup/sendmsg4_tgid", "cgroup/sendmsg4_cookie", "sb_ebpf_udp4",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_SENDMSG},
+    [SB_EBPF_CGROUP_PROGRAM_UDP4_RECVMSG] = {
+        "cgroup/recvmsg4", "cgroup/recvmsg4", "sb_ebpf_urcv4",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_RECVMSG},
+    [SB_EBPF_CGROUP_PROGRAM_CONNECT6] = {
+        "cgroup/connect6_tgid", "cgroup/connect6_cookie", "sb_ebpf_conn6",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET6_CONNECT},
+    [SB_EBPF_CGROUP_PROGRAM_UDP6_SENDMSG] = {
+        "cgroup/sendmsg6_tgid", "cgroup/sendmsg6_cookie", "sb_ebpf_udp6",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_SENDMSG},
+    [SB_EBPF_CGROUP_PROGRAM_UDP6_RECVMSG] = {
+        "cgroup/recvmsg6", "cgroup/recvmsg6", "sb_ebpf_urcv6",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_RECVMSG},
+    [SB_EBPF_CGROUP_PROGRAM_SOCKET_RELEASE] = {
+        "cgroup/release_tgid", "cgroup/release_cookie", "sb_ebpf_rel",
+        BPF_PROG_TYPE_CGROUP_SOCK, BPF_CGROUP_INET_SOCK_RELEASE},
+};
+
+static bool cgroup_program_enabled(
+    enum sb_ebpf_cgroup_program_slot slot,
+    const struct sb_ebpf_cgroup_runtime *runtime,
+    bool enable_ipv4,
+    bool enable_ipv6) {
+    switch (slot) {
+        case SB_EBPF_CGROUP_PROGRAM_CONNECT4:
+            return enable_ipv4;
+        case SB_EBPF_CGROUP_PROGRAM_UDP4_SENDMSG:
+        case SB_EBPF_CGROUP_PROGRAM_UDP4_RECVMSG:
+            return enable_ipv4 && runtime->enable_udp;
+        case SB_EBPF_CGROUP_PROGRAM_CONNECT6:
+            return enable_ipv4 || enable_ipv6;
+        case SB_EBPF_CGROUP_PROGRAM_UDP6_SENDMSG:
+        case SB_EBPF_CGROUP_PROGRAM_UDP6_RECVMSG:
+            return (enable_ipv4 || enable_ipv6) && runtime->enable_udp;
+        case SB_EBPF_CGROUP_PROGRAM_SOCKET_RELEASE:
+            return runtime->enable_udp && runtime->socket_release_supported;
+        default:
+            return false;
+    }
+}
+
 static bool runtime_has_programs(const struct sb_ebpf_cgroup_runtime *runtime) {
-    return runtime->connect4_prog_fd >= 0 || runtime->connect6_prog_fd >= 0 ||
-        runtime->udp4_sendmsg_prog_fd >= 0 || runtime->udp6_sendmsg_prog_fd >= 0 ||
-        runtime->udp4_recvmsg_prog_fd >= 0 || runtime->udp6_recvmsg_prog_fd >= 0 ||
-        runtime->socket_release_prog_fd >= 0;
+    for (size_t slot = 0U; slot < SB_EBPF_CGROUP_PROGRAM_COUNT; ++slot) {
+        if (runtime->program_fds[slot] >= 0) return true;
+    }
+    return false;
 }
 
 static void close_runtime_programs(struct sb_ebpf_cgroup_runtime *runtime) {
-    int *program_fds[] = {
-        &runtime->socket_release_prog_fd,
-        &runtime->udp6_v4mapped_recvmsg_prog_fd,
-        &runtime->udp6_recvmsg_prog_fd,
-        &runtime->udp4_recvmsg_prog_fd,
-        &runtime->udp6_v4mapped_sendmsg_prog_fd,
-        &runtime->udp6_sendmsg_prog_fd,
-        &runtime->udp4_sendmsg_prog_fd,
-        &runtime->connect6_v4mapped_prog_fd,
-        &runtime->connect6_prog_fd,
-        &runtime->connect4_prog_fd,
-    };
-    (void)sb_ebpf_close_fds(program_fds, ARRAY_SIZE(program_fds));
+    for (size_t slot = SB_EBPF_CGROUP_PROGRAM_COUNT; slot > 0U; --slot) {
+        (void)sb_ebpf_close_fd(&runtime->program_fds[slot - 1U]);
+    }
 }
 
 static int probe_socket_release_support(void) {
@@ -152,13 +197,6 @@ static int cgroup_object_map_fd(const char *name, void *context) {
     return -1;
 }
 
-struct cgroup_object_program_spec {
-    const char *tgid_section;
-    const char *cookie_section;
-    bool enabled;
-    struct sb_ebpf_program_descriptor program;
-};
-
 static int load_cgroup_object_programs(
     struct sb_ebpf_cgroup_runtime *runtime,
     const uint8_t *object,
@@ -166,46 +204,29 @@ static int load_cgroup_object_programs(
     bool tgid_mode,
     bool enable_ipv4,
     bool enable_ipv6,
-    bool enable_udp,
     bool log_error) {
-    struct cgroup_object_program_spec programs[] = {
-        {"cgroup/connect4_tgid", "cgroup/connect4_cookie", enable_ipv4,
-         {"sb_ebpf_conn4", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET4_CONNECT,
-          &runtime->connect4_prog_fd}},
-        {"cgroup/sendmsg4_tgid", "cgroup/sendmsg4_cookie", enable_ipv4 && enable_udp,
-         {"sb_ebpf_udp4", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_SENDMSG,
-          &runtime->udp4_sendmsg_prog_fd}},
-        {"cgroup/recvmsg4", "cgroup/recvmsg4", enable_ipv4 && enable_udp,
-         {"sb_ebpf_urcv4", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_RECVMSG,
-          &runtime->udp4_recvmsg_prog_fd}},
-        {"cgroup/connect6_tgid", "cgroup/connect6_cookie", enable_ipv4 || enable_ipv6,
-         {"sb_ebpf_conn6", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET6_CONNECT,
-          &runtime->connect6_prog_fd}},
-        {"cgroup/sendmsg6_tgid", "cgroup/sendmsg6_cookie", (enable_ipv4 || enable_ipv6) && enable_udp,
-         {"sb_ebpf_udp6", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_SENDMSG,
-          &runtime->udp6_sendmsg_prog_fd}},
-        {"cgroup/recvmsg6", "cgroup/recvmsg6", (enable_ipv4 || enable_ipv6) && enable_udp,
-         {"sb_ebpf_urcv6", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_RECVMSG,
-          &runtime->udp6_recvmsg_prog_fd}},
-        {"cgroup/release_tgid", "cgroup/release_cookie",
-         enable_udp && runtime->socket_release_supported,
-         {"sb_ebpf_rel", BPF_PROG_TYPE_CGROUP_SOCK, BPF_CGROUP_INET_SOCK_RELEASE,
-          &runtime->socket_release_prog_fd}},
-    };
-    for (size_t index = 0U; index < ARRAY_SIZE(programs); ++index) {
-        struct cgroup_object_program_spec *spec = &programs[index];
-        if (!spec->enabled) continue;
-        const char *section = tgid_mode ? spec->tgid_section : spec->cookie_section;
-        *spec->program.fd = sb_ebpf_load_object_program(
+    for (size_t slot = 0U; slot < SB_EBPF_CGROUP_PROGRAM_COUNT; ++slot) {
+        if (!cgroup_program_enabled(slot, runtime, enable_ipv4, enable_ipv6)) continue;
+        const struct cgroup_program_definition *definition = &cgroup_programs[slot];
+        const char *section = tgid_mode
+            ? definition->tgid_section
+            : definition->cookie_section;
+        struct sb_ebpf_program_descriptor program = {
+            definition->name,
+            definition->type,
+            definition->attach_type,
+            &runtime->program_fds[slot],
+        };
+        *program.fd = sb_ebpf_load_object_program(
             object,
             object_size,
             section,
-            &spec->program,
+            &program,
             cgroup_object_map_fd,
             runtime,
             log_error);
-        if (*spec->program.fd < 0) {
-            sb_ebpf_set_error_stage(runtime->error_stage, spec->program.name);
+        if (*program.fd < 0) {
+            sb_ebpf_set_error_stage(runtime->error_stage, program.name);
             close_runtime_programs(runtime);
             return -1;
         }
@@ -296,7 +317,7 @@ int sb_ebpf_cgroup_load_programs(
     }
     if (try_tgid && load_cgroup_object_programs(
             runtime, object, object_size, true, enable_ipv4, enable_ipv6,
-            enable_udp, false) == 0) {
+            false) == 0) {
         runtime->self_bypass_tgid = true;
         return 0;
     }
@@ -319,7 +340,7 @@ int sb_ebpf_cgroup_load_programs(
     }
     if (load_cgroup_object_programs(
             runtime, object, object_size, false, enable_ipv4, enable_ipv6,
-            enable_udp, true) != 0) {
+            true) != 0) {
         goto fail;
     }
     runtime->self_bypass_tgid = false;

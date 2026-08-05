@@ -135,17 +135,18 @@ prepare_fail:
 
 static int attach_runtime_program(
     struct sb_ebpf_cgroup_runtime *runtime,
-    const struct sb_ebpf_program_descriptor *program,
-    uint32_t attached_flag) {
-    if (program == NULL || program->fd == NULL || *program->fd < 0) return 0;
+    enum sb_ebpf_cgroup_program_slot slot) {
+    int program_fd = runtime->program_fds[slot];
+    if (program_fd < 0) return 0;
+    const struct cgroup_program_definition *program = &cgroup_programs[slot];
     if (sb_ebpf_attach_prog(
             runtime->cgroup_fd,
-            *program->fd,
+            program_fd,
             program->attach_type) < 0) {
         sb_ebpf_set_error_stage(runtime->error_stage, program->name);
         return -1;
     }
-    runtime->attached_programs |= attached_flag;
+    runtime->attached_programs |= 1U << slot;
     return 0;
 }
 
@@ -162,36 +163,8 @@ int sb_ebpf_cgroup_attach(struct sb_ebpf_cgroup_runtime *runtime) {
         errno = EINVAL;
         return -1;
     }
-    struct attach_spec {
-        struct sb_ebpf_program_descriptor program;
-        uint32_t attached_flag;
-    } programs[] = {
-        {{"sb_ebpf_conn4", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET4_CONNECT,
-          &runtime->connect4_prog_fd}, SB_EBPF_ATTACHED_CONNECT4},
-        {{"sb_ebpf_udp4", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_SENDMSG,
-          &runtime->udp4_sendmsg_prog_fd}, SB_EBPF_ATTACHED_UDP4_SENDMSG},
-        {{"sb_ebpf_urcv4", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_RECVMSG,
-          &runtime->udp4_recvmsg_prog_fd}, SB_EBPF_ATTACHED_UDP4_RECVMSG},
-        {{"sb_ebpf_conn6", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET6_CONNECT,
-          &runtime->connect6_prog_fd}, SB_EBPF_ATTACHED_CONNECT6},
-        {{"sb_ebpf_udp6", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_SENDMSG,
-          &runtime->udp6_sendmsg_prog_fd}, SB_EBPF_ATTACHED_UDP6_SENDMSG},
-        {{"sb_ebpf_urcv6", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_RECVMSG,
-          &runtime->udp6_recvmsg_prog_fd}, SB_EBPF_ATTACHED_UDP6_RECVMSG},
-        {{"sb_ebpf_c6v4m", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET6_CONNECT,
-          &runtime->connect6_v4mapped_prog_fd}, SB_EBPF_ATTACHED_CONNECT6_V4MAPPED},
-        {{"sb_ebpf_u6v4m", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_SENDMSG,
-          &runtime->udp6_v4mapped_sendmsg_prog_fd}, SB_EBPF_ATTACHED_UDP6_V4MAPPED_SENDMSG},
-        {{"sb_ebpf_ur6v4m", BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_RECVMSG,
-          &runtime->udp6_v4mapped_recvmsg_prog_fd}, SB_EBPF_ATTACHED_UDP6_V4MAPPED_RECVMSG},
-        {{"sb_ebpf_rel", BPF_PROG_TYPE_CGROUP_SOCK, BPF_CGROUP_INET_SOCK_RELEASE,
-          &runtime->socket_release_prog_fd}, SB_EBPF_ATTACHED_SOCKET_RELEASE},
-    };
-    for (size_t index = 0U; index < ARRAY_SIZE(programs); ++index) {
-        if (attach_runtime_program(
-                runtime,
-                &programs[index].program,
-                programs[index].attached_flag) < 0) {
+    for (size_t slot = 0U; slot < SB_EBPF_CGROUP_PROGRAM_COUNT; ++slot) {
+        if (attach_runtime_program(runtime, slot) < 0) {
             int saved = errno;
             (void)sb_ebpf_cgroup_close(runtime);
             errno = saved;
@@ -211,13 +184,15 @@ static void remember_close_error(int *result, int *saved_errno) {
 
 static void detach_runtime_program(
     struct sb_ebpf_cgroup_runtime *runtime,
-    int prog_fd,
-    enum bpf_attach_type attach_type,
-    uint32_t attached_flag,
+    enum sb_ebpf_cgroup_program_slot slot,
     int *result,
     int *saved_errno) {
+    uint32_t attached_flag = 1U << slot;
     if ((runtime->attached_programs & attached_flag) == 0U) return;
-    if (sb_ebpf_detach_prog(runtime->cgroup_fd, prog_fd, attach_type) == 0 ||
+    if (sb_ebpf_detach_prog(
+            runtime->cgroup_fd,
+            runtime->program_fds[slot],
+            cgroup_programs[slot].attach_type) == 0 ||
         errno == ENOENT || errno == ESRCH) {
         runtime->attached_programs &= ~attached_flag;
         return;
@@ -230,26 +205,9 @@ int sb_ebpf_cgroup_close(struct sb_ebpf_cgroup_runtime *runtime) {
     int result = 0;
     int saved_errno = 0;
     if (runtime->cgroup_fd >= 0) {
-        detach_runtime_program(runtime, runtime->socket_release_prog_fd,
-            BPF_CGROUP_INET_SOCK_RELEASE, SB_EBPF_ATTACHED_SOCKET_RELEASE, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->udp6_recvmsg_prog_fd,
-            BPF_CGROUP_UDP6_RECVMSG, SB_EBPF_ATTACHED_UDP6_RECVMSG, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->udp6_sendmsg_prog_fd,
-            BPF_CGROUP_UDP6_SENDMSG, SB_EBPF_ATTACHED_UDP6_SENDMSG, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->udp6_v4mapped_recvmsg_prog_fd,
-            BPF_CGROUP_UDP6_RECVMSG, SB_EBPF_ATTACHED_UDP6_V4MAPPED_RECVMSG, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->udp6_v4mapped_sendmsg_prog_fd,
-            BPF_CGROUP_UDP6_SENDMSG, SB_EBPF_ATTACHED_UDP6_V4MAPPED_SENDMSG, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->connect6_prog_fd,
-            BPF_CGROUP_INET6_CONNECT, SB_EBPF_ATTACHED_CONNECT6, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->connect6_v4mapped_prog_fd,
-            BPF_CGROUP_INET6_CONNECT, SB_EBPF_ATTACHED_CONNECT6_V4MAPPED, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->udp4_recvmsg_prog_fd,
-            BPF_CGROUP_UDP4_RECVMSG, SB_EBPF_ATTACHED_UDP4_RECVMSG, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->udp4_sendmsg_prog_fd,
-            BPF_CGROUP_UDP4_SENDMSG, SB_EBPF_ATTACHED_UDP4_SENDMSG, &result, &saved_errno);
-        detach_runtime_program(runtime, runtime->connect4_prog_fd,
-            BPF_CGROUP_INET4_CONNECT, SB_EBPF_ATTACHED_CONNECT4, &result, &saved_errno);
+        for (size_t slot = SB_EBPF_CGROUP_PROGRAM_COUNT; slot > 0U; --slot) {
+            detach_runtime_program(runtime, slot - 1U, &result, &saved_errno);
+        }
     } else if (runtime->attached_programs != 0U) {
         errno = EBADF;
         remember_close_error(&result, &saved_errno);
@@ -258,17 +216,12 @@ int sb_ebpf_cgroup_close(struct sb_ebpf_cgroup_runtime *runtime) {
         errno = saved_errno;
         return -1;
     }
+    for (size_t slot = SB_EBPF_CGROUP_PROGRAM_COUNT; slot > 0U; --slot) {
+        if (sb_ebpf_close_fd(&runtime->program_fds[slot - 1U]) != 0) {
+            remember_close_error(&result, &saved_errno);
+        }
+    }
     int *runtime_fds[] = {
-        &runtime->socket_release_prog_fd,
-        &runtime->udp6_v4mapped_recvmsg_prog_fd,
-        &runtime->udp6_recvmsg_prog_fd,
-        &runtime->udp4_recvmsg_prog_fd,
-        &runtime->udp6_v4mapped_sendmsg_prog_fd,
-        &runtime->udp6_sendmsg_prog_fd,
-        &runtime->udp4_sendmsg_prog_fd,
-        &runtime->connect6_v4mapped_prog_fd,
-        &runtime->connect6_prog_fd,
-        &runtime->connect4_prog_fd,
         &runtime->uid_policy_map_fd,
         &runtime->bypass_ipv6_cidr_map_fd,
         &runtime->ipv6_available_map_fd,
