@@ -1,7 +1,7 @@
 // Copyright 2026, sing-box contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "ebpf.h"
+#include "runtime.h"
 #include "shared_network.h"
 
 #include <errno.h>

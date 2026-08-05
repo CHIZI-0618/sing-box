@@ -4,7 +4,7 @@
 // Experimental cgroup backend implemented as BPF C. The production
 // testing-ref1nd branch retains the hand-written instruction emitter.
 
-#include "ebpf.h"
+#include "abi.h"
 
 #include <linux/bpf.h>
 #include <linux/in.h>

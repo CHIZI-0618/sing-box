@@ -6,7 +6,7 @@ package ebpf
 #cgo CFLAGS: -I${SRCDIR}/native
 #include <errno.h>
 #include <stdlib.h>
-#include "ebpf.h"
+#include "runtime.h"
 
 static int singbox_ebpf_shared_network_prepare(
 	const uint8_t *object,

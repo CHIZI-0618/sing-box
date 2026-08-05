@@ -175,26 +175,22 @@ int sb_ebpf_cgroup_probe_self_tgid(
 }
 
 static int cgroup_object_map_fd(const char *name, void *context) {
-    const struct sb_ebpf_cgroup_runtime *runtime = context;
-    if (name == NULL || runtime == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
-#define RESOLVE_MAP(NAME, FIELD) if (strcmp(name, NAME) == 0) return runtime->FIELD
-    RESOLVE_MAP("cgroup_control", control_map_fd);
-    RESOLVE_MAP("cgroup_tcp_redirect", tcp_redirect_map_fd);
-    RESOLVE_MAP("cgroup_udp_redirect", udp_redirect_map_fd);
-    RESOLVE_MAP("cgroup_udp_token", udp_token_map_fd);
-    RESOLVE_MAP("cgroup_udp_peer", udp_peer_map_fd);
-    RESOLVE_MAP("cgroup_udp_flow", udp_flow_map_fd);
-    RESOLVE_MAP("cgroup_socket_bypass", bypass_socket_cookie_map_fd);
-    RESOLVE_MAP("cgroup_uid_policy", uid_policy_map_fd);
-    RESOLVE_MAP("cgroup_bypass_ipv4", bypass_ipv4_cidr_map_fd);
-    RESOLVE_MAP("cgroup_bypass_ipv6", bypass_ipv6_cidr_map_fd);
-    RESOLVE_MAP("cgroup_ipv6_available", ipv6_available_map_fd);
-#undef RESOLVE_MAP
-    errno = ENOENT;
-    return -1;
+    static const struct sb_ebpf_map_binding bindings[] = {
+#define MAP_BINDING(NAME, FIELD) {NAME, offsetof(struct sb_ebpf_cgroup_runtime, FIELD)}
+        MAP_BINDING("cgroup_control", control_map_fd),
+        MAP_BINDING("cgroup_tcp_redirect", tcp_redirect_map_fd),
+        MAP_BINDING("cgroup_udp_redirect", udp_redirect_map_fd),
+        MAP_BINDING("cgroup_udp_token", udp_token_map_fd),
+        MAP_BINDING("cgroup_udp_peer", udp_peer_map_fd),
+        MAP_BINDING("cgroup_udp_flow", udp_flow_map_fd),
+        MAP_BINDING("cgroup_socket_bypass", bypass_socket_cookie_map_fd),
+        MAP_BINDING("cgroup_uid_policy", uid_policy_map_fd),
+        MAP_BINDING("cgroup_bypass_ipv4", bypass_ipv4_cidr_map_fd),
+        MAP_BINDING("cgroup_bypass_ipv6", bypass_ipv6_cidr_map_fd),
+        MAP_BINDING("cgroup_ipv6_available", ipv6_available_map_fd),
+#undef MAP_BINDING
+    };
+    return sb_ebpf_resolve_map_fd(name, context, bindings, ARRAY_SIZE(bindings));
 }
 
 static int load_cgroup_object_programs(

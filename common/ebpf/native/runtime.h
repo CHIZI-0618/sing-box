@@ -1,8 +1,10 @@
 // Copyright 2026, Asterisk4Magisk contributors
 // SPDX-License-Identifier: GPL-3.0
 
-#ifndef SING_BOX_EBPF_H
-#define SING_BOX_EBPF_H
+#ifndef SING_BOX_EBPF_RUNTIME_H
+#define SING_BOX_EBPF_RUNTIME_H
+
+#include "abi.h"
 
 #include <linux/bpf.h>
 #include <stdbool.h>
@@ -14,106 +16,6 @@
 #define SB_EBPF_MAX_BYPASS_CIDR_MAP_ENTRIES 65536U
 #define SB_EBPF_MAX_CONFIGURABLE_MAP_ENTRIES 1048576U
 #define SB_EBPF_ERROR_STAGE_SIZE 64U
-#define SB_EBPF_ORIGINAL_DST_FLAG_CONNECTED_UDP 1U
-
-#define SB_EBPF_PROTO_TCP 6U
-#define SB_EBPF_PROTO_UDP 17U
-#define SB_EBPF_UDP_FLOW_ACTION_PROXY 1U
-#define SB_EBPF_UDP_FLOW_ACTION_BYPASS 2U
-
-#define SB_EBPF_CGROUP_FLAG_TCP (1U << 0U)
-#define SB_EBPF_CGROUP_FLAG_UDP (1U << 1U)
-#define SB_EBPF_CGROUP_FLAG_IPV4 (1U << 2U)
-#define SB_EBPF_CGROUP_FLAG_IPV6 (1U << 3U)
-#define SB_EBPF_CGROUP_FLAG_HIJACK_DNS (1U << 4U)
-#define SB_EBPF_CGROUP_FLAG_UID_POLICY (1U << 5U)
-#define SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS (1U << 6U)
-#define SB_EBPF_CGROUP_FLAG_BYPASS_IPV4 (1U << 7U)
-#define SB_EBPF_CGROUP_FLAG_BYPASS_IPV6 (1U << 8U)
-#define SB_EBPF_CGROUP_FLAG_AUTO_IPV6 (1U << 9U)
-#define SB_EBPF_CGROUP_FLAG_UDP_FLOW (1U << 10U)
-
-struct sb_ebpf_cgroup_control {
-    uint32_t flags;
-    uint32_t self_tgid;
-    uint32_t udp_timeout_seconds;
-    uint32_t redirect_ipv4_prefix;
-    uint32_t redirect_ipv4_host_mask;
-    uint16_t listener_port;
-    uint16_t reserved;
-    uint8_t redirect_ipv6_prefix[8];
-};
-
-_Static_assert(sizeof(struct sb_ebpf_cgroup_control) == 32U, "unexpected cgroup control ABI");
-
-struct sb_ebpf_listener_key {
-    uint8_t family;
-    uint8_t protocol;
-    uint16_t listener_port;
-    uint8_t token_addr[16];
-};
-
-struct sb_ebpf_original_dst {
-    uint8_t family;
-    uint8_t protocol;
-    uint16_t port;
-    uint8_t addr[16];
-    uint8_t flags;
-    uint8_t reserved[3];
-    uint64_t socket_cookie;
-};
-
-struct sb_ebpf_udp_peer_key {
-    uint64_t cookie;
-};
-
-struct sb_ebpf_udp_peer_value {
-    uint8_t family;
-    uint8_t protocol;
-    uint16_t port;
-    uint8_t addr[16];
-};
-
-struct sb_ebpf_udp_flow_key {
-    uint64_t cookie;
-    uint8_t family;
-    uint8_t protocol;
-    uint16_t port;
-    uint8_t addr[16];
-    uint8_t reserved[4];
-};
-
-struct sb_ebpf_udp_flow_value {
-    uint8_t action;
-    uint8_t reserved[3];
-    uint32_t last_seen_seconds;
-    struct sb_ebpf_listener_key listener;
-    uint8_t reserved2[4];
-};
-
-_Static_assert(sizeof(struct sb_ebpf_listener_key) == 20U, "unexpected redirect key ABI");
-_Static_assert(sizeof(struct sb_ebpf_original_dst) == 32U, "unexpected original destination ABI");
-_Static_assert(offsetof(struct sb_ebpf_original_dst, socket_cookie) == 24U, "unexpected socket cookie ABI");
-_Static_assert(sizeof(struct sb_ebpf_udp_peer_key) == 8U, "unexpected UDP peer key ABI");
-_Static_assert(sizeof(struct sb_ebpf_udp_peer_value) == 20U, "unexpected UDP peer value ABI");
-_Static_assert(sizeof(struct sb_ebpf_udp_flow_key) == 32U, "unexpected UDP flow key ABI");
-_Static_assert(sizeof(struct sb_ebpf_udp_flow_value) == 32U, "unexpected UDP flow value ABI");
-
-struct sb_ebpf_uid_lpm_key {
-    uint32_t prefixlen;
-    uint8_t uid[4];
-};
-
-struct sb_ebpf_ipv4_cidr_lpm_key {
-    uint32_t prefixlen;
-    uint8_t addr[4];
-};
-
-struct sb_ebpf_ipv6_cidr_lpm_key {
-    uint32_t prefixlen;
-    uint8_t addr[16];
-};
-
 struct sb_ebpf_map_spec {
     const char *name;
     enum bpf_map_type type;
@@ -143,6 +45,11 @@ enum sb_ebpf_cgroup_program_slot {
 };
 
 typedef int (*sb_ebpf_map_fd_resolver)(const char *name, void *context);
+
+struct sb_ebpf_map_binding {
+    const char *name;
+    size_t fd_offset;
+};
 
 struct sb_ebpf_cgroup_runtime {
     char error_stage[SB_EBPF_ERROR_STAGE_SIZE];
@@ -239,6 +146,11 @@ int sb_ebpf_load_object_program(
     sb_ebpf_map_fd_resolver resolve_map,
     void *resolve_context,
     bool log_error);
+int sb_ebpf_resolve_map_fd(
+    const char *name,
+    const void *runtime,
+    const struct sb_ebpf_map_binding *bindings,
+    size_t binding_count);
 int sb_ebpf_shared_network_prepare(
     const uint8_t *object,
     size_t object_size,

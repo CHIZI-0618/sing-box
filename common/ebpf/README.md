@@ -29,19 +29,22 @@ include implementation files from `native/`:
   program and runtime implementation in one cgo translation unit.
 - `native/cgroup.bpf.c` and `native/shared_network.bpf.c` are compiled to the
   embedded cgroup and TC ingress/egress objects.
-- `native/cgroup_program.c` selects cgroup object sections, loads them, and
+- `native/cgroup_loader.c` selects cgroup object sections, loads them, and
   retains the TGID to socket-cookie compatibility fallback.
 - `native/cgroup_runtime.c` creates the cgroup maps and manages prepare,
   attach, and close operations.
-- `native/object_loader.c` relocates and loads both objects without libbpf.
+- `native/object_loader.c` validates, relocates, and loads both objects without
+  libbpf. Backend-specific map and program tables live in
+  `native/cgroup_loader.c` and `native/shared_network_loader.c`.
 - `native/shared_network_runtime.c` creates and manages the shared-network
   maps and programs.
 - `native/bpf.c` contains the BPF syscall, loader, attach, and cleanup
   helpers.
-- `native/ebpf.h` is the private runtime API shared with the Go backend.
+- `native/abi.h` contains only the cgroup map ABI shared by userspace and BPF
+  C. `native/runtime.h` is the private userspace runtime API shared with Go.
 
 Helpers used only by one native component remain static in that component
-instead of being exposed through `native/ebpf.h`.
+instead of being exposed through `native/runtime.h`.
 
 ## Embedded eBPF objects
 

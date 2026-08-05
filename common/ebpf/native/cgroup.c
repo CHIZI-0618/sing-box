@@ -1,7 +1,7 @@
 // Copyright 2026, Asterisk4Magisk contributors
 // SPDX-License-Identifier: GPL-3.0
 
-#include "ebpf.h"
+#include "runtime.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -64,5 +64,5 @@ static void init_runtime(struct sb_ebpf_cgroup_runtime *runtime) {
 
 static int create_bypass_socket_cookie_map(uint32_t max_entries);
 
-#include "cgroup_program.c"
+#include "cgroup_loader.c"
 #include "cgroup_runtime.c"

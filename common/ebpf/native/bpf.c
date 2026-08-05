@@ -1,7 +1,7 @@
 // Copyright 2026, Asterisk4Magisk contributors
 // SPDX-License-Identifier: GPL-3.0
 
-#include "ebpf.h"
+#include "runtime.h"
 
 #include <linux/unistd.h>
 #include <errno.h>

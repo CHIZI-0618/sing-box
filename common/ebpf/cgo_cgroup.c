@@ -2,4 +2,4 @@
 
 #include "native/cgroup.c"
 
-// Native cgroup program builders are compiled through this translation unit.
+// Native cgroup runtime is compiled through this translation unit.

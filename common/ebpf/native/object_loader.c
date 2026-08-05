@@ -2,7 +2,7 @@
 // Copyright 2026, sing-box contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "ebpf.h"
+#include "runtime.h"
 
 #include <elf.h>
 #include <errno.h>
@@ -69,37 +69,6 @@ static const Elf64_Shdr *object_find_section(
     }
     errno = ENOENT;
     return NULL;
-}
-
-struct shared_network_map_context {
-    int bypass_ipv4_map_fd;
-    int bypass_ipv6_map_fd;
-    const struct sb_ebpf_shared_network_runtime *runtime;
-};
-
-static int shared_network_object_map_fd(const char *name, void *context_pointer) {
-    const struct shared_network_map_context *context = context_pointer;
-    if (context == NULL || context->runtime == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
-    const struct sb_ebpf_shared_network_runtime *runtime = context->runtime;
-    if (strcmp(name, "shared_control") == 0) return runtime->control_map_fd;
-    if (strcmp(name, "shared_original_to_token") == 0) return runtime->original_to_token_map_fd;
-    if (strcmp(name, "shared_bypass_flow") == 0) return runtime->bypass_flow_map_fd;
-    if (strcmp(name, "shared_reply") == 0) return runtime->reply_map_fd;
-    if (strcmp(name, "shared_listener") == 0) return runtime->listener_map_fd;
-    if (strcmp(name, "shared_host_ipv4") == 0) return runtime->host_ipv4_map_fd;
-    if (strcmp(name, "shared_host_ipv6") == 0) return runtime->host_ipv6_map_fd;
-    if (strcmp(name, "shared_include_source_ipv4") == 0) return runtime->include_source_ipv4_map_fd;
-    if (strcmp(name, "shared_include_source_ipv6") == 0) return runtime->include_source_ipv6_map_fd;
-    if (strcmp(name, "shared_exclude_source_ipv4") == 0) return runtime->exclude_source_ipv4_map_fd;
-    if (strcmp(name, "shared_exclude_source_ipv6") == 0) return runtime->exclude_source_ipv6_map_fd;
-    if (strcmp(name, "shared_bypass_ipv4") == 0) return context->bypass_ipv4_map_fd;
-    if (strcmp(name, "shared_bypass_ipv6") == 0) return context->bypass_ipv6_map_fd;
-    if (strcmp(name, "shared_scratch") == 0) return runtime->scratch_map_fd;
-    errno = ENOENT;
-    return -1;
 }
 
 static int object_relocate_section(
@@ -332,45 +301,20 @@ int sb_ebpf_load_object_program(
         log_error);
 }
 
-int sb_ebpf_load_shared_network_programs(
-    const uint8_t *object,
-    size_t object_size,
-    int bypass_ipv4_map_fd,
-    int bypass_ipv6_map_fd,
-    struct sb_ebpf_shared_network_runtime *runtime) {
-    if (!bpf_object_valid(object, object_size) || runtime == NULL ||
-        bypass_ipv4_map_fd < 0 || bypass_ipv6_map_fd < 0) {
+int sb_ebpf_resolve_map_fd(
+    const char *name,
+    const void *runtime,
+    const struct sb_ebpf_map_binding *bindings,
+    size_t binding_count) {
+    if (name == NULL || runtime == NULL || bindings == NULL) {
         errno = EINVAL;
         return -1;
     }
-    struct shared_network_map_context map_context = {
-        .bypass_ipv4_map_fd = bypass_ipv4_map_fd,
-        .bypass_ipv6_map_fd = bypass_ipv6_map_fd,
-        .runtime = runtime,
-    };
-    struct shared_network_program_spec {
-        const char *section;
-        struct sb_ebpf_program_descriptor program;
-    } programs[] = {
-        {"classifier/ingress", {"sb_share_in", BPF_PROG_TYPE_SCHED_CLS,
-         (enum bpf_attach_type)0, &runtime->ingress_prog_fd}},
-        {"classifier/egress", {"sb_share_out", BPF_PROG_TYPE_SCHED_CLS,
-         (enum bpf_attach_type)0, &runtime->egress_prog_fd}},
-    };
-    for (size_t index = 0U; index < sizeof(programs) / sizeof(programs[0]); ++index) {
-        struct shared_network_program_spec *spec = &programs[index];
-        *spec->program.fd = sb_ebpf_load_object_program(
-            object,
-            object_size,
-            spec->section,
-            &spec->program,
-            shared_network_object_map_fd,
-            &map_context,
-            true);
-        if (*spec->program.fd < 0) {
-            sb_ebpf_set_error_stage(runtime->error_stage, spec->program.name);
-            return -1;
+    for (size_t index = 0U; index < binding_count; ++index) {
+        if (strcmp(name, bindings[index].name) == 0) {
+            return *(const int *)((const uint8_t *)runtime + bindings[index].fd_offset);
         }
     }
-    return 0;
+    errno = ENOENT;
+    return -1;
 }
