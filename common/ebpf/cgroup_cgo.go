@@ -80,6 +80,15 @@ static int singbox_ebpf_cgroup_attach(
 	return result;
 }
 
+static int singbox_ebpf_cgroup_probe_self_tgid(
+	struct sb_ebpf_cgroup_runtime *runtime,
+	uint32_t *self_tgid,
+	int *saved_errno) {
+	int result = sb_ebpf_cgroup_probe_self_tgid(runtime, self_tgid);
+	if (result != 0) *saved_errno = errno;
+	return result;
+}
+
 static int singbox_ebpf_cgroup_close(
 	struct sb_ebpf_cgroup_runtime *runtime,
 	int *saved_errno) {
@@ -98,7 +107,6 @@ import "C"
 import (
 	_ "embed"
 	"net/netip"
-	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -404,7 +412,28 @@ func (b *CgroupBackend) UsesSocketRelease() bool {
 }
 
 func (b *CgroupBackend) LoadPrograms(listenerPort uint16) error {
-	return b.loadPrograms(listenerPort, uint32(os.Getpid()))
+	selfTGID, err := b.probeSelfTGID()
+	if err != nil {
+		return err
+	}
+	return b.loadPrograms(listenerPort, selfTGID)
+}
+
+func (b *CgroupBackend) probeSelfTGID() (uint32, error) {
+	if b == nil {
+		return 0, errBackendClosed
+	}
+	b.access.Lock()
+	defer b.access.Unlock()
+	if err := b.health.requireUsable(b.runtime != nil); err != nil {
+		return 0, err
+	}
+	var selfTGID C.uint32_t
+	var savedErrno C.int
+	if C.singbox_ebpf_cgroup_probe_self_tgid(b.runtime, &selfTGID, &savedErrno) != 0 {
+		return 0, eBPFOperationError("probe BPF-visible self TGID", syscall.Errno(savedErrno))
+	}
+	return uint32(selfTGID), nil
 }
 
 func (b *CgroupBackend) loadPrograms(listenerPort uint16, selfTGID uint32) error {

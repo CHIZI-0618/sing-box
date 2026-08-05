@@ -219,6 +219,9 @@ int sb_ebpf_cgroup_load_programs(
     uint32_t redirect_ipv6_prefix_bits);
 int sb_ebpf_cgroup_attach(struct sb_ebpf_cgroup_runtime *runtime);
 int sb_ebpf_cgroup_close(struct sb_ebpf_cgroup_runtime *runtime);
+int sb_ebpf_cgroup_probe_self_tgid(
+    struct sb_ebpf_cgroup_runtime *runtime,
+    uint32_t *self_tgid);
 
 int sb_ebpf_load_shared_network_programs(
     const uint8_t *object,
@@ -254,6 +257,7 @@ int sb_ebpf_update_map(
     const void *key,
     const void *value,
     uint64_t flags);
+int sb_ebpf_lookup_map(int map_fd, const void *key, void *value);
 bool sb_ebpf_map_capacity_valid(uint32_t capacity);
 int sb_ebpf_create_maps(
     const struct sb_ebpf_map_spec *specs,

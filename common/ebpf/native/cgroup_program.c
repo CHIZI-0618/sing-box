@@ -49,6 +49,86 @@ static int probe_socket_release_support(void) {
     return -1;
 }
 
+int sb_ebpf_cgroup_probe_self_tgid(
+    struct sb_ebpf_cgroup_runtime *runtime,
+    uint32_t *self_tgid) {
+    if (runtime == NULL || self_tgid == NULL || runtime->cgroup_fd < 0 ||
+        runtime_has_programs(runtime)) {
+        errno = EINVAL;
+        return -1;
+    }
+    *self_tgid = 0U;
+    int map_fd = sb_ebpf_create_map(
+        BPF_MAP_TYPE_ARRAY,
+        sizeof(uint32_t),
+        sizeof(uint32_t),
+        1U,
+        0U);
+    if (map_fd < 0) return 0;
+    const struct bpf_insn instructions[] = {
+        BPF_ST_MEM_W(BPF_REG_10, -4, 0),
+        BPF_LD_MAP_FD(BPF_REG_1, map_fd),
+        BPF_MOV64_REG(BPF_REG_2, BPF_REG_10),
+        BPF_ADD64_IMM(BPF_REG_2, -4),
+        BPF_CALL_HELPER(BPF_FUNC_map_lookup_elem),
+        {.code = BPF_JMP | BPF_JEQ | BPF_K, .dst_reg = BPF_REG_0, .off = 4, .imm = 0},
+        BPF_MOV64_REG(BPF_REG_6, BPF_REG_0),
+        BPF_CALL_HELPER(BPF_FUNC_get_current_pid_tgid),
+        BPF_RSH64_IMM(BPF_REG_0, 32),
+        BPF_STX_MEM_W(BPF_REG_6, BPF_REG_0, 0),
+        BPF_MOV64_IMM(BPF_REG_0, 1),
+        BPF_EXIT_INSN(),
+    };
+    int program_fd = sb_ebpf_load_prog(
+        instructions,
+        ARRAY_SIZE(instructions),
+        "sb_tgid_probe",
+        BPF_PROG_TYPE_CGROUP_SOCK_ADDR,
+        BPF_CGROUP_INET4_CONNECT,
+        false);
+    if (program_fd < 0) {
+        (void)sb_ebpf_close_fd(&map_fd);
+        return 0;
+    }
+    bool attached = sb_ebpf_attach_prog(
+        runtime->cgroup_fd,
+        program_fd,
+        BPF_CGROUP_INET4_CONNECT) == 0;
+    if (attached) {
+        int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_TCP);
+        if (socket_fd >= 0) {
+            const struct sockaddr_in destination = {
+                .sin_family = AF_INET,
+                .sin_port = htons(9U),
+                .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)},
+            };
+            (void)connect(
+                socket_fd,
+                (const struct sockaddr *)&destination,
+                sizeof(destination));
+            (void)sb_ebpf_close_fd(&socket_fd);
+        }
+        uint32_t key = 0U;
+        (void)sb_ebpf_lookup_map(map_fd, &key, self_tgid);
+    }
+    int detach_result = 0;
+    int detach_errno = 0;
+    if (attached && sb_ebpf_detach_prog(
+            runtime->cgroup_fd,
+            program_fd,
+            BPF_CGROUP_INET4_CONNECT) != 0) {
+        detach_result = -1;
+        detach_errno = errno;
+    }
+    (void)sb_ebpf_close_fd(&program_fd);
+    (void)sb_ebpf_close_fd(&map_fd);
+    if (detach_result != 0) {
+        errno = detach_errno;
+        return -1;
+    }
+    return 0;
+}
+
 static int cgroup_object_map_fd(const char *name, void *context) {
     const struct sb_ebpf_cgroup_runtime *runtime = context;
     if (name == NULL || runtime == NULL) {

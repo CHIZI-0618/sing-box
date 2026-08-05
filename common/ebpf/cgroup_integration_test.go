@@ -589,8 +589,36 @@ func testLookupAndDeleteFallback(t *testing.T, backend *CgroupBackend) {
 	}
 }
 
-func TestCgroupBackendTGIDSelfBypassIntegration(t *testing.T) {
-	requireEBPFIntegration(t, "test TGID self bypass")
+func TestCgroupBackendTGIDProbeIntegration(t *testing.T) {
+	requireEBPFIntegration(t, "probe BPF-visible TGID")
+	cgroupPath, err := DetectCgroup2Mount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := PrepareCgroup(CgroupConfig{
+		Path:         cgroupPath,
+		EnableTCP:    true,
+		RedirectIPv4: netip.MustParsePrefix("127.128.0.0/9"),
+		MapCapacity:  DefaultCgroupMapCapacity(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := backend.Close(); err != nil {
+			t.Errorf("close TGID probe backend: %v", err)
+		}
+	})
+	if err = backend.LoadPrograms(65531); err != nil {
+		t.Fatal(err)
+	}
+	if backend.SelfBypassMode() != "tgid" {
+		t.Fatalf("expected TGID self bypass for the current cgroup, got %s", backend.SelfBypassMode())
+	}
+}
+
+func TestCgroupBackendSelfBypassFallbackIntegration(t *testing.T) {
+	requireEBPFIntegration(t, "test self-bypass fallback")
 	cgroupMount, err := DetectCgroup2Mount()
 	if err != nil {
 		t.Fatal(err)
@@ -626,6 +654,14 @@ func TestCgroupBackendTGIDSelfBypassIntegration(t *testing.T) {
 		}
 	})
 
+	protectedSocket := prepareProtectedIntegrationSocket(
+		t,
+		backend,
+		"tcp4",
+		unix.SOCK_STREAM|unix.SOCK_NONBLOCK,
+		unix.IPPROTO_TCP,
+	)
+	defer protectedSocket.Close()
 	readyReader, readyWriter, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -634,7 +670,7 @@ func TestCgroupBackendTGIDSelfBypassIntegration(t *testing.T) {
 	var helperOutput bytes.Buffer
 	helper := exec.Command(os.Args[0], "-test.run=^TestCgroupBackendTGIDSelfBypassHelper$")
 	helper.Env = append(os.Environ(), integrationTGIDHelperEnv+"=1")
-	helper.ExtraFiles = []*os.File{readyReader}
+	helper.ExtraFiles = []*os.File{readyReader, protectedSocket}
 	helper.Stdout = &helperOutput
 	helper.Stderr = &helperOutput
 	if err = helper.Start(); err != nil {
@@ -650,11 +686,11 @@ func TestCgroupBackendTGIDSelfBypassIntegration(t *testing.T) {
 		_ = helper.Process.Kill()
 		_ = helper.Wait()
 	})
-	if err = backend.loadPrograms(listenerPort, uint32(helper.Process.Pid)); err != nil {
+	if err = backend.LoadPrograms(listenerPort); err != nil {
 		t.Fatal(err)
 	}
-	if backend.SelfBypassMode() != "tgid" {
-		t.Skip("kernel rejected TGID self bypass and loaded the socket-cookie fallback")
+	if backend.SelfBypassMode() != "socket_cookie" {
+		t.Fatalf("expected socket-cookie fallback for an external cgroup, got %s", backend.SelfBypassMode())
 	}
 	if err = backend.Attach(); err != nil {
 		t.Fatal(err)
@@ -698,12 +734,12 @@ func TestCgroupBackendTGIDSelfBypassHelper(t *testing.T) {
 	if _, err := io.ReadFull(readyPipe, make([]byte, 1)); err != nil {
 		t.Fatal(err)
 	}
-	fileDescriptor, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, unix.IPPROTO_TCP)
-	if err != nil {
-		t.Fatal(err)
+	protectedSocket := os.NewFile(4, "protected-socket")
+	if protectedSocket == nil {
+		t.Fatal("missing protected socket")
 	}
-	defer unix.Close(fileDescriptor)
-	err = unix.Connect(fileDescriptor, &unix.SockaddrInet4{Port: 443, Addr: [4]byte{198, 51, 100, 30}})
+	defer protectedSocket.Close()
+	err := unix.Connect(int(protectedSocket.Fd()), &unix.SockaddrInet4{Port: 443, Addr: [4]byte{198, 51, 100, 30}})
 	if err != nil && !errors.Is(err, unix.EINPROGRESS) && !errors.Is(err, unix.ENETUNREACH) {
 		t.Fatal(err)
 	}

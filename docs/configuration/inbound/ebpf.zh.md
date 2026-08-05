@@ -309,11 +309,11 @@ TC、修改 `route_localnet`、代理热点客户端，也不会干扰热点 DHC
 独占锁定配置的 cgroup 目录。只有成功取得该锁后，才会清理由异常退出遗留的
 sing-box eBPF 程序，因此启动第二个实例不会卸载仍在运行的实例所挂载的程序。
 
-在支持的内核上，connect 和 sendmsg 程序会先比较当前 TGID 与 sing-box 进程，匹配
-时立即绕过。此模式不会创建 socket-cookie map，Go socket protector 也直接返回。
-如果任一必需的 cgroup attach type 被内核 verifier 拒绝使用 TGID helper，sing-box
-才会创建 cookie map 并自动重新加载兼容的纯 cookie 程序。启动日志会按实际加载路径
-显示
+启动时，sing-box 会短暂挂载探测程序，记录 BPF helper 实际看到的 TGID。如果当前
+进程受配置的 cgroup 管辖，connect 和 sendmsg 程序会比较该值并立即绕过匹配 socket，
+从而同时避免用户空间 PID namespace 的编号差异。此模式不会创建 socket-cookie map，
+Go socket protector 也直接返回。如果探测不到当前进程，或者任一必需 attach type 的
+verifier 拒绝 TGID helper，sing-box 会加载纯 socket-cookie 程序。启动日志会显示
 `self_bypass=tgid` 或 `self_bypass=socket_cookie`。
 
 在 cookie 回退路径中，sing-box 会把自身创建的 socket 的 `SO_COOKIE` 登记到 eBPF LRU

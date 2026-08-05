@@ -364,13 +364,14 @@ Stale sing-box eBPF programs left by an unclean exit are removed only after
 this lock has been acquired, so starting another instance cannot detach a
 running one.
 
-On supported kernels, connect and sendmsg programs first compare the current
-TGID with the sing-box process and immediately bypass matching sockets. In this
+At startup, sing-box briefly attaches a probe that records the TGID as seen by
+the BPF helper. If the current process is covered by the configured cgroup,
+connect and sendmsg programs compare against that value and immediately bypass
+matching sockets. This also avoids userspace PID-namespace mismatches. In this
 mode no socket-cookie map is created and the Go socket protector is a no-op. If
-the kernel verifier rejects the TGID helper for any required cgroup attach
-type, sing-box creates the cookie map and automatically reloads the compatible
-cookie-only program set. The startup message reports `self_bypass=tgid` or
-`self_bypass=socket_cookie` according to the loaded path.
+the probe does not observe the process, or the verifier rejects the TGID helper
+for any required attach type, sing-box loads the socket-cookie program set. The
+startup message reports `self_bypass=tgid` or `self_bypass=socket_cookie`.
 
 On the cookie fallback path, sing-box registers the `SO_COOKIE` value of each
 socket it creates in an eBPF LRU map. The cgroup programs consult this map

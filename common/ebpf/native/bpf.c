@@ -63,6 +63,19 @@ int sb_ebpf_update_map(int map_fd, const void *key, const void *value, uint64_t 
     return (int)sb_ebpf_bpf_sys(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
 }
 
+int sb_ebpf_lookup_map(int map_fd, const void *key, void *value) {
+    if (map_fd < 0 || key == NULL || value == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    union bpf_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.map_fd = (uint32_t)map_fd;
+    attr.key = (uint64_t)(uintptr_t)key;
+    attr.value = (uint64_t)(uintptr_t)value;
+    return (int)sb_ebpf_bpf_sys(BPF_MAP_LOOKUP_ELEM, &attr, sizeof(attr));
+}
+
 bool sb_ebpf_map_capacity_valid(uint32_t capacity) {
     return capacity > 0U && capacity <= SB_EBPF_MAX_CONFIGURABLE_MAP_ENTRIES;
 }
