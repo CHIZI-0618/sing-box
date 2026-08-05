@@ -54,8 +54,8 @@ static void init_runtime(struct sb_ebpf_cgroup_runtime *runtime) {
     runtime->self_bypass_tgid = false;
     runtime->enable_tcp = false;
     runtime->enable_udp = false;
-    runtime->include_uid_policy = false;
-    runtime->exclude_uid_policy = false;
+    runtime->uid_policy = false;
+    runtime->uid_default_bypass = false;
     runtime->bypass_ipv4_policy = false;
     runtime->bypass_ipv6_policy = false;
     runtime->auto_ipv6 = false;

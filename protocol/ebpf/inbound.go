@@ -168,7 +168,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		sharedNetworkOptions:     sharedNetworkOptions,
 		sharedNetworkMapCapacity: sharedNetworkMapCapacity,
 		cgroupPolicy: ECommon.CgroupPolicy{
-			HijackDNS:  dnsMode == dnsModeHijack,
+			HijackDNS: dnsMode == dnsModeHijack,
+			IncludeUIDConfigured: len(options.IncludeUID) > 0 ||
+				len(options.IncludeUIDRange) > 0 || len(options.IncludePackage) > 0,
 			IncludeUID: includeUIDRanges,
 			ExcludeUID: excludeUIDRanges,
 		},

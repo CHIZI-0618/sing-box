@@ -63,8 +63,7 @@ static int cgroup_object_map_fd(const char *name, void *context) {
     RESOLVE_MAP("cgroup_udp_peer", udp_peer_map_fd);
     RESOLVE_MAP("cgroup_udp_flow", udp_flow_map_fd);
     RESOLVE_MAP("cgroup_socket_bypass", bypass_socket_cookie_map_fd);
-    RESOLVE_MAP("cgroup_include_uid", include_uid_map_fd);
-    RESOLVE_MAP("cgroup_exclude_uid", exclude_uid_map_fd);
+    RESOLVE_MAP("cgroup_uid_policy", uid_policy_map_fd);
     RESOLVE_MAP("cgroup_bypass_ipv4", bypass_ipv4_cidr_map_fd);
     RESOLVE_MAP("cgroup_bypass_ipv6", bypass_ipv6_cidr_map_fd);
     RESOLVE_MAP("cgroup_ipv6_available", ipv6_available_map_fd);
@@ -153,8 +152,8 @@ static int update_cgroup_control(
     if (enable_ipv4) control.flags |= SB_EBPF_CGROUP_FLAG_IPV4;
     if (enable_ipv6) control.flags |= SB_EBPF_CGROUP_FLAG_IPV6;
     if (hijack_dns) control.flags |= SB_EBPF_CGROUP_FLAG_HIJACK_DNS;
-    if (runtime->include_uid_policy) control.flags |= SB_EBPF_CGROUP_FLAG_INCLUDE_UID;
-    if (runtime->exclude_uid_policy) control.flags |= SB_EBPF_CGROUP_FLAG_EXCLUDE_UID;
+    if (runtime->uid_policy) control.flags |= SB_EBPF_CGROUP_FLAG_UID_POLICY;
+    if (runtime->uid_default_bypass) control.flags |= SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS;
     if (runtime->bypass_ipv4_policy) control.flags |= SB_EBPF_CGROUP_FLAG_BYPASS_IPV4;
     if (runtime->bypass_ipv6_policy) control.flags |= SB_EBPF_CGROUP_FLAG_BYPASS_IPV6;
     if (runtime->auto_ipv6) control.flags |= SB_EBPF_CGROUP_FLAG_AUTO_IPV6;

@@ -26,8 +26,8 @@
 #define SB_EBPF_CGROUP_FLAG_IPV4 (1U << 2U)
 #define SB_EBPF_CGROUP_FLAG_IPV6 (1U << 3U)
 #define SB_EBPF_CGROUP_FLAG_HIJACK_DNS (1U << 4U)
-#define SB_EBPF_CGROUP_FLAG_INCLUDE_UID (1U << 5U)
-#define SB_EBPF_CGROUP_FLAG_EXCLUDE_UID (1U << 6U)
+#define SB_EBPF_CGROUP_FLAG_UID_POLICY (1U << 5U)
+#define SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS (1U << 6U)
 #define SB_EBPF_CGROUP_FLAG_BYPASS_IPV4 (1U << 7U)
 #define SB_EBPF_CGROUP_FLAG_BYPASS_IPV6 (1U << 8U)
 #define SB_EBPF_CGROUP_FLAG_AUTO_IPV6 (1U << 9U)
@@ -143,8 +143,7 @@ struct sb_ebpf_cgroup_runtime {
     int udp_peer_map_fd;
     int udp_flow_map_fd;
     int bypass_socket_cookie_map_fd;
-    int include_uid_map_fd;
-    int exclude_uid_map_fd;
+    int uid_policy_map_fd;
     int bypass_ipv4_cidr_map_fd;
     int bypass_ipv6_cidr_map_fd;
     int ipv6_available_map_fd;
@@ -162,8 +161,8 @@ struct sb_ebpf_cgroup_runtime {
     bool self_bypass_tgid;
     bool enable_tcp;
     bool enable_udp;
-    bool include_uid_policy;
-    bool exclude_uid_policy;
+    bool uid_policy;
+    bool uid_default_bypass;
     bool bypass_ipv4_policy;
     bool bypass_ipv6_policy;
     bool auto_ipv6;
@@ -198,8 +197,8 @@ int sb_ebpf_cgroup_prepare(
     bool enable_bypass_ipv4_cidr,
     bool enable_bypass_ipv6_cidr,
     bool auto_ipv6,
-    uint32_t include_uid_entries,
-    uint32_t exclude_uid_entries,
+    uint32_t uid_policy_entries,
+    bool uid_default_bypass,
     uint32_t tcp_redirect_map_capacity,
     uint32_t udp_redirect_map_capacity,
     uint32_t socket_bypass_map_capacity,

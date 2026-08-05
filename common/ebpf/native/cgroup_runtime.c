@@ -29,15 +29,14 @@ int sb_ebpf_cgroup_prepare(
 	bool enable_bypass_ipv4_cidr,
 	bool enable_bypass_ipv6_cidr,
 	bool auto_ipv6,
-	uint32_t include_uid_entries,
-	uint32_t exclude_uid_entries,
+	uint32_t uid_policy_entries,
+	bool uid_default_bypass,
 	uint32_t tcp_redirect_map_capacity,
 	uint32_t udp_redirect_map_capacity,
 	uint32_t socket_bypass_map_capacity,
 	struct sb_ebpf_cgroup_runtime *runtime) {
     if (runtime == NULL || (!enable_tcp && !enable_udp) ||
-        include_uid_entries > SB_EBPF_MAX_POLICY_MAP_ENTRIES ||
-        exclude_uid_entries > SB_EBPF_MAX_POLICY_MAP_ENTRIES ||
+        uid_policy_entries > SB_EBPF_MAX_POLICY_MAP_ENTRIES ||
         !sb_ebpf_map_capacity_valid(tcp_redirect_map_capacity) ||
         !sb_ebpf_map_capacity_valid(udp_redirect_map_capacity) ||
         !sb_ebpf_map_capacity_valid(socket_bypass_map_capacity)) {
@@ -54,8 +53,8 @@ int sb_ebpf_cgroup_prepare(
     runtime->socket_release_supported = socket_release_support > 0;
     runtime->enable_tcp = enable_tcp;
     runtime->enable_udp = enable_udp;
-    runtime->include_uid_policy = include_uid_entries > 0U;
-    runtime->exclude_uid_policy = exclude_uid_entries > 0U;
+    runtime->uid_policy = uid_policy_entries > 0U || uid_default_bypass;
+    runtime->uid_default_bypass = uid_default_bypass;
     runtime->bypass_ipv4_policy = enable_bypass_ipv4_cidr;
     runtime->bypass_ipv6_policy = enable_bypass_ipv6_cidr;
     runtime->auto_ipv6 = auto_ipv6;
@@ -83,12 +82,9 @@ int sb_ebpf_cgroup_prepare(
          sizeof(struct sb_ebpf_udp_flow_key), sizeof(struct sb_ebpf_udp_flow_value),
          enable_udp && runtime->socket_release_supported ? udp_redirect_map_capacity : 1U,
          0U, &runtime->udp_flow_map_fd},
-        {"include UID", (enum bpf_map_type)SB_EBPF_LPM_TRIE_MAP_TYPE,
-         sizeof(struct sb_ebpf_uid_lpm_key), sizeof(uint8_t), include_uid_entries > 0U ? include_uid_entries : 1U,
-         BPF_F_NO_PREALLOC, &runtime->include_uid_map_fd},
-        {"exclude UID", (enum bpf_map_type)SB_EBPF_LPM_TRIE_MAP_TYPE,
-         sizeof(struct sb_ebpf_uid_lpm_key), sizeof(uint8_t), exclude_uid_entries > 0U ? exclude_uid_entries : 1U,
-         BPF_F_NO_PREALLOC, &runtime->exclude_uid_map_fd},
+        {"UID policy", (enum bpf_map_type)SB_EBPF_LPM_TRIE_MAP_TYPE,
+         sizeof(struct sb_ebpf_uid_lpm_key), sizeof(uint8_t), uid_policy_entries > 0U ? uid_policy_entries : 1U,
+         BPF_F_NO_PREALLOC, &runtime->uid_policy_map_fd},
         {"IPv4 bypass CIDR", (enum bpf_map_type)SB_EBPF_LPM_TRIE_MAP_TYPE,
          sizeof(struct sb_ebpf_ipv4_cidr_lpm_key), sizeof(uint8_t),
          SB_EBPF_MAX_BYPASS_CIDR_MAP_ENTRIES,
@@ -273,8 +269,7 @@ int sb_ebpf_cgroup_close(struct sb_ebpf_cgroup_runtime *runtime) {
         &runtime->connect6_v4mapped_prog_fd,
         &runtime->connect6_prog_fd,
         &runtime->connect4_prog_fd,
-        &runtime->exclude_uid_map_fd,
-        &runtime->include_uid_map_fd,
+        &runtime->uid_policy_map_fd,
         &runtime->bypass_ipv6_cidr_map_fd,
         &runtime->ipv6_available_map_fd,
         &runtime->bypass_ipv4_cidr_map_fd,

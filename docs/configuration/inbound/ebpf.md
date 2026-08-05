@@ -244,6 +244,11 @@ sing-box. A package that is missing at startup is reported as a warning and is
 not added until restart. If the package manager itself is unavailable while a
 package field is configured, the inbound fails to start.
 
+If include package rules are configured but none resolve to an installed UID,
+the empty include policy bypasses all local applications until sing-box is
+restarted after the package becomes available. It never widens interception to
+unrelated applications.
+
 Android packages may share one UID. The cgroup eBPF hook cannot distinguish
 packages that use the same UID, so including or excluding any one of them
 applies to every package sharing that UID. A warning is logged when this is

@@ -15,8 +15,8 @@ static int singbox_ebpf_cgroup_prepare(
 	bool enable_bypass_ipv4_cidr,
 	bool enable_bypass_ipv6_cidr,
 	bool auto_ipv6,
-	uint32_t include_uid_entries,
-	uint32_t exclude_uid_entries,
+	uint32_t uid_policy_entries,
+	bool uid_default_bypass,
 	uint32_t tcp_redirect_map_capacity,
 	uint32_t udp_redirect_map_capacity,
 	uint32_t socket_bypass_map_capacity,
@@ -29,8 +29,8 @@ static int singbox_ebpf_cgroup_prepare(
 		enable_bypass_ipv4_cidr,
 		enable_bypass_ipv6_cidr,
 		auto_ipv6,
-		include_uid_entries,
-		exclude_uid_entries,
+		uid_policy_entries,
+		uid_default_bypass,
 		tcp_redirect_map_capacity,
 		udp_redirect_map_capacity,
 		socket_bypass_map_capacity,
@@ -185,11 +185,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 			return nil, err
 		}
 	}
-	includeUIDEntries, err := compileUIDPolicy("include_uid", policy.IncludeUID)
-	if err != nil {
-		return nil, err
-	}
-	excludeUIDEntries, err := compileUIDPolicy("exclude_uid", policy.ExcludeUID)
+	uidPolicyEntries, uidDefaultBypass, err := compileUIDPolicy(policy)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +219,8 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		C.bool(policy.EnableBypassCIDR && redirectIPv4.IsValid()),
 		C.bool(policy.EnableBypassCIDR && redirectIPv6.IsValid()),
 		C.bool(config.AutoIPv6),
-		C.uint32_t(len(includeUIDEntries)),
-		C.uint32_t(len(excludeUIDEntries)),
+		C.uint32_t(len(uidPolicyEntries)),
+		C.bool(uidDefaultBypass),
 		C.uint32_t(mapCapacity.TCPRedirect),
 		C.uint32_t(mapCapacity.UDPRedirect),
 		C.uint32_t(mapCapacity.SocketBypass),
@@ -265,13 +261,9 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 			return nil, E.Cause(err, "initialize IPv6 availability eBPF map")
 		}
 	}
-	if err = populateUIDPolicyMap(int(runtimeState.include_uid_map_fd), includeUIDEntries); err != nil {
+	if err = populateUIDPolicyMap(int(runtimeState.uid_policy_map_fd), uidPolicyEntries); err != nil {
 		_ = backend.Close()
-		return nil, E.Cause(err, "populate include_uid eBPF map")
-	}
-	if err = populateUIDPolicyMap(int(runtimeState.exclude_uid_map_fd), excludeUIDEntries); err != nil {
-		_ = backend.Close()
-		return nil, E.Cause(err, "populate exclude_uid eBPF map")
+		return nil, E.Cause(err, "populate UID policy eBPF map")
 	}
 	return backend, nil
 }

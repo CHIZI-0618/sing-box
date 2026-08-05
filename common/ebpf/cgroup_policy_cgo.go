@@ -29,17 +29,27 @@ func validateCgroupMapCapacity(capacity CgroupMapCapacity) error {
 	return nil
 }
 
-func compileUIDPolicy(name string, uidRanges []UIDRange) ([]uidLPMKey, error) {
-	for _, uidRange := range uidRanges {
-		if uidRange.Start > uidRange.End {
-			return nil, E.New("invalid ", name, " range: ", uidRange.Start, ":", uidRange.End)
+func compileUIDPolicy(policy CgroupPolicy) ([]uidLPMKey, bool, error) {
+	for name, uidRanges := range map[string][]UIDRange{
+		"include_uid": policy.IncludeUID,
+		"exclude_uid": policy.ExcludeUID,
+	} {
+		for _, uidRange := range uidRanges {
+			if uidRange.Start > uidRange.End {
+				return nil, false, E.New("invalid ", name, " range: ", uidRange.Start, ":", uidRange.End)
+			}
 		}
+	}
+	defaultBypass := policy.IncludeUIDConfigured || len(policy.IncludeUID) > 0
+	uidRanges := policy.ExcludeUID
+	if defaultBypass {
+		uidRanges = subtractUIDRanges(policy.IncludeUID, policy.ExcludeUID)
 	}
 	entries := compileUIDRanges(uidRanges)
 	if len(entries) > maxUIDPolicyEntries {
-		return nil, E.New(name, " compiles to too many eBPF map entries: ", len(entries), " > ", maxUIDPolicyEntries)
+		return nil, false, E.New("UID policy compiles to too many eBPF map entries: ", len(entries), " > ", maxUIDPolicyEntries)
 	}
-	return entries, nil
+	return entries, defaultBypass, nil
 }
 
 func populateUIDPolicyMap(mapFD int, entries []uidLPMKey) error {

@@ -37,6 +37,52 @@ func TestCompileFullUIDRange(t *testing.T) {
 	}
 }
 
+func TestCompileUIDPolicyPrecedence(t *testing.T) {
+	entries, defaultBypass, err := compileUIDPolicy(CgroupPolicy{
+		IncludeUIDConfigured: true,
+		IncludeUID:           []UIDRange{{Start: 1000, End: 1999}},
+		ExcludeUID:           []UIDRange{{Start: 1200, End: 1299}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaultBypass {
+		t.Fatal("include policy did not enable default bypass")
+	}
+	for _, uid := range []uint32{1000, 1199, 1300, 1999} {
+		if !uidMatchesPrefixes(uid, entries) {
+			t.Fatalf("UID %d is not included", uid)
+		}
+	}
+	for _, uid := range []uint32{999, 1200, 1299, 2000} {
+		if uidMatchesPrefixes(uid, entries) {
+			t.Fatalf("UID %d is unexpectedly included", uid)
+		}
+	}
+}
+
+func TestCompileEmptyConfiguredUIDPolicy(t *testing.T) {
+	entries, defaultBypass, err := compileUIDPolicy(CgroupPolicy{IncludeUIDConfigured: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaultBypass || len(entries) != 0 {
+		t.Fatalf("unexpected empty include policy: default_bypass=%v entries=%v", defaultBypass, entries)
+	}
+}
+
+func TestCompileExcludeOnlyUIDPolicy(t *testing.T) {
+	entries, defaultBypass, err := compileUIDPolicy(CgroupPolicy{
+		ExcludeUID: []UIDRange{{Start: 1000, End: 1999}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultBypass || !uidMatchesPrefixes(1500, entries) || uidMatchesPrefixes(2000, entries) {
+		t.Fatalf("unexpected exclude policy: default_bypass=%v entries=%v", defaultBypass, entries)
+	}
+}
+
 func TestCompileBypassCIDRPolicy(t *testing.T) {
 	ipv4, ipv6, err := compileBypassCIDRPolicy([]netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/9"),

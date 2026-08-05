@@ -47,8 +47,7 @@ MAP(cgroup_udp_token, __u64, struct sb_ebpf_listener_key, BPF_MAP_TYPE_HASH);
 MAP(cgroup_udp_peer, struct sb_ebpf_udp_peer_key, struct sb_ebpf_udp_peer_value, BPF_MAP_TYPE_HASH);
 MAP(cgroup_udp_flow, struct sb_ebpf_udp_flow_key, struct sb_ebpf_udp_flow_value, BPF_MAP_TYPE_LRU_HASH);
 MAP(cgroup_socket_bypass, __u64, __u8, BPF_MAP_TYPE_LRU_HASH);
-MAP(cgroup_include_uid, struct sb_ebpf_uid_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
-MAP(cgroup_exclude_uid, struct sb_ebpf_uid_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
+MAP(cgroup_uid_policy, struct sb_ebpf_uid_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_bypass_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_bypass_ipv6, struct sb_ebpf_ipv6_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_ipv6_available, __u32, __u32, BPF_MAP_TYPE_ARRAY);
@@ -82,20 +81,16 @@ INLINE bool is_cookie_bypassed(void *ctx) {
 }
 
 INLINE bool uid_bypassed(const struct sb_ebpf_cgroup_control *config) {
-    if ((config->flags & (SB_EBPF_CGROUP_FLAG_INCLUDE_UID | SB_EBPF_CGROUP_FLAG_EXCLUDE_UID)) == 0U) {
-        return false;
-    }
+    if ((config->flags & SB_EBPF_CGROUP_FLAG_UID_POLICY) == 0U) return false;
     struct sb_ebpf_uid_lpm_key key = {
         .prefixlen = 32U,
     };
     __u32 uid = swap32((__u32)get_current_uid_gid());
     __builtin_memcpy(key.uid, &uid, sizeof(uid));
-    if ((config->flags & SB_EBPF_CGROUP_FLAG_EXCLUDE_UID) != 0U &&
-        map_lookup(&cgroup_exclude_uid, &key) != 0) {
-        return true;
-    }
-    return (config->flags & SB_EBPF_CGROUP_FLAG_INCLUDE_UID) != 0U &&
-        map_lookup(&cgroup_include_uid, &key) == 0;
+    bool matched = map_lookup(&cgroup_uid_policy, &key) != 0;
+    return (config->flags & SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS) != 0U
+        ? !matched
+        : matched;
 }
 
 INLINE bool protocol_selected(const struct sb_ebpf_cgroup_control *config, __u8 protocol) {

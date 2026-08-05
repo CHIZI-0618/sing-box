@@ -216,6 +216,10 @@ package、其 UID 发生变化，或者新增 Android 用户后，都需要重�
 package 会记录警告，并且在重启前不会加入策略。如果配置了 package 字段但 PackageManager
 不可用，入站会启动失败。
 
+如果配置了 include package 规则，但启动时没有任何 package 能解析为已安装 UID，空的
+include 策略会绕过全部本机应用，直到 package 可用后重启 sing-box；它不会扩大为拦截
+无关应用。
+
 多个 Android package 可能共用同一个 UID。cgroup eBPF hook 无法区分使用相同 UID 的
 package，因此包含或排除其中任意一个都会作用于共享该 UID 的所有 package；检测到这种情况时
 会记录警告。
