@@ -68,6 +68,12 @@ for local reproducibility checks after generation. Both use the baseline BPF
 v1 instruction set so changing the host or NDK Clang does not silently raise
 the kernel instruction-set requirement.
 
+When native IPv6 interception is disabled, the cgroup loader selects smaller
+IPv4-mapped `connect6`, `sendmsg6`, and `recvmsg6` sections. These preserve
+IPv4 traffic from dual-stack applications without loading the unused native
+IPv6 policy and redirect path. Dual-stack configurations continue to select
+the complete IPv6 sections.
+
 ## Testing
 
 Run the focused Linux tests with cgo, without cgo, and under the race detector:

@@ -6,6 +6,8 @@
 struct cgroup_program_definition {
     const char *tgid_section;
     const char *cookie_section;
+    const char *mapped_tgid_section;
+    const char *mapped_cookie_section;
     const char *name;
     enum bpf_prog_type type;
     enum bpf_attach_type attach_type;
@@ -13,25 +15,28 @@ struct cgroup_program_definition {
 
 static const struct cgroup_program_definition cgroup_programs[SB_EBPF_CGROUP_PROGRAM_COUNT] = {
     [SB_EBPF_CGROUP_PROGRAM_CONNECT4] = {
-        "cgroup/connect4_tgid", "cgroup/connect4_cookie", "sb_ebpf_conn4",
+        "cgroup/connect4_tgid", "cgroup/connect4_cookie", NULL, NULL, "sb_ebpf_conn4",
         BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET4_CONNECT},
     [SB_EBPF_CGROUP_PROGRAM_UDP4_SENDMSG] = {
-        "cgroup/sendmsg4_tgid", "cgroup/sendmsg4_cookie", "sb_ebpf_udp4",
+        "cgroup/sendmsg4_tgid", "cgroup/sendmsg4_cookie", NULL, NULL, "sb_ebpf_udp4",
         BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_SENDMSG},
     [SB_EBPF_CGROUP_PROGRAM_UDP4_RECVMSG] = {
-        "cgroup/recvmsg4", "cgroup/recvmsg4", "sb_ebpf_urcv4",
+        "cgroup/recvmsg4", "cgroup/recvmsg4", NULL, NULL, "sb_ebpf_urcv4",
         BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP4_RECVMSG},
     [SB_EBPF_CGROUP_PROGRAM_CONNECT6] = {
-        "cgroup/connect6_tgid", "cgroup/connect6_cookie", "sb_ebpf_conn6",
+        "cgroup/connect6_tgid", "cgroup/connect6_cookie",
+        "cgroup/connect6_mapped_tgid", "cgroup/connect6_mapped_cookie", "sb_ebpf_conn6",
         BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_INET6_CONNECT},
     [SB_EBPF_CGROUP_PROGRAM_UDP6_SENDMSG] = {
-        "cgroup/sendmsg6_tgid", "cgroup/sendmsg6_cookie", "sb_ebpf_udp6",
+        "cgroup/sendmsg6_tgid", "cgroup/sendmsg6_cookie",
+        "cgroup/sendmsg6_mapped_tgid", "cgroup/sendmsg6_mapped_cookie", "sb_ebpf_udp6",
         BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_SENDMSG},
     [SB_EBPF_CGROUP_PROGRAM_UDP6_RECVMSG] = {
-        "cgroup/recvmsg6", "cgroup/recvmsg6", "sb_ebpf_urcv6",
+        "cgroup/recvmsg6", "cgroup/recvmsg6",
+        "cgroup/recvmsg6_mapped", "cgroup/recvmsg6_mapped", "sb_ebpf_urcv6",
         BPF_PROG_TYPE_CGROUP_SOCK_ADDR, BPF_CGROUP_UDP6_RECVMSG},
     [SB_EBPF_CGROUP_PROGRAM_SOCKET_RELEASE] = {
-        "cgroup/release_tgid", "cgroup/release_cookie", "sb_ebpf_rel",
+        "cgroup/release_tgid", "cgroup/release_cookie", NULL, NULL, "sb_ebpf_rel",
         BPF_PROG_TYPE_CGROUP_SOCK, BPF_CGROUP_INET_SOCK_RELEASE},
 };
 
@@ -204,9 +209,17 @@ static int load_cgroup_object_programs(
     for (size_t slot = 0U; slot < SB_EBPF_CGROUP_PROGRAM_COUNT; ++slot) {
         if (!cgroup_program_enabled(slot, runtime, enable_ipv4, enable_ipv6)) continue;
         const struct cgroup_program_definition *definition = &cgroup_programs[slot];
-        const char *section = tgid_mode
-            ? definition->tgid_section
-            : definition->cookie_section;
+        bool mapped_only = !enable_ipv6 && definition->mapped_tgid_section != NULL;
+        const char *section;
+        if (mapped_only) {
+            section = tgid_mode
+                ? definition->mapped_tgid_section
+                : definition->mapped_cookie_section;
+        } else {
+            section = tgid_mode
+                ? definition->tgid_section
+                : definition->cookie_section;
+        }
         struct sb_ebpf_program_descriptor program = {
             definition->name,
             definition->type,

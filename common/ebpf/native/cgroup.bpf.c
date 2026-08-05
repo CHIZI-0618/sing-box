@@ -497,7 +497,11 @@ INLINE int handle_v4(struct bpf_sock_addr *ctx, bool tgid_mode, bool connect_hoo
     return rewrite_v4(ctx, &listener) ? 1 : 0;
 }
 
-INLINE int handle_v6(struct bpf_sock_addr *ctx, bool tgid_mode, bool connect_hook) {
+INLINE int handle_v6(
+    struct bpf_sock_addr *ctx,
+    bool tgid_mode,
+    bool connect_hook,
+    bool enable_native_ipv6) {
     const struct sb_ebpf_cgroup_control *config = control();
     if (config == 0) return 1;
     __u32 address[4];
@@ -555,6 +559,7 @@ INLINE int handle_v6(struct bpf_sock_addr *ctx, bool tgid_mode, bool connect_hoo
         }
         return rewrite_v4_mapped(ctx, &listener) ? 1 : 0;
     }
+    if (!enable_native_ipv6) return 1;
     if ((config->flags & SB_EBPF_CGROUP_FLAG_IPV6) == 0U || !ipv6_available(config)) return 1;
     if (connected_udp) {
         reset_connected_udp(cookie);
@@ -600,10 +605,14 @@ SEC("cgroup/connect4_tgid") int sb_ebpf_conn4_tgid(struct bpf_sock_addr *ctx) { 
 SEC("cgroup/connect4_cookie") int sb_ebpf_conn4_cookie(struct bpf_sock_addr *ctx) { return handle_v4(ctx, false, true); }
 SEC("cgroup/sendmsg4_tgid") int sb_ebpf_udp4_tgid(struct bpf_sock_addr *ctx) { return handle_v4(ctx, true, false); }
 SEC("cgroup/sendmsg4_cookie") int sb_ebpf_udp4_cookie(struct bpf_sock_addr *ctx) { return handle_v4(ctx, false, false); }
-SEC("cgroup/connect6_tgid") int sb_ebpf_conn6_tgid(struct bpf_sock_addr *ctx) { return handle_v6(ctx, true, true); }
-SEC("cgroup/connect6_cookie") int sb_ebpf_conn6_cookie(struct bpf_sock_addr *ctx) { return handle_v6(ctx, false, true); }
-SEC("cgroup/sendmsg6_tgid") int sb_ebpf_udp6_tgid(struct bpf_sock_addr *ctx) { return handle_v6(ctx, true, false); }
-SEC("cgroup/sendmsg6_cookie") int sb_ebpf_udp6_cookie(struct bpf_sock_addr *ctx) { return handle_v6(ctx, false, false); }
+SEC("cgroup/connect6_tgid") int sb_ebpf_conn6_tgid(struct bpf_sock_addr *ctx) { return handle_v6(ctx, true, true, true); }
+SEC("cgroup/connect6_cookie") int sb_ebpf_conn6_cookie(struct bpf_sock_addr *ctx) { return handle_v6(ctx, false, true, true); }
+SEC("cgroup/sendmsg6_tgid") int sb_ebpf_udp6_tgid(struct bpf_sock_addr *ctx) { return handle_v6(ctx, true, false, true); }
+SEC("cgroup/sendmsg6_cookie") int sb_ebpf_udp6_cookie(struct bpf_sock_addr *ctx) { return handle_v6(ctx, false, false, true); }
+SEC("cgroup/connect6_mapped_tgid") int sb_ebpf_conn6_mapped_tgid(struct bpf_sock_addr *ctx) { return handle_v6(ctx, true, true, false); }
+SEC("cgroup/connect6_mapped_cookie") int sb_ebpf_conn6_mapped_cookie(struct bpf_sock_addr *ctx) { return handle_v6(ctx, false, true, false); }
+SEC("cgroup/sendmsg6_mapped_tgid") int sb_ebpf_udp6_mapped_tgid(struct bpf_sock_addr *ctx) { return handle_v6(ctx, true, false, false); }
+SEC("cgroup/sendmsg6_mapped_cookie") int sb_ebpf_udp6_mapped_cookie(struct bpf_sock_addr *ctx) { return handle_v6(ctx, false, false, false); }
 
 INLINE int recv_v4(struct bpf_sock_addr *ctx) {
     const struct sb_ebpf_cgroup_control *config = control();
@@ -623,7 +632,7 @@ INLINE int recv_v4(struct bpf_sock_addr *ctx) {
     return 1;
 }
 
-INLINE int recv_v6(struct bpf_sock_addr *ctx) {
+INLINE int recv_v6(struct bpf_sock_addr *ctx, bool enable_native_ipv6) {
     const struct sb_ebpf_cgroup_control *config = control();
     if (config == 0) return 1;
     __u32 address[4];
@@ -647,6 +656,7 @@ INLINE int recv_v6(struct bpf_sock_addr *ctx) {
         ctx->user_port = swap16(original->port);
         return 1;
     }
+    if (!enable_native_ipv6) return 1;
     if ((config->flags & SB_EBPF_CGROUP_FLAG_IPV6) == 0U) return 1;
     __u32 redirect_prefix[2];
     __builtin_memcpy(redirect_prefix, config->redirect_ipv6_prefix, sizeof(redirect_prefix));
@@ -668,7 +678,8 @@ INLINE int recv_v6(struct bpf_sock_addr *ctx) {
 }
 
 SEC("cgroup/recvmsg4") int sb_ebpf_urcv4_c(struct bpf_sock_addr *ctx) { return recv_v4(ctx); }
-SEC("cgroup/recvmsg6") int sb_ebpf_urcv6_c(struct bpf_sock_addr *ctx) { return recv_v6(ctx); }
+SEC("cgroup/recvmsg6") int sb_ebpf_urcv6_c(struct bpf_sock_addr *ctx) { return recv_v6(ctx, true); }
+SEC("cgroup/recvmsg6_mapped") int sb_ebpf_urcv6_mapped_c(struct bpf_sock_addr *ctx) { return recv_v6(ctx, false); }
 
 INLINE int release_socket(struct bpf_sock *ctx, bool delete_bypass) {
     __u64 cookie = get_socket_cookie(ctx);
