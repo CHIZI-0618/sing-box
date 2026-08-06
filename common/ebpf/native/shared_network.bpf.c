@@ -24,8 +24,12 @@
 #define TCP_FLAG_SYN 0x0002U
 #define TCP_FLAG_ACK 0x0010U
 
-#define IPV6_TRANSPORT_BYPASS -1
-#define IPV6_TRANSPORT_DROP -2
+/* Bound old-verifier offsets for Ethernet, two VLAN tags, IPv6, and three extension headers. */
+#define IPV6_TRANSPORT_MIN_OFFSET 54U
+#define IPV6_TRANSPORT_MAX_OFFSET 6206U
+#define IPV6_TRANSPORT_MASK 0x1fffU
+#define IPV6_TRANSPORT_BYPASS 0xffffffffU
+#define IPV6_TRANSPORT_DROP 0xfffffffeU
 
 #define SB_SHARED_POLICY_BYPASS 0U
 #define SB_SHARED_POLICY_PROXY 1U
@@ -115,7 +119,9 @@ struct tcp_header_min {
     __be32 sequence;
     __be32 acknowledgement;
     __be16 flags;
+    __be16 window;
     __sum16 checksum;
+    __be16 urgent_pointer;
 };
 
 struct udp_header_min {
@@ -737,7 +743,7 @@ NOINLINE int egress_ipv4(
         ip->protocol);
 }
 
-NOINLINE int ipv6_transport_offset(
+NOINLINE __u32 ipv6_transport_offset(
     void *data,
     void *data_end,
     __u32 l3_offset,
@@ -750,7 +756,7 @@ NOINLINE int ipv6_transport_offset(
     for (__u32 depth = 0U; depth < 4U; ++depth) {
         if (protocol == IPPROTO_TCP_VALUE || protocol == IPPROTO_UDP_VALUE) {
             *protocol_out = protocol;
-            return (int)offset;
+            return offset;
         }
         if (protocol == 44U) {
             struct ipv6_fragment_header *fragment = data + offset;
@@ -787,13 +793,20 @@ NOINLINE int ingress_ipv6(
     struct ipv6_header *ip = data + l3_offset;
     if ((void *)(ip + 1) > data_end || (swap32(ip->version_flow) >> 28U) != 6U) return TC_ACT_PIPE;
     __u8 protocol = 0U;
-    int transport = ipv6_transport_offset(data, data_end, l3_offset, &protocol);
+    __u32 transport = ipv6_transport_offset(data, data_end, l3_offset, &protocol);
     if (transport == IPV6_TRANSPORT_DROP) return TC_ACT_SHOT;
-    if (transport < 0 || !selected_protocol(protocol, control)) return TC_ACT_PIPE;
+    if (transport == IPV6_TRANSPORT_BYPASS) return TC_ACT_PIPE;
+    if (transport < IPV6_TRANSPORT_MIN_OFFSET || transport > IPV6_TRANSPORT_MAX_OFFSET) {
+        return TC_ACT_SHOT;
+    }
+    transport &= IPV6_TRANSPORT_MASK;
     struct transport_ports *ports = data + transport;
     if ((void *)(ports + 1) > data_end) return TC_ACT_PIPE;
-    __u16 source_port = swap16(ports->source);
-    __u16 destination_port = swap16(ports->destination);
+    __be16 source_port_raw = ports->source;
+    __be16 destination_port_raw = ports->destination;
+    if (!selected_protocol(protocol, control)) return TC_ACT_PIPE;
+    __u16 source_port = swap16(source_port_raw);
+    __u16 destination_port = swap16(destination_port_raw);
     __u32 zero = 0U;
     struct sb_shared_scratch *scratch = map_lookup(&shared_scratch, &zero);
     if (scratch == 0) return TC_ACT_SHOT;
@@ -839,11 +852,17 @@ NOINLINE int ingress_ipv6(
     }
     protocol = 0U;
     transport = ipv6_transport_offset(data, data_end, l3_offset, &protocol);
-    if (transport < 0 || !selected_protocol(protocol, control)) return TC_ACT_SHOT;
+    if (transport < IPV6_TRANSPORT_MIN_OFFSET || transport > IPV6_TRANSPORT_MAX_OFFSET) {
+        return TC_ACT_SHOT;
+    }
+    transport &= IPV6_TRANSPORT_MASK;
     ports = data + transport;
     if ((void *)(ports + 1) > data_end) return TC_ACT_SHOT;
-    source_port = swap16(ports->source);
-    destination_port = swap16(ports->destination);
+    source_port_raw = ports->source;
+    destination_port_raw = ports->destination;
+    if (!selected_protocol(protocol, control)) return TC_ACT_SHOT;
+    source_port = swap16(source_port_raw);
+    destination_port = swap16(destination_port_raw);
 
     if (!cached) {
         if (!reserve_token(scratch, control)) return TC_ACT_SHOT;
@@ -851,11 +870,11 @@ NOINLINE int ingress_ipv6(
     return rewrite_ipv6(
         skb,
         l3_offset,
-        (__u32)transport,
+        transport,
         false,
         scratch->original.original_addr,
         scratch->token.token_addr,
-        ports->destination,
+        destination_port_raw,
         swap16(control->listener_port),
         protocol);
 }
@@ -870,11 +889,16 @@ NOINLINE int egress_ipv6(
     if ((void *)(ip + 1) > data_end || (swap32(ip->version_flow) >> 28U) != 6U) return TC_ACT_PIPE;
     if (!ipv6_token_address(ip->source, control)) return TC_ACT_PIPE;
     __u8 protocol = 0U;
-    int transport = ipv6_transport_offset(data, data_end, l3_offset, &protocol);
-    if (transport < 0 || !selected_protocol(protocol, control)) return TC_ACT_SHOT;
+    __u32 transport = ipv6_transport_offset(data, data_end, l3_offset, &protocol);
+    if (transport < IPV6_TRANSPORT_MIN_OFFSET || transport > IPV6_TRANSPORT_MAX_OFFSET) {
+        return TC_ACT_SHOT;
+    }
+    transport &= IPV6_TRANSPORT_MASK;
     struct transport_ports *ports = data + transport;
     if ((void *)(ports + 1) > data_end) return TC_ACT_SHOT;
-    if (swap16(ports->source) != control->listener_port) return TC_ACT_PIPE;
+    __be16 source_port_raw = ports->source;
+    if (!selected_protocol(protocol, control)) return TC_ACT_SHOT;
+    if (swap16(source_port_raw) != control->listener_port) return TC_ACT_PIPE;
 
     if (skb_pull_data(skb, 0U) != 0) return TC_ACT_SHOT;
     data = (void *)(long)skb->data;
@@ -887,10 +911,16 @@ NOINLINE int egress_ipv6(
     }
     protocol = 0U;
     transport = ipv6_transport_offset(data, data_end, l3_offset, &protocol);
-    if (transport < 0 || !selected_protocol(protocol, control)) return TC_ACT_SHOT;
+    if (transport < IPV6_TRANSPORT_MIN_OFFSET || transport > IPV6_TRANSPORT_MAX_OFFSET) {
+        return TC_ACT_SHOT;
+    }
+    transport &= IPV6_TRANSPORT_MASK;
     ports = data + transport;
-    if ((void *)(ports + 1) > data_end ||
-        swap16(ports->source) != control->listener_port) {
+    if ((void *)(ports + 1) > data_end) return TC_ACT_SHOT;
+    source_port_raw = ports->source;
+    __be16 destination_port_raw = ports->destination;
+    if (!selected_protocol(protocol, control) ||
+        swap16(source_port_raw) != control->listener_port) {
         return TC_ACT_SHOT;
     }
 
@@ -901,7 +931,7 @@ NOINLINE int egress_ipv6(
     scratch->reply_key.ifindex = skb->ifindex;
     scratch->reply_key.family = AF_INET6_VALUE;
     scratch->reply_key.protocol = protocol;
-    scratch->reply_key.client_port = swap16(ports->destination);
+    scratch->reply_key.client_port = swap16(destination_port_raw);
     scratch->reply_key.listener_port = control->listener_port;
     copy_address(scratch->reply_key.client_addr, ip->destination, 16U);
     copy_address(scratch->reply_key.token_addr, ip->source, 16U);
@@ -913,11 +943,11 @@ NOINLINE int egress_ipv6(
     return rewrite_ipv6(
         skb,
         l3_offset,
-        (__u32)transport,
+        transport,
         true,
         scratch->reply_key.token_addr,
         scratch->reply_value.original_addr,
-        ports->source,
+        source_port_raw,
         swap16(scratch->reply_value.original_port),
         protocol);
 }
