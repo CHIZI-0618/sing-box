@@ -1,0 +1,236 @@
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"flag"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+
+	"github.com/sagernet/sing-box/cmd/internal/build_shared"
+	"github.com/sagernet/sing-box/common/windivert"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-usbip/driverassets"
+	E "github.com/sagernet/sing/common/exceptions"
+)
+
+var (
+	debugEnabled bool
+	outputPath   string
+	target       string
+)
+
+func init() {
+	flag.BoolVar(&debugEnabled, "debug", false, "enable debug")
+	flag.StringVar(&outputPath, "output", "", "output path")
+	flag.StringVar(&target, "target", runtime.GOOS+"/"+runtime.GOARCH, "target platform")
+}
+
+func main() {
+	flag.Parse()
+	err := build()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func build() error {
+	targetParts := strings.Split(target, "/")
+	if len(targetParts) != 2 || targetParts[0] == "" || targetParts[1] == "" {
+		return E.New("invalid target: ", target)
+	}
+	operatingSystem := targetParts[0]
+	architecture := targetParts[1]
+	if outputPath == "" {
+		outputPath = "sing-box-daemon"
+		if operatingSystem == "windows" {
+			outputPath += ".exe"
+		}
+	}
+	absoluteOutputPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return E.Cause(err, "resolve output path")
+	}
+	err = os.MkdirAll(filepath.Dir(absoluteOutputPath), 0o755)
+	if err != nil {
+		return E.Cause(err, "create output directory")
+	}
+	version, err := build_shared.ReadTag()
+	if err != nil {
+		return E.Cause(err, "read version")
+	}
+	cgoEnabled := operatingSystem != "windows" && os.Getenv("CC") != ""
+	tags, err := buildTags(operatingSystem, architecture, cgoEnabled)
+	if err != nil {
+		return err
+	}
+	arguments := []string{
+		"build",
+		"-v",
+		"-trimpath",
+		"-buildvcs=false",
+		"-tags", strings.Join(tags, ","),
+		"-ldflags", build_shared.LinkerFlags(version, debugEnabled),
+		"-o", absoluteOutputPath,
+	}
+	if operatingSystem == "windows" && architecture == "386" {
+		arguments = append(arguments, "-gcflags=net=-l")
+	}
+	arguments = append(arguments, "./experimental/boxdd")
+	command := exec.Command("go", arguments...)
+	cgoEnabledValue := "0"
+	if cgoEnabled {
+		cgoEnabledValue = "1"
+	}
+	command.Env = append(os.Environ(),
+		"CGO_ENABLED="+cgoEnabledValue,
+		"GOOS="+operatingSystem,
+		"GOARCH="+architecture,
+		"GOTOOLCHAIN=local",
+	)
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	err = command.Run()
+	if err != nil {
+		return E.Cause(err, "build sing-box daemon")
+	}
+	if operatingSystem == "windows" {
+		err = stageWinDivertDriver(architecture, filepath.Dir(absoluteOutputPath))
+		if err != nil {
+			return err
+		}
+		err = stageUSBIPDrivers(architecture, filepath.Dir(absoluteOutputPath))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stageUSBIPDrivers(architecture string, outputDirectory string) error {
+	driverPackages := []struct {
+		assets   map[string]driverassets.Package
+		assetDir string
+	}{
+		{driverassets.VBoxUSB, filepath.Join("internal", "vboxusb", "assets")},
+		{driverassets.VHCI, filepath.Join("internal", "usbipvhci", "assets")},
+	}
+	var moduleDirectory string
+	for _, driverPackage := range driverPackages {
+		staged := driverPackage.assets[architecture]
+		for _, architecturePackage := range driverPackage.assets {
+			for _, file := range architecturePackage.Files {
+				if slices.ContainsFunc(staged.Files, func(stagedFile driverassets.File) bool {
+					return stagedFile.Name == file.Name
+				}) {
+					continue
+				}
+				err := os.Remove(filepath.Join(outputDirectory, file.Name))
+				if err != nil && !os.IsNotExist(err) {
+					return E.Cause(err, "remove stale ", file.Name)
+				}
+			}
+		}
+		if len(staged.Files) == 0 {
+			continue
+		}
+		if moduleDirectory == "" {
+			listOutput, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/sagernet/sing-usbip").Output()
+			if err != nil {
+				return E.Cause(err, "locate sing-usbip module directory")
+			}
+			moduleDirectory = strings.TrimSpace(string(listOutput))
+		}
+		for _, file := range staged.Files {
+			content, err := os.ReadFile(filepath.Join(moduleDirectory, driverPackage.assetDir, architecture, file.Name))
+			if err != nil {
+				return E.Cause(err, "read ", file.Name)
+			}
+			checksum := sha256.Sum256(content)
+			if hex.EncodeToString(checksum[:]) != file.SHA256 {
+				return E.New(file.Name, " does not match the digest declared in sing-usbip/driverassets")
+			}
+			targetPath := filepath.Join(outputDirectory, file.Name)
+			stagedContent, err := os.ReadFile(targetPath)
+			if err == nil && bytes.Equal(stagedContent, content) {
+				continue
+			}
+			err = os.WriteFile(targetPath, content, 0o644)
+			if err != nil {
+				return E.Cause(err, "write ", file.Name)
+			}
+		}
+	}
+	return nil
+}
+
+func stageWinDivertDriver(architecture string, outputDirectory string) error {
+	var assetName, assetDigest string
+	switch architecture {
+	case "amd64":
+		assetName, assetDigest = windivert.Asset64Name, windivert.Asset64SHA256
+	case "386":
+		assetName, assetDigest = windivert.Asset32Name, windivert.Asset32SHA256
+	}
+	for _, name := range []string{windivert.Asset64Name, windivert.Asset32Name} {
+		if name == assetName {
+			continue
+		}
+		err := os.Remove(filepath.Join(outputDirectory, name))
+		if err != nil && !os.IsNotExist(err) {
+			return E.Cause(err, "remove stale ", name)
+		}
+	}
+	if assetName == "" {
+		return nil
+	}
+	assetDirectory := filepath.Join("common", "windivert", "assets")
+	content, err := os.ReadFile(filepath.Join(assetDirectory, assetName))
+	if err != nil {
+		return E.Cause(err, "read ", assetName)
+	}
+	checksum := sha256.Sum256(content)
+	if hex.EncodeToString(checksum[:]) != assetDigest {
+		return E.New(assetName, " does not match the digest declared in common/windivert")
+	}
+	targetPath := filepath.Join(outputDirectory, assetName)
+	staged, err := os.ReadFile(targetPath)
+	if err == nil && bytes.Equal(staged, content) {
+		return nil
+	}
+	err = os.WriteFile(targetPath, content, 0o644)
+	if err != nil {
+		return E.Cause(err, "write ", assetName)
+	}
+	return nil
+}
+
+func buildTags(operatingSystem string, architecture string, cgoEnabled bool) ([]string, error) {
+	tagsFile := "release/DEFAULT_BUILD_TAGS"
+	if operatingSystem == "windows" {
+		if architecture == "386" {
+			tagsFile = "release/DEFAULT_BUILD_TAGS_OTHERS"
+		} else {
+			tagsFile = "release/DEFAULT_BUILD_TAGS_WINDOWS"
+		}
+	} else if !cgoEnabled {
+		tagsFile = "release/DEFAULT_BUILD_TAGS_OTHERS"
+	}
+	content, err := os.ReadFile(tagsFile)
+	if err != nil {
+		return nil, E.Cause(err, "read build tags")
+	}
+	tags := strings.Split(strings.TrimSpace(string(content)), ",")
+	if operatingSystem == "windows" {
+		tags = append(tags, "with_external_windivert", "with_external_usbip_drivers")
+	}
+	if debugEnabled {
+		tags = append(tags, "debug")
+	}
+	return tags, nil
+}

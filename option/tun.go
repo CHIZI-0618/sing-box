@@ -1,0 +1,99 @@
+package option
+
+import (
+	"net/netip"
+	"strconv"
+
+	"github.com/sagernet/sing-box/schema"
+	E "github.com/sagernet/sing/common/exceptions"
+	F "github.com/sagernet/sing/common/format"
+	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/json/badoption"
+)
+
+type TunInboundOptions struct {
+	InterfaceName                 string                           `json:"interface_name,omitempty"`
+	NetNs                         string                           `json:"netns,omitempty" reference:"network_namespace"`
+	MTU                           uint32                           `json:"mtu,omitempty"`
+	Address                       badoption.Listable[netip.Prefix] `json:"address,omitempty" examples:"172.19.0.1/30,fdfe:dcba:9876::1/126"`
+	DNSMode                       string                           `json:"dns_mode,omitempty" enum:"disabled,native,hijack"`
+	DNSAddress                    badoption.Listable[netip.Addr]   `json:"dns_address,omitempty"`
+	AutoRoute                     bool                             `json:"auto_route,omitempty"`
+	IPRoute2TableIndex            int                              `json:"iproute2_table_index,omitempty"`
+	IPRoute2RuleIndex             int                              `json:"iproute2_rule_index,omitempty"`
+	AutoRedirect                  bool                             `json:"auto_redirect,omitempty"`
+	AutoRedirectInputMark         FwMark                           `json:"auto_redirect_input_mark,omitempty"`
+	AutoRedirectOutputMark        FwMark                           `json:"auto_redirect_output_mark,omitempty"`
+	AutoRedirectResetMark         FwMark                           `json:"auto_redirect_reset_mark,omitempty"`
+	AutoRedirectNFQueue           uint16                           `json:"auto_redirect_nfqueue,omitempty"`
+	AutoRedirectFallbackRuleIndex int                              `json:"auto_redirect_iproute2_fallback_rule_index,omitempty"`
+	ExcludeMPTCP                  bool                             `json:"exclude_mptcp,omitempty"`
+	LoopbackAddress               badoption.Listable[netip.Addr]   `json:"loopback_address,omitempty"`
+	StrictRoute                   bool                             `json:"strict_route,omitempty"`
+	RouteAddress                  badoption.Listable[netip.Prefix] `json:"route_address,omitempty"`
+	RouteAddressSet               badoption.Listable[string]       `json:"route_address_set,omitempty"`
+	RouteExcludeAddress           badoption.Listable[netip.Prefix] `json:"route_exclude_address,omitempty"`
+	RouteExcludeAddressSet        badoption.Listable[string]       `json:"route_exclude_address_set,omitempty"`
+	IncludeInterface              badoption.Listable[string]       `json:"include_interface,omitempty"`
+	ExcludeInterface              badoption.Listable[string]       `json:"exclude_interface,omitempty"`
+	IncludeUID                    badoption.Listable[uint32]       `json:"include_uid,omitempty"`
+	IncludeUIDRange               badoption.Listable[string]       `json:"include_uid_range,omitempty"`
+	ExcludeUID                    badoption.Listable[uint32]       `json:"exclude_uid,omitempty"`
+	ExcludeUIDRange               badoption.Listable[string]       `json:"exclude_uid_range,omitempty"`
+	IncludeAndroidUser            badoption.Listable[int]          `json:"include_android_user,omitempty"`
+	IncludePackage                badoption.Listable[string]       `json:"include_package,omitempty"`
+	ExcludePackage                badoption.Listable[string]       `json:"exclude_package,omitempty"`
+	IncludeMACAddress             badoption.Listable[string]       `json:"include_mac_address,omitempty"`
+	ExcludeMACAddress             badoption.Listable[string]       `json:"exclude_mac_address,omitempty"`
+	UDPTimeout                    UDPTimeoutCompat                 `json:"udp_timeout,omitempty"`
+	UDPMapping                    UDPNATBehavior                   `json:"udp_mapping,omitempty"`
+	UDPFiltering                  UDPNATBehavior                   `json:"udp_filtering,omitempty"`
+	UDPNATMax                     uint32                           `json:"udp_nat_max,omitempty"`
+	Stack                         string                           `json:"stack,omitempty" enum:"system,gvisor,mixed"`
+	Platform                      *TunPlatformOptions              `json:"platform,omitempty"`
+	InboundOptions
+
+	// Deprecated: removed
+	GSO bool `json:"gso,omitempty" schema:"omit"`
+	// Deprecated: merged to Address
+	Inet4Address badoption.Listable[netip.Prefix] `json:"inet4_address,omitempty" schema:"omit"`
+	// Deprecated: merged to Address
+	Inet6Address badoption.Listable[netip.Prefix] `json:"inet6_address,omitempty" schema:"omit"`
+	// Deprecated: merged to RouteAddress
+	Inet4RouteAddress badoption.Listable[netip.Prefix] `json:"inet4_route_address,omitempty" schema:"omit"`
+	// Deprecated: merged to RouteAddress
+	Inet6RouteAddress badoption.Listable[netip.Prefix] `json:"inet6_route_address,omitempty" schema:"omit"`
+	// Deprecated: merged to RouteExcludeAddress
+	Inet4RouteExcludeAddress badoption.Listable[netip.Prefix] `json:"inet4_route_exclude_address,omitempty" schema:"omit"`
+	// Deprecated: merged to RouteExcludeAddress
+	Inet6RouteExcludeAddress badoption.Listable[netip.Prefix] `json:"inet6_route_exclude_address,omitempty" schema:"omit"`
+	// Deprecated: removed
+	EndpointIndependentNat bool `json:"endpoint_independent_nat,omitempty" schema:"omit"`
+}
+
+type FwMark uint32
+
+func (f FwMark) MarshalJSON() ([]byte, error) {
+	return json.Marshal(F.ToString("0x", strconv.FormatUint(uint64(f), 16)))
+}
+
+func (f *FwMark) UnmarshalJSON(bytes []byte) error {
+	var stringValue string
+	err := json.Unmarshal(bytes, &stringValue)
+	if err != nil {
+		if rawErr := json.Unmarshal(bytes, (*uint32)(f)); rawErr == nil {
+			return nil
+		}
+		return E.Cause(err, "invalid number or string mark")
+	}
+	intValue, err := strconv.ParseUint(stringValue, 0, 32)
+	if err != nil {
+		return err
+	}
+	*f = FwMark(intValue)
+	return nil
+}
+
+func (f FwMark) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return schema.AnyOf(schema.UnsignedNode(32), schema.StringNode()), nil
+}

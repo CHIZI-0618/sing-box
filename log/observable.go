@@ -1,0 +1,259 @@
+package log
+
+import (
+	"context"
+	"io"
+	"os"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/sagernet/sing/common"
+	F "github.com/sagernet/sing/common/format"
+	"github.com/sagernet/sing/common/observable"
+	"github.com/sagernet/sing/service/filemanager"
+)
+
+var _ ObservableFactory = (*defaultFactory)(nil)
+
+type defaultFactory struct {
+	ctx               context.Context
+	formatter         Formatter
+	platformFormatter Formatter
+	writer            io.Writer
+	file              *os.File
+	filePath          string
+	platformWriters   atomic.Pointer[[]PlatformWriter]
+	needObservable    bool
+	level             Level
+	subscriber        *observable.Subscriber[Entry]
+	observer          *observable.Observer[Entry]
+	startAccess       sync.Mutex
+	started           atomic.Bool
+	pendingEntries    []pendingEntry
+}
+
+type pendingEntry struct {
+	ctx       context.Context
+	level     Level
+	tag       string
+	message   string
+	timestamp time.Time
+}
+
+func NewDefaultFactory(
+	ctx context.Context,
+	formatter Formatter,
+	writer io.Writer,
+	filePath string,
+	platformWriter PlatformWriter,
+	needObservable bool,
+) ObservableFactory {
+	factory := &defaultFactory{
+		ctx:       ctx,
+		formatter: formatter,
+		platformFormatter: Formatter{
+			BaseTime:         formatter.BaseTime,
+			DisableLineBreak: true,
+		},
+		writer:         writer,
+		filePath:       filePath,
+		needObservable: needObservable,
+		level:          LevelTrace,
+		subscriber:     observable.NewSubscriber[Entry](128),
+	}
+	if platformWriter != nil {
+		factory.platformWriters.Store(&[]PlatformWriter{platformWriter})
+	}
+	/*if platformWriter != nil {
+		factory.platformFormatter.DisableColors = platformWriter.DisableColors()
+	}*/
+	return factory
+}
+
+func (f *defaultFactory) Start() error {
+	var err error
+	if f.filePath != "" {
+		logFile, openErr := filemanager.OpenFile(f.ctx, f.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if openErr != nil {
+			err = openErr
+		} else {
+			f.writer = logFile
+			f.file = logFile
+		}
+	}
+	if f.needObservable {
+		f.observer = observable.NewObserver[Entry](f.subscriber, 64)
+	}
+	f.startAccess.Lock()
+	pendingEntries := f.pendingEntries
+	f.pendingEntries = nil
+	f.started.Store(true)
+	f.startAccess.Unlock()
+	for _, entry := range pendingEntries {
+		f.output(entry.ctx, entry.level, entry.tag, entry.message, entry.timestamp)
+	}
+	return err
+}
+
+func (f *defaultFactory) Close() error {
+	f.startAccess.Lock()
+	f.pendingEntries = nil
+	f.startAccess.Unlock()
+	return common.Close(
+		common.PtrOrNil(f.file),
+		f.subscriber,
+	)
+}
+
+func (f *defaultFactory) AttachPlatformWriter(writer PlatformWriter) {
+	writers := append(f.loadPlatformWriters(), writer)
+	f.platformWriters.Store(&writers)
+}
+
+func (f *defaultFactory) loadPlatformWriters() []PlatformWriter {
+	writers := f.platformWriters.Load()
+	if writers == nil {
+		return nil
+	}
+	return *writers
+}
+
+func (f *defaultFactory) Level() Level {
+	return f.level
+}
+
+func (f *defaultFactory) SetLevel(level Level) {
+	f.level = level
+}
+
+func (f *defaultFactory) Logger() ContextLogger {
+	return f.NewLogger("")
+}
+
+func (f *defaultFactory) NewLogger(tag string) ContextLogger {
+	return &observableLogger{f, tag}
+}
+
+func (f *defaultFactory) Subscribe() (subscription observable.Subscription[Entry], done <-chan struct{}, err error) {
+	return f.observer.Subscribe()
+}
+
+func (f *defaultFactory) UnSubscribe(sub observable.Subscription[Entry]) {
+	f.observer.UnSubscribe(sub)
+}
+
+func (f *defaultFactory) output(ctx context.Context, level Level, tag string, message string, timestamp time.Time) {
+	if f.needObservable {
+		formatted, formattedSimple := f.formatter.FormatWithSimple(ctx, level, tag, message, timestamp)
+		if level <= f.level {
+			if level == LevelPanic {
+				panic(formatted)
+			}
+			f.writer.Write([]byte(formatted))
+			if level == LevelFatal {
+				os.Exit(1)
+			}
+		}
+		f.subscriber.Emit(Entry{level, formattedSimple})
+	} else if level <= f.level {
+		formatted := f.formatter.Format(ctx, level, tag, message, timestamp)
+		if level == LevelPanic {
+			panic(formatted)
+		}
+		f.writer.Write([]byte(formatted))
+		if level == LevelFatal {
+			os.Exit(1)
+		}
+	}
+	platformWriters := f.loadPlatformWriters()
+	if len(platformWriters) > 0 {
+		platformMessage := f.platformFormatter.Format(ctx, level, tag, message, timestamp)
+		for _, platformWriter := range platformWriters {
+			platformWriter.WriteMessage(level, platformMessage)
+		}
+	}
+}
+
+var _ ContextLogger = (*observableLogger)(nil)
+
+type observableLogger struct {
+	*defaultFactory
+	tag string
+}
+
+func (l *observableLogger) Log(ctx context.Context, level Level, args []any) {
+	level = OverrideLevelFromContext(level, ctx)
+	platformWriters := l.loadPlatformWriters()
+	if level > l.level && len(platformWriters) == 0 && !l.needObservable {
+		return
+	}
+	nowTime := time.Now()
+	message := F.ToString(args...)
+	if !l.started.Load() && level != LevelFatal && level != LevelPanic {
+		l.startAccess.Lock()
+		if !l.started.Load() {
+			l.pendingEntries = append(l.pendingEntries, pendingEntry{ctx, level, l.tag, message, nowTime})
+			l.startAccess.Unlock()
+			return
+		}
+		l.startAccess.Unlock()
+	}
+	l.output(ctx, level, l.tag, message, nowTime)
+}
+
+func (l *observableLogger) Trace(args ...any) {
+	l.TraceContext(context.Background(), args...)
+}
+
+func (l *observableLogger) Debug(args ...any) {
+	l.DebugContext(context.Background(), args...)
+}
+
+func (l *observableLogger) Info(args ...any) {
+	l.InfoContext(context.Background(), args...)
+}
+
+func (l *observableLogger) Warn(args ...any) {
+	l.WarnContext(context.Background(), args...)
+}
+
+func (l *observableLogger) Error(args ...any) {
+	l.ErrorContext(context.Background(), args...)
+}
+
+func (l *observableLogger) Fatal(args ...any) {
+	l.FatalContext(context.Background(), args...)
+}
+
+func (l *observableLogger) Panic(args ...any) {
+	l.PanicContext(context.Background(), args...)
+}
+
+func (l *observableLogger) TraceContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelTrace, args)
+}
+
+func (l *observableLogger) DebugContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelDebug, args)
+}
+
+func (l *observableLogger) InfoContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelInfo, args)
+}
+
+func (l *observableLogger) WarnContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelWarn, args)
+}
+
+func (l *observableLogger) ErrorContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelError, args)
+}
+
+func (l *observableLogger) FatalContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelFatal, args)
+}
+
+func (l *observableLogger) PanicContext(ctx context.Context, args ...any) {
+	l.Log(ctx, LevelPanic, args)
+}

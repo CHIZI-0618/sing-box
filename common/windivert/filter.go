@@ -1,0 +1,278 @@
+package windivert
+
+import (
+	"encoding/binary"
+	"net/netip"
+
+	E "github.com/sagernet/sing/common/exceptions"
+)
+
+// WINDIVERT_FILTER VM instruction layout (24 bytes, #pragma pack(1)):
+//
+//	word 0 (LE):  field:11 | test:5 | success:16
+//	word 1 (LE):  failure:16 | neg:1 | reserved:15
+//	words 2..5:   arg[4] (native-endian uint32 each)
+//
+// The driver walks this as a decision tree: evaluate the test at inst i;
+// on success jump to success; on failure jump to failure. Continuations
+// 0x7FFE and 0x7FFF are ACCEPT and REJECT terminals.
+const (
+	filterInstBytes = 24
+	filterMaxInsts  = 256
+
+	fieldZero        = 0
+	fieldInbound     = 1
+	fieldOutbound    = 2
+	fieldIP          = 5
+	fieldIPv6        = 6
+	fieldICMP        = 7
+	fieldTCP         = 8
+	fieldUDP         = 9
+	fieldICMPv6      = 10
+	fieldIPSrcAddr   = 21
+	fieldIPDstAddr   = 22
+	fieldIPv6SrcAddr = 28
+	fieldIPv6DstAddr = 29
+	fieldICMPType    = 30
+	fieldICMPv6Type  = 34
+	fieldTCPSrcPort  = 38
+	fieldTCPDstPort  = 39
+	fieldUDPSrcPort  = 53
+	fieldUDPDstPort  = 54
+
+	testEQ  = 0
+	testLEQ = 3
+	testGEQ = 5
+
+	resultAccept uint16 = 0x7FFE
+	resultReject uint16 = 0x7FFF
+)
+
+// Filter flags passed to IOCTL_WINDIVERT_STARTUP alongside the compiled
+// filter. The driver installs WFP callouts only for the directions and
+// address families named here (windivert_install_callouts), so a filter
+// missing its direction flag never sees a packet.
+const (
+	filterFlagInbound  uint64 = 0x0010
+	filterFlagOutbound uint64 = 0x0020
+	filterFlagIP       uint64 = 0x0040
+	filterFlagIPv6     uint64 = 0x0080
+)
+
+type filterInst struct {
+	field   uint16
+	test    uint8
+	success uint16
+	failure uint16
+	neg     bool
+	arg     [4]uint32
+}
+
+type Filter struct {
+	insts    []filterInst
+	anyInsts []filterInst
+	flags    uint64
+}
+
+func reject() *Filter {
+	return &Filter{}
+}
+
+func OutboundTCP(src, dst netip.AddrPort) (*Filter, error) {
+	if !src.IsValid() || !dst.IsValid() {
+		return nil, E.New("windivert: filter: invalid address port")
+	}
+	if src.Addr().Is4() != dst.Addr().Is4() {
+		return nil, E.New("windivert: filter: mixed IPv4/IPv6")
+	}
+	f := &Filter{
+		flags: filterFlagOutbound,
+	}
+	f.add(fieldOutbound, testEQ, argUint32(1))
+	if src.Addr().Is4() {
+		f.flags |= filterFlagIP
+		f.add(fieldIP, testEQ, argUint32(1))
+		f.add(fieldTCP, testEQ, argUint32(1))
+		f.add(fieldIPSrcAddr, testEQ, argIPv4(src.Addr()))
+		f.add(fieldIPDstAddr, testEQ, argIPv4(dst.Addr()))
+	} else {
+		f.flags |= filterFlagIPv6
+		f.add(fieldIPv6, testEQ, argUint32(1))
+		f.add(fieldTCP, testEQ, argUint32(1))
+		f.add(fieldIPv6SrcAddr, testEQ, argIPv6(src.Addr()))
+		f.add(fieldIPv6DstAddr, testEQ, argIPv6(dst.Addr()))
+	}
+	f.add(fieldTCPSrcPort, testEQ, argUint32(uint32(src.Port())))
+	f.add(fieldTCPDstPort, testEQ, argUint32(uint32(dst.Port())))
+	return f, nil
+}
+
+func inboundTo(destinations []netip.Addr) (*Filter, error) {
+	if len(destinations) == 0 {
+		return nil, E.New("windivert: filter: no destination address")
+	}
+	isV6 := destinations[0].Is6()
+	for _, destination := range destinations {
+		if !destination.IsValid() {
+			return nil, E.New("windivert: filter: invalid address")
+		}
+		if destination.Is6() != isV6 {
+			return nil, E.New("windivert: filter: mixed IPv4/IPv6")
+		}
+	}
+	f := &Filter{
+		flags: filterFlagInbound,
+	}
+	f.add(fieldInbound, testEQ, argUint32(1))
+	if !isV6 {
+		f.flags |= filterFlagIP
+		f.add(fieldIP, testEQ, argUint32(1))
+		for _, destination := range destinations {
+			f.addAny(fieldIPDstAddr, testEQ, argIPv4(destination))
+		}
+	} else {
+		f.flags |= filterFlagIPv6
+		f.add(fieldIPv6, testEQ, argUint32(1))
+		for _, destination := range destinations {
+			f.addAny(fieldIPv6DstAddr, testEQ, argIPv6(destination))
+		}
+	}
+	return f, nil
+}
+
+func InboundTCPPortRange(destinations []netip.Addr, portLow, portHigh uint16) (*Filter, error) {
+	f, err := inboundTo(destinations)
+	if err != nil {
+		return nil, err
+	}
+	f.add(fieldTCP, testEQ, argUint32(1))
+	f.add(fieldTCPDstPort, testGEQ, argUint32(uint32(portLow)))
+	f.add(fieldTCPDstPort, testLEQ, argUint32(uint32(portHigh)))
+	return f, nil
+}
+
+func InboundUDPPortRange(destinations []netip.Addr, portLow, portHigh uint16) (*Filter, error) {
+	f, err := inboundTo(destinations)
+	if err != nil {
+		return nil, err
+	}
+	f.add(fieldUDP, testEQ, argUint32(1))
+	f.add(fieldUDPDstPort, testGEQ, argUint32(uint32(portLow)))
+	f.add(fieldUDPDstPort, testLEQ, argUint32(uint32(portHigh)))
+	return f, nil
+}
+
+func InboundICMPEchoReply(destinations []netip.Addr) (*Filter, error) {
+	f, err := inboundTo(destinations)
+	if err != nil {
+		return nil, err
+	}
+	if destinations[0].Is4() {
+		f.add(fieldICMP, testEQ, argUint32(1))
+		f.add(fieldICMPType, testEQ, argUint32(0))
+	} else {
+		f.add(fieldICMPv6, testEQ, argUint32(1))
+		f.add(fieldICMPv6Type, testEQ, argUint32(129))
+	}
+	return f, nil
+}
+
+func InboundICMPError(destinations []netip.Addr) (*Filter, error) {
+	f, err := inboundTo(destinations)
+	if err != nil {
+		return nil, err
+	}
+	if destinations[0].Is4() {
+		f.add(fieldICMP, testEQ, argUint32(1))
+		f.add(fieldICMPType, testGEQ, argUint32(3))
+		f.add(fieldICMPType, testLEQ, argUint32(12))
+	} else {
+		f.add(fieldICMPv6, testEQ, argUint32(1))
+		f.add(fieldICMPv6Type, testGEQ, argUint32(1))
+		f.add(fieldICMPv6Type, testLEQ, argUint32(4))
+	}
+	return f, nil
+}
+
+func (f *Filter) add(field uint16, test uint8, arg [4]uint32) {
+	f.insts = append(f.insts, filterInst{field: field, test: test, arg: arg})
+}
+
+func (f *Filter) addAny(field uint16, test uint8, arg [4]uint32) {
+	f.anyInsts = append(f.anyInsts, filterInst{field: field, test: test, arg: arg})
+}
+
+func argUint32(v uint32) [4]uint32 { return [4]uint32{v, 0, 0, 0} }
+
+// The driver compares IP_SRCADDR/IP_DSTADDR against an IPv4-mapped-IPv6
+// form: {host_order_u32, 0x0000FFFF, 0, 0} (sys/windivert.c
+// windivert_get_ipv4_addr).
+func argIPv4(addr netip.Addr) [4]uint32 {
+	b := addr.As4()
+	return [4]uint32{binary.BigEndian.Uint32(b[:]), 0x0000FFFF, 0, 0}
+}
+
+// The driver stores IPV6_SRCADDR/IPV6_DSTADDR as four host-order uint32s in
+// reversed word order: val[0]=low (bytes 12..15), val[3]=high (bytes 0..3)
+// (sys/windivert.c windivert_outbound_network_v6_classify).
+func argIPv6(addr netip.Addr) [4]uint32 {
+	b := addr.As16()
+	return [4]uint32{
+		binary.BigEndian.Uint32(b[12:16]),
+		binary.BigEndian.Uint32(b[8:12]),
+		binary.BigEndian.Uint32(b[4:8]),
+		binary.BigEndian.Uint32(b[0:4]),
+	}
+}
+
+func (f *Filter) encode() ([]byte, uint64, error) {
+	total := len(f.insts) + len(f.anyInsts)
+	if total == 0 {
+		return encodeInst(filterInst{
+			field:   fieldZero,
+			test:    testEQ,
+			success: resultReject,
+			failure: resultReject,
+		}), 0, nil
+	}
+	if total > filterMaxInsts-1 {
+		return nil, 0, E.New("windivert: filter too long")
+	}
+	buf := make([]byte, 0, filterInstBytes*total)
+	for i, inst := range f.insts {
+		if i == total-1 {
+			inst.success = resultAccept
+		} else {
+			inst.success = uint16(i + 1)
+		}
+		inst.failure = resultReject
+		buf = append(buf, encodeInst(inst)...)
+	}
+	for i, inst := range f.anyInsts {
+		inst.success = resultAccept
+		if len(f.insts)+i == total-1 {
+			inst.failure = resultReject
+		} else {
+			inst.failure = uint16(len(f.insts) + i + 1)
+		}
+		buf = append(buf, encodeInst(inst)...)
+	}
+	return buf, f.flags, nil
+}
+
+func encodeInst(inst filterInst) []byte {
+	out := make([]byte, filterInstBytes)
+	word0 := uint32(inst.field&0x7FF) | uint32(inst.test&0x1F)<<11 |
+		uint32(inst.success)<<16
+	word1 := uint32(inst.failure)
+	if inst.neg {
+		word1 |= 1 << 16
+	}
+	binary.LittleEndian.PutUint32(out[0:4], word0)
+	binary.LittleEndian.PutUint32(out[4:8], word1)
+	binary.LittleEndian.PutUint32(out[8:12], inst.arg[0])
+	binary.LittleEndian.PutUint32(out[12:16], inst.arg[1])
+	binary.LittleEndian.PutUint32(out[16:20], inst.arg[2])
+	binary.LittleEndian.PutUint32(out[20:24], inst.arg[3])
+	return out
+}

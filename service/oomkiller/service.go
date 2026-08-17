@@ -1,0 +1,74 @@
+package oomkiller
+
+import (
+	"context"
+	"sync/atomic"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	boxService "github.com/sagernet/sing-box/adapter/service"
+	boxConstant "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/service"
+)
+
+type OOMReporter interface {
+	WriteReport(memoryUsage uint64) error
+	WriteDraft(memoryUsage uint64) error
+	DiscardDraft() error
+}
+
+func RegisterService(registry *boxService.Registry) {
+	boxService.Register[option.OOMKillerServiceOptions](registry, boxConstant.TypeOOMKiller, NewService)
+}
+
+type Service struct {
+	boxService.Adapter
+	ctx            context.Context
+	logger         log.ContextLogger
+	network        adapter.NetworkManager
+	timerConfig    timerConfig
+	adaptiveTimer  *adaptiveTimer
+	lastReportTime atomic.Int64
+	//nolint:unused // touched only on darwin && cgo via writeOOMDraft/discardOOMDraft.
+	lastDraftTime atomic.Int64
+	//nolint:unused // touched only on darwin && cgo via writeOOMDraft/discardOOMDraft.
+	draftCancelled atomic.Bool
+}
+
+func NewService(ctx context.Context, logger log.ContextLogger, tag string, options option.OOMKillerServiceOptions) (adapter.Service, error) {
+	memoryLimit, mode := resolvePolicyMode(ctx, options)
+	config, err := buildTimerConfig(options, memoryLimit, mode, options.KillerDisabled)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		Adapter:     boxService.NewAdapter(boxConstant.TypeOOMKiller, tag),
+		ctx:         ctx,
+		logger:      logger,
+		network:     service.FromContext[adapter.NetworkManager](ctx),
+		timerConfig: config,
+	}, nil
+}
+
+func (s *Service) writeOOMReport(memoryUsage uint64) {
+	now := time.Now().Unix()
+	lastReport := s.lastReportTime.Load()
+	if now-lastReport < 3600 {
+		return
+	}
+	if !s.lastReportTime.CompareAndSwap(lastReport, now) {
+		return
+	}
+	reporter := service.FromContext[OOMReporter](s.ctx)
+	if reporter == nil {
+		return
+	}
+	err := reporter.WriteReport(memoryUsage)
+	if err != nil {
+		s.logger.Warn("failed to write OOM report: ", err)
+	} else {
+		s.logger.Info("OOM report saved")
+	}
+}

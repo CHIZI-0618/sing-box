@@ -1,0 +1,237 @@
+---
+icon: material/new-box
+---
+
+!!! quote "Changes in sing-box 1.14.0"
+
+    :material-plus: [listen_port](#listen_port)  
+    :material-plus: [ssh_server](#ssh_server)  
+    :material-plus: [taildrop_directory](#taildrop_directory)
+
+!!! quote "Changes in sing-box 1.13.0"
+
+    :material-plus: [relay_server_port](#relay_server_port)  
+    :material-plus: [relay_server_static_endpoints](#relay_server_static_endpoints)  
+    :material-plus: [system_interface](#system_interface)  
+    :material-plus: [system_interface_name](#system_interface_name)  
+    :material-plus: [system_interface_mtu](#system_interface_mtu)  
+    :material-plus: [advertise_tags](#advertise_tags)
+
+!!! question "Since sing-box 1.12.0"
+
+### Structure
+
+```json
+{
+  "type": "tailscale",
+  "tag": "ts-ep",
+  "state_directory": "",
+  "auth_key": "",
+  "control_url": "",
+  "ephemeral": false,
+  "hostname": "",
+  "accept_routes": false,
+  "exit_node": "",
+  "exit_node_allow_lan_access": false,
+  "advertise_routes": [],
+  "advertise_exit_node": false,
+  "advertise_tags": [],
+  "listen_port": 0,
+  "relay_server_port": 0,
+  "relay_server_static_endpoints": [],
+  "system_interface": false,
+  "system_interface_name": "",
+  "system_interface_mtu": 0,
+  "udp_timeout": "5m",
+  "ssh_server": false,
+  "taildrop_directory": "",
+
+  ... // Dial Fields
+}
+```
+
+### Fields
+
+#### state_directory
+
+The directory where the Tailscale state is stored.
+
+`tailscale` is used by default.
+
+Example: `$HOME/.tailscale`
+
+#### auth_key
+
+!!! note
+    
+    Auth key is not required. By default, sing-box will log the login URL.
+
+The auth key to create the node. If the node is already created (from state previously stored), then this field is not
+used.
+
+#### control_url
+
+The coordination server URL.
+
+`https://controlplane.tailscale.com` is used by default.
+
+#### ephemeral
+
+Indicates whether the instance should register as an Ephemeral node (https://tailscale.com/s/ephemeral-nodes).
+
+#### hostname
+
+The hostname of the node.
+
+System hostname is used by default.
+
+!!! question "Since sing-box 1.14.0"
+
+    On iOS, tvOS and Android, the device name is used by default.
+
+Example: `localhost`
+
+#### accept_routes
+
+Indicates whether the node should accept routes advertised by other nodes.
+
+#### exit_node
+
+The exit node name or IP address to use.
+
+#### exit_node_allow_lan_access
+
+!!! note
+
+    When the exit node does not have a corresponding advertised route, private traffics cannot be routed to the exit node even if `exit_node_allow_lan_access is` set.
+
+Indicates whether locally accessible subnets should be routed directly or via the exit node.
+
+#### advertise_routes
+
+CIDR prefixes to advertise into the Tailscale network as reachable through the current node.
+
+Example: `["192.168.1.1/24"]`
+
+#### advertise_exit_node
+
+Indicates whether the node should advertise itself as an exit node.
+
+#### advertise_tags
+
+!!! question "Since sing-box 1.13.0"
+
+Tags to advertise for this node, for ACL enforcement purposes.
+
+Example: `["tag:server"]`
+
+#### listen_port
+
+!!! question "Since sing-box 1.14.0"
+
+The UDP port to listen on for WireGuard and peer-to-peer traffic.
+
+A port is automatically selected by default.
+
+#### relay_server_port
+
+!!! question "Since sing-box 1.13.0"
+
+The port to listen on for incoming relay connections from other Tailscale nodes.
+
+#### relay_server_static_endpoints
+
+!!! question "Since sing-box 1.13.0"
+
+Static endpoints to advertise for the relay server.
+
+#### system_interface
+
+!!! question "Since sing-box 1.13.0"
+
+Create a system TUN interface for Tailscale.
+
+#### system_interface_name
+
+!!! question "Since sing-box 1.13.0"
+
+Custom TUN interface name. By default, `tailscale` (or `utun` on macOS) will be used.
+
+#### system_interface_mtu
+
+!!! question "Since sing-box 1.13.0"
+
+Override the TUN MTU. By default, Tailscale's own MTU is used.
+
+#### udp_timeout
+
+UDP NAT expiration time.
+
+`5m` will be used by default.
+
+#### ssh_server
+
+!!! question "Since sing-box 1.14.0"
+
+Run a Tailscale SSH server on tailnet port 22.
+
+Access is controlled by the SSH ACL in the Tailscale admin console, which maps each connection to a local user. How that user is resolved, and which users are allowed, depends on the platform:
+
+- **Linux** and **macOS**: the user is resolved from the system user database. Switching to a user other than the one sing-box runs as requires running as root; without root, sessions are limited to the current user.
+- **Windows**: in the command line client, sessions run as the sing-box process identity; the mapped user is not impersonated, so a session mapped to a different local account is refused. In the graphical client, there is no such restriction.
+- **Android**: the user is resolved by the app rather than the system user database. `root` is the superuser (UID 0) and `shell` is the ADB shell user (UID 2000); every other name is resolved as the package name of an installed application, running as that application's UID with its data directory as the home directory, so the target application must be installed. `termux` is a shortcut for `com.termux`, and `sing-box` for the app's own package name; when Termux is installed, the `root` and `termux` users load the Termux environment. Running as the sing-box application itself requires no root, while any other user requires granted root access; without root, sessions are limited to the sing-box user.
+- **macOS**: the SSH server is only available in the standalone version and requires the Helper Service; the App Store version is not supported.
+- **iOS**: the SSH server is only available in the jailbreak build; the App Store and TestFlight versions are not supported.
+- **tvOS**: not yet supported.
+
+Object format:
+
+```json
+{
+  "enabled": true,
+  "disable_pty": false,
+  "disable_sftp": false,
+  "disable_forwarding": false
+}
+```
+
+Setting `ssh_server` value to `true` is equivalent to `{ "enabled": true }`.
+
+#### ssh_server.enabled
+
+Enable the SSH server.
+
+#### ssh_server.disable_pty
+
+Refuse PTY allocation requests.
+
+#### ssh_server.disable_sftp
+
+Refuse the SFTP subsystem.
+
+#### ssh_server.disable_forwarding
+
+Refuse local and remote TCP and Unix-socket forwarding, including SSH agent forwarding.
+
+#### taildrop_directory
+
+!!! question "Since sing-box 1.14.0"
+
+The directory where files received from tailnet peers are stored.
+
+Relative paths are resolved against the working directory, as [state_directory](#state_directory)
+is.
+
+`Taildrop` is used by default.
+
+### Dial Fields
+
+!!! note
+
+    Dial Fields in Tailscale endpoints only control how it connects to the control plane and have nothing to do with actual connections.
+
+See [Dial Fields](/configuration/shared/dial/) for details.
+
+### Interactive authentication
+
+Use `Tools` > `Endpoints` in the sing-box dashboard or any sing-box graphical client to authenticate and manage the endpoint.

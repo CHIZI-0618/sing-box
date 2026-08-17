@@ -1,0 +1,278 @@
+!!! quote "Changes in sing-box 1.14.0"
+
+    :material-plus: [hop_interval_max](#hop_interval_max)  
+    :material-plus: [bbr_profile](#bbr_profile)  
+    :material-plus: [disable_chrome_parrot](#disable_chrome_parrot)  
+    :material-plus: [realm](#realm)  
+    :material-alert: [obfs](#obfstype)
+
+!!! quote "Changes in sing-box 1.11.0"
+
+    :material-plus: [server_ports](#server_ports)  
+    :material-plus: [hop_interval](#hop_interval)
+
+### Structure
+
+```json
+{
+  "type": "hysteria2",
+  "tag": "hy2-out",
+
+  "server": "127.0.0.1",
+  "server_port": 1080,
+  "server_ports": [
+    "2080:3000"
+  ],
+  "hop_interval": "",
+  "hop_interval_max": "",
+  "up_mbps": 100,
+  "down_mbps": 100,
+  "obfs": {
+    "type": "salamander",
+    "password": "cry_me_a_r1ver"
+  },
+  "password": "goofy_ahh_password",
+  "network": "tcp",
+  "tls": {},
+
+  ... // QUIC Fields
+
+  "bbr_profile": "",
+  "brutal_debug": false,
+  "disable_chrome_parrot": false,
+  "realm": {
+    "server_url": "https://realm.example.com",
+    "token": "",
+    "realm_id": "",
+    "stun_servers": [],
+    "ip_version": 0,
+    "port_mapping": {
+      "enabled": false,
+      "timeout": "",
+      "lifetime": ""
+    },
+    "http_client": {}
+  },
+
+  ... // Dial Fields
+}
+```
+
+!!! note ""
+
+    You can ignore the JSON Array [] tag when the content is only one item
+
+!!! warning "Difference from official Hysteria2"
+
+    The official Hysteria2 supports an authentication method called **userpass**,
+    which essentially uses a combination of `<username>:<password>` as the actual password,
+    while sing-box does not provide this alias.
+    If you are planning to use sing-box with the official program,
+    please note that you will need to fill the combination as the password.
+
+### Fields
+
+#### server
+
+==Required==
+
+The server address.
+
+Conflicts with `realm`.
+
+#### server_port
+
+==Required==
+
+The server port.
+
+Ignored if `server_ports` is set.
+
+Conflicts with `realm`.
+
+#### server_ports
+
+!!! question "Since sing-box 1.11.0"
+
+Server port range list.
+
+Conflicts with `server_port` and `realm`.
+
+#### hop_interval
+
+!!! question "Since sing-box 1.11.0"
+
+Port hopping interval.
+
+`30s` is used by default.
+
+#### hop_interval_max
+
+!!! question "Since sing-box 1.14.0"
+
+Maximum port hopping interval, used for randomization.
+
+If set, the actual hop interval will be randomly chosen between `hop_interval` and `hop_interval_max`.
+
+#### up_mbps, down_mbps
+
+Max bandwidth, in Mbps.
+
+If empty, the BBR congestion control algorithm will be used instead of Hysteria CC.
+
+#### obfs.type
+
+QUIC traffic obfuscator type, one of `salamander` `gecko`.
+
+Disabled if empty.
+
+#### obfs.password
+
+QUIC traffic obfuscator password.
+
+#### obfs.min_packet_size
+
+!!! question "Since sing-box 1.14.0"
+
+Minimum on-wire packet size in bytes. Gecko only.
+
+`512` is used by default.
+
+#### obfs.max_packet_size
+
+!!! question "Since sing-box 1.14.0"
+
+Maximum on-wire packet size in bytes. Gecko only.
+
+`1200` is used by default.
+
+#### password
+
+Authentication password.
+
+#### network
+
+Enabled network
+
+One of `tcp` `udp`.
+
+Both is enabled by default.
+
+#### tls
+
+==Required==
+
+TLS configuration, see [TLS](/configuration/shared/tls/#outbound).
+
+### QUIC Fields
+
+See [QUIC Fields](/configuration/shared/quic/) for details.
+
+#### bbr_profile
+
+!!! question "Since sing-box 1.14.0"
+
+BBR congestion control algorithm profile, one of `conservative` `standard` `aggressive`.
+
+`standard` is used by default.
+
+#### brutal_debug
+
+Enable debug information logging for Hysteria Brutal CC.
+
+#### disable_chrome_parrot
+
+!!! question "Since sing-box 1.14.0"
+
+Disable Chrome QUIC fingerprint parroting.
+
+If it is not disabled, the client's QUIC handshake is made to parrot Chrome's, so that Hysteria traffic
+is harder to identify by handshake fingerprinting.
+
+To match Chrome, the client uses Chrome's own QUIC parameters, which override some settings:
+`idle_timeout` is fixed at 30 seconds, `max_concurrent_streams` and `initial_packet_size` are replaced by
+Chrome's values, and the receive windows start at Chrome's initial values before growing to the configured
+maximums.
+
+!!! warning ""
+
+    Chrome does not declare support for Ed25519, so a server using an Ed25519 certificate will fail the
+    handshake. Use an ECDSA or RSA certificate instead; certificates issued by ACME are unaffected.
+
+#### realm
+
+!!! question "Since sing-box 1.14.0"
+
+Connect to a Hysteria2 server through a Hysteria Realm rendezvous service.
+
+The outbound queries the realm for the server's current public addresses, performs UDP hole-punching, and proceeds with the normal QUIC handshake.
+
+Conflicts with `server`, `server_port` and `server_ports`.
+
+The TLS SNI defaults to the host portion of `server_url`. Set `tls.server_name` to match the certificate the Hysteria2 server presents.
+
+See [Hysteria Realm](/configuration/service/hysteria-realm/) for the rendezvous service.
+
+#### realm.server_url
+
+==Required==
+
+Realm rendezvous service URL.
+
+#### realm.token
+
+Bearer token for the realm. Must match one of `users[].token` configured on the realm.
+
+#### realm.realm_id
+
+==Required==
+
+The same slot identifier the target Hysteria2 server registered.
+
+#### realm.stun_servers
+
+==Required==
+
+List of STUN servers (`host` or `host:port`) used to discover this client's public addresses.
+
+Domain names are resolved using [`domain_resolver`](/configuration/shared/dial/#domain_resolver) from Dial Fields.
+
+#### realm.ip_version
+
+Restrict realm connections (STUN, hole punching, and the resulting QUIC path) to a single IP version.
+
+`4` or `6`. Both are used if empty.
+
+#### realm.port_mapping
+
+Maintain a UDP port mapping on the local gateway via UPnP or NAT-PMP.
+
+The mapping is established before STUN discovery and improves hole-punching reliability behind gateways that support it; failures are non-fatal.
+
+Requires IPv4: conflicts with `"ip_version": 6`.
+
+#### realm.port_mapping.enabled
+
+Enable port mapping.
+
+#### realm.port_mapping.timeout
+
+Timeout for gateway discovery and mapping operations.
+
+`10s` is used by default.
+
+#### realm.port_mapping.lifetime
+
+Lease lifetime of the mapping; it is renewed at half the lifetime.
+
+`10m` is used by default.
+
+#### realm.http_client
+
+HTTP client used to talk to the realm.
+
+See [HTTP Client](/configuration/shared/http-client/) for details.
+
+### Dial Fields
+
+See [Dial Fields](/configuration/shared/dial/) for details.

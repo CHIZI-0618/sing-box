@@ -1,0 +1,55 @@
+version: "2"
+run:
+  go: "1.24"
+  build-tags:
+    - with_gvisor
+    - with_quic
+    - with_dhcp
+    - with_wireguard
+    - with_utls
+    - with_acme
+    - with_clash_api
+    - with_tailscale
+    - with_ccm
+    - with_ocm
+    - badlinkname
+    - tfogo_checklinkname0
+linters:
+  default: none
+  enable:
+    - ineffassign
+    - staticcheck
+    - unused
+    - modernize
+  settings:
+    modernize:
+      disable:
+        - omitzero # nested struct omitempty -> omitzero changes JSON output semantics
+    staticcheck:
+      checks:
+        - all
+        - -QF1008 # could remove embedded field "<interface>" from selector
+        - -ST1003 # should not use ALL_CAPS in Go names; use CamelCase instead
+        - -QF1001 # could apply De Morgan's law
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+    paths:
+      - transport/simple-obfs
+      - \.pb\.go$
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - prefix(github.com/sagernet/)
+        - default
+      custom-order: true

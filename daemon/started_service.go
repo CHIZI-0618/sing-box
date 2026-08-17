@@ -1,0 +1,2089 @@
+package daemon
+
+import (
+	"context"
+	"net/netip"
+	"os"
+	"runtime"
+	runtimeDebug "runtime/debug"
+	"sync"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/networkquality"
+	"github.com/sagernet/sing-box/common/stun"
+	"github.com/sagernet/sing-box/common/trafficcontrol"
+	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/experimental/deprecated"
+	"github.com/sagernet/sing-box/experimental/locale"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/protocol/group"
+	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/batch"
+	"github.com/sagernet/sing/common/memory"
+	"github.com/sagernet/sing/common/observable"
+	"github.com/sagernet/sing/common/x/list"
+	"github.com/sagernet/sing/service"
+
+	"github.com/gofrs/uuid/v5"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+const APIVersion = 4
+
+const (
+	urlTestPushMinInterval = 250 * time.Millisecond
+	notificationQueueSize  = 16
+)
+
+var _ StartedServiceServer = (*StartedService)(nil)
+
+type StartedService struct {
+	ctx context.Context
+	// platform adapter.PlatformInterface
+	handler           PlatformHandler
+	debug             bool
+	logMaxLines       int
+	oomKillerEnabled  bool
+	oomKillerDisabled bool
+	oomMemoryLimit    uint64
+	// workingDirectory string
+	// tempDirectory    string
+	// userID           int
+	// groupID          int
+	// systemProxyEnabled      bool
+	serviceAccess           sync.RWMutex
+	serviceStatus           *ServiceStatus
+	serviceStatusSubscriber *observable.Subscriber[*ServiceStatus]
+	serviceStatusObserver   *observable.Observer[*ServiceStatus]
+	logAccess               sync.RWMutex
+	logLines                list.List[*log.Entry]
+	logSubscriber           *observable.Subscriber[*log.Entry]
+	logObserver             *observable.Observer[*log.Entry]
+	instance                *Instance
+	startedAt               time.Time
+	urlTestSubscriber       *observable.Subscriber[struct{}]
+	urlTestObserver         *observable.Observer[struct{}]
+	clashModeSubscriber     *observable.Subscriber[struct{}]
+	clashModeObserver       *observable.Observer[struct{}]
+	notificationSubscriber  *observable.Subscriber[*NotificationEvent]
+	notificationObserver    *observable.Observer[*NotificationEvent]
+}
+
+type ServiceOptions struct {
+	Context context.Context
+	// Platform           adapter.PlatformInterface
+	Handler           PlatformHandler
+	Debug             bool
+	LogMaxLines       int
+	OOMKillerEnabled  bool
+	OOMKillerDisabled bool
+	OOMMemoryLimit    uint64
+	// WorkingDirectory   string
+	// TempDirectory      string
+	// UserID             int
+	// GroupID            int
+	// SystemProxyEnabled bool
+}
+
+func NewStartedService(options ServiceOptions) *StartedService {
+	s := &StartedService{
+		ctx: options.Context,
+		// platform:                options.Platform,
+		handler:           options.Handler,
+		debug:             options.Debug,
+		logMaxLines:       options.LogMaxLines,
+		oomKillerEnabled:  options.OOMKillerEnabled,
+		oomKillerDisabled: options.OOMKillerDisabled,
+		oomMemoryLimit:    options.OOMMemoryLimit,
+		// workingDirectory: options.WorkingDirectory,
+		// tempDirectory:    options.TempDirectory,
+		// userID:           options.UserID,
+		// groupID:          options.GroupID,
+		// systemProxyEnabled:      options.SystemProxyEnabled,
+		serviceStatus:           &ServiceStatus{Status: ServiceStatus_IDLE},
+		serviceStatusSubscriber: observable.NewSubscriber[*ServiceStatus](4),
+		logSubscriber:           observable.NewSubscriber[*log.Entry](128),
+		urlTestSubscriber:       observable.NewSubscriber[struct{}](1),
+		clashModeSubscriber:     observable.NewSubscriber[struct{}](1),
+		notificationSubscriber:  observable.NewSubscriber[*NotificationEvent](notificationQueueSize),
+	}
+	s.serviceStatusObserver = observable.NewObserver(s.serviceStatusSubscriber, 2)
+	s.logObserver = observable.NewObserver(s.logSubscriber, 64)
+	s.urlTestObserver = observable.NewObserver(s.urlTestSubscriber, 1)
+	s.clashModeObserver = observable.NewObserver(s.clashModeSubscriber, 1)
+	s.notificationObserver = observable.NewObserver(s.notificationSubscriber, notificationQueueSize)
+	return s
+}
+
+func (s *StartedService) SetOOMKillerOptions(enabled bool, killerDisabled bool, memoryLimit uint64) {
+	s.serviceAccess.Lock()
+	defer s.serviceAccess.Unlock()
+	s.oomKillerEnabled = enabled
+	s.oomKillerDisabled = killerDisabled
+	s.oomMemoryLimit = memoryLimit
+}
+
+func (s *StartedService) GetVersion(ctx context.Context, empty *emptypb.Empty) (*Version, error) {
+	return &Version{
+		Version:    C.Version,
+		ApiVersion: APIVersion,
+	}, nil
+}
+
+func (s *StartedService) resetLogs() {
+	s.logAccess.Lock()
+	s.logLines = list.List[*log.Entry]{}
+	s.logAccess.Unlock()
+	s.logSubscriber.Emit(nil)
+}
+
+func (s *StartedService) updateStatus(newStatus ServiceStatus_Type) {
+	statusObject := &ServiceStatus{Status: newStatus}
+	s.serviceStatusSubscriber.Emit(statusObject)
+	s.serviceStatus = statusObject
+}
+
+func (s *StartedService) updateStatusError(err error) error {
+	statusObject := &ServiceStatus{Status: ServiceStatus_FATAL, ErrorMessage: err.Error()}
+	s.serviceStatusSubscriber.Emit(statusObject)
+	s.serviceStatus = statusObject
+	s.serviceAccess.Unlock()
+	return err
+}
+
+func (s *StartedService) waitForStarted(ctx context.Context) error {
+	s.serviceAccess.RLock()
+	currentStatus := s.serviceStatus.Status
+	s.serviceAccess.RUnlock()
+
+	switch currentStatus {
+	case ServiceStatus_STARTED:
+		return nil
+	case ServiceStatus_STARTING:
+	default:
+		return os.ErrInvalid
+	}
+
+	subscription, done, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(subscription)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case statusUpdate := <-subscription:
+			switch statusUpdate.Status {
+			case ServiceStatus_STARTED:
+				return nil
+			case ServiceStatus_FATAL:
+				return status.Error(codes.FailedPrecondition, statusUpdate.ErrorMessage)
+			case ServiceStatus_IDLE, ServiceStatus_STOPPING:
+				return os.ErrInvalid
+			}
+		case <-done:
+			return os.ErrClosed
+		}
+	}
+}
+
+func (s *StartedService) followInstance(ctx context.Context, run func(ctx context.Context, instance *Instance) error) error {
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
+	for {
+		s.serviceAccess.RLock()
+		instance := s.instance
+		if s.serviceStatus.Status != ServiceStatus_STARTED {
+			instance = nil
+		}
+		s.serviceAccess.RUnlock()
+		runCtx, cancel := context.WithCancel(ctx)
+		runResult := make(chan error, 1)
+		go func() {
+			runResult <- run(runCtx, instance)
+		}()
+		select {
+		case <-statusSubscription:
+			cancel()
+			<-runResult
+		case err = <-runResult:
+			cancel()
+			return err
+		case <-ctx.Done():
+			cancel()
+			<-runResult
+			return ctx.Err()
+		case <-s.ctx.Done():
+			cancel()
+			<-runResult
+			return s.ctx.Err()
+		case <-statusDone:
+			cancel()
+			<-runResult
+			return nil
+		}
+	}
+}
+
+func (s *StartedService) StartOrReloadService(ctx context.Context, profileContent string, options *OverrideOptions) error {
+	s.serviceAccess.Lock()
+	switch s.serviceStatus.Status {
+	case ServiceStatus_IDLE, ServiceStatus_STARTED, ServiceStatus_STARTING, ServiceStatus_FATAL:
+	default:
+		s.serviceAccess.Unlock()
+		return os.ErrInvalid
+	}
+	oldInstance := s.instance
+	if oldInstance != nil {
+		s.instance = nil
+		s.updateStatus(ServiceStatus_STOPPING)
+		s.serviceAccess.Unlock()
+		_ = oldInstance.Close()
+		runtimeDebug.FreeOSMemory()
+		s.serviceAccess.Lock()
+	}
+	s.updateStatus(ServiceStatus_STARTING)
+	s.resetLogs()
+	instance, err := s.newInstance(ctx, profileContent, options)
+	if err != nil {
+		return s.updateStatusError(err)
+	}
+	s.instance = instance
+	instance.urlTestHistoryStorage.AddUpdateHook(s.urlTestSubscriber)
+	if instance.clashServer != nil {
+		instance.clashServer.AddModeUpdateHook(s.clashModeSubscriber)
+	}
+	s.serviceAccess.Unlock()
+	err = instance.Start()
+	s.serviceAccess.Lock()
+	if s.serviceStatus.Status != ServiceStatus_STARTING {
+		s.serviceAccess.Unlock()
+		return nil
+	}
+	if err != nil {
+		s.instance = nil
+		_ = instance.Close()
+		return s.updateStatusError(err)
+	}
+	s.startedAt = time.Now()
+	s.updateStatus(ServiceStatus_STARTED)
+	s.serviceAccess.Unlock()
+	runtimeDebug.FreeOSMemory()
+	return nil
+}
+
+func (s *StartedService) Close() {
+	s.serviceStatusSubscriber.Close()
+	s.logSubscriber.Close()
+	s.urlTestSubscriber.Close()
+	s.clashModeSubscriber.Close()
+	s.notificationSubscriber.Close()
+}
+
+func (s *StartedService) CloseService() error {
+	s.serviceAccess.Lock()
+	switch s.serviceStatus.Status {
+	case ServiceStatus_STARTING, ServiceStatus_STARTED:
+	default:
+		s.serviceAccess.Unlock()
+		return nil
+	}
+	s.updateStatus(ServiceStatus_STOPPING)
+	instance := s.instance
+	s.instance = nil
+	if instance != nil {
+		_ = instance.Close()
+	}
+	s.startedAt = time.Time{}
+	s.updateStatus(ServiceStatus_IDLE)
+	s.serviceAccess.Unlock()
+	runtimeDebug.FreeOSMemory()
+	return nil
+}
+
+func (s *StartedService) SetError(err error) {
+	s.serviceAccess.Lock()
+	s.updateStatusError(err)
+	s.WriteMessage(log.LevelError, err.Error())
+}
+
+func (s *StartedService) SubscribeServiceStatus(empty *emptypb.Empty, server grpc.ServerStreamingServer[ServiceStatus]) error {
+	subscription, done, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(subscription)
+	err = server.Send(s.serviceStatus)
+	if err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case newStatus := <-subscription:
+			err = server.Send(newStatus)
+			if err != nil {
+				return err
+			}
+		case <-done:
+			return nil
+		}
+	}
+}
+
+func (s *StartedService) SubscribeLog(empty *emptypb.Empty, server grpc.ServerStreamingServer[Log]) error {
+	var savedLines []*log.Entry
+	s.logAccess.Lock()
+	savedLines = make([]*log.Entry, 0, s.logLines.Len())
+	for element := s.logLines.Front(); element != nil; element = element.Next() {
+		savedLines = append(savedLines, element.Value)
+	}
+	subscription, done, err := s.logObserver.Subscribe()
+	s.logAccess.Unlock()
+	if err != nil {
+		return err
+	}
+	defer s.logObserver.UnSubscribe(subscription)
+	err = server.Send(&Log{
+		Messages: common.Map(savedLines, func(it *log.Entry) *Log_Message {
+			return &Log_Message{
+				Level:   LogLevel(it.Level),
+				Message: it.Message,
+			}
+		}),
+		Reset_: true,
+	})
+	if err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case message := <-subscription:
+			var rawMessage Log
+			if message == nil {
+				rawMessage.Reset_ = true
+			} else {
+				rawMessage.Messages = append(rawMessage.Messages, &Log_Message{
+					Level:   LogLevel(message.Level),
+					Message: message.Message,
+				})
+			}
+		fetch:
+			for {
+				select {
+				case message = <-subscription:
+					if message == nil {
+						rawMessage.Messages = nil
+						rawMessage.Reset_ = true
+					} else {
+						rawMessage.Messages = append(rawMessage.Messages, &Log_Message{
+							Level:   LogLevel(message.Level),
+							Message: message.Message,
+						})
+					}
+				default:
+					break fetch
+				}
+			}
+			err = server.Send(&rawMessage)
+			if err != nil {
+				return err
+			}
+		case <-done:
+			return nil
+		}
+	}
+}
+
+func (s *StartedService) GetDefaultLogLevel(ctx context.Context, empty *emptypb.Empty) (*DefaultLogLevel, error) {
+	s.serviceAccess.RLock()
+	switch s.serviceStatus.Status {
+	case ServiceStatus_STARTING, ServiceStatus_STARTED:
+	default:
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	logLevel := s.instance.logFactory.Level()
+	s.serviceAccess.RUnlock()
+	return &DefaultLogLevel{Level: LogLevel(logLevel)}, nil
+}
+
+func (s *StartedService) ClearLogs(ctx context.Context, empty *emptypb.Empty) (*emptypb.Empty, error) {
+	s.resetLogs()
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server grpc.ServerStreamingServer[Status]) error {
+	interval := time.Duration(request.Interval)
+	if interval <= 0 {
+		interval = time.Second // Default to 1 second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	status := s.readStatus()
+	uploadTotal := status.UplinkTotal
+	downloadTotal := status.DownlinkTotal
+	for {
+		err := server.Send(status)
+		if err != nil {
+			return err
+		}
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-ticker.C:
+		}
+		status = s.readStatus()
+		upload := status.UplinkTotal - uploadTotal
+		download := status.DownlinkTotal - downloadTotal
+		uploadTotal = status.UplinkTotal
+		downloadTotal = status.DownlinkTotal
+		status.Uplink = upload
+		status.Downlink = download
+	}
+}
+
+func (s *StartedService) readStatus() *Status {
+	var status Status
+	status.Memory = memory.Total()
+	status.Goroutines = int32(runtime.NumGoroutine())
+	s.serviceAccess.RLock()
+	nowService := s.instance
+	s.serviceAccess.RUnlock()
+	if nowService != nil && nowService.connectionManager != nil {
+		status.ConnectionsOut = int32(nowService.connectionManager.Count())
+	}
+	if nowService != nil && nowService.trafficManager != nil {
+		status.TrafficAvailable = true
+		status.UplinkTotal, status.DownlinkTotal = nowService.trafficManager.Total()
+		status.ConnectionsIn = int32(nowService.trafficManager.ConnectionsLen())
+	}
+	return &status
+}
+
+func (s *StartedService) SubscribeGroups(empty *emptypb.Empty, server grpc.ServerStreamingServer[Groups]) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	subscription, done, err := s.urlTestObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.urlTestObserver.UnSubscribe(subscription)
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
+	var lastSendTime time.Time
+	for {
+		s.serviceAccess.RLock()
+		var groups *Groups
+		if s.serviceStatus.Status == ServiceStatus_STARTED {
+			groups = s.readGroups()
+		} else {
+			groups = &Groups{}
+		}
+		s.serviceAccess.RUnlock()
+		err = server.Send(groups)
+		if err != nil {
+			return err
+		}
+		lastSendTime = time.Now()
+		select {
+		case <-subscription:
+		case <-statusSubscription:
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-done:
+			return nil
+		case <-statusDone:
+			return nil
+		}
+		throttleDelay := urlTestPushMinInterval - time.Since(lastSendTime)
+		if throttleDelay <= 0 {
+			continue
+		}
+		throttleTimer := time.NewTimer(throttleDelay)
+		select {
+		case <-throttleTimer.C:
+		case <-s.ctx.Done():
+			throttleTimer.Stop()
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			throttleTimer.Stop()
+			return server.Context().Err()
+		case <-done:
+			throttleTimer.Stop()
+			return nil
+		case <-statusDone:
+			throttleTimer.Stop()
+			return nil
+		}
+		select {
+		case <-subscription:
+		default:
+		}
+		select {
+		case <-statusSubscription:
+		default:
+		}
+	}
+}
+
+func (s *StartedService) readGroups() *Groups {
+	historyStorage := s.instance.urlTestHistoryStorage
+	boxService := s.instance
+	outbounds := boxService.outboundManager.Outbounds()
+	var iGroups []adapter.OutboundGroup
+	for _, it := range outbounds {
+		if group, isGroup := it.(adapter.OutboundGroup); isGroup {
+			iGroups = append(iGroups, group)
+		}
+	}
+	var gs Groups
+	for _, iGroup := range iGroups {
+		var g Group
+		g.Tag = iGroup.Tag()
+		g.Type = iGroup.Type()
+		_, g.Selectable = iGroup.(*group.Selector)
+		g.Selected = iGroup.Now()
+		if boxService.cacheFile != nil {
+			if isExpand, loaded := boxService.cacheFile.LoadGroupExpand(g.Tag); loaded {
+				g.IsExpand = isExpand
+			}
+		}
+
+		for _, itemTag := range iGroup.All() {
+			itemOutbound, isLoaded := boxService.outboundManager.Outbound(itemTag)
+			if !isLoaded {
+				continue
+			}
+
+			var item GroupItem
+			item.Tag = itemTag
+			item.Type = itemOutbound.Type()
+			if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(itemOutbound)); history != nil {
+				item.UrlTestTime = history.Time.Unix()
+				item.UrlTestDelay = int32(history.Delay)
+			}
+			g.Items = append(g.Items, &item)
+		}
+		if len(g.Items) < 2 {
+			continue
+		}
+		gs.Group = append(gs.Group, &g)
+	}
+	return &gs
+}
+
+func (s *StartedService) GetClashModeStatus(ctx context.Context, empty *emptypb.Empty) (*ClashModeStatus, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	clashServer := s.instance.clashServer
+	s.serviceAccess.RUnlock()
+	if clashServer == nil {
+		return nil, status.Error(codes.NotFound, "clash mode not available")
+	}
+	return &ClashModeStatus{
+		ModeList:    clashServer.ModeList(),
+		CurrentMode: clashServer.Mode(),
+	}, nil
+}
+
+func (s *StartedService) SubscribeClashMode(empty *emptypb.Empty, server grpc.ServerStreamingServer[ClashMode]) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	subscription, done, err := s.clashModeObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.clashModeObserver.UnSubscribe(subscription)
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
+	for {
+		s.serviceAccess.RLock()
+		var message *ClashMode
+		if s.serviceStatus.Status == ServiceStatus_STARTED {
+			clashServer := s.instance.clashServer
+			if clashServer == nil {
+				s.serviceAccess.RUnlock()
+				return status.Error(codes.NotFound, "clash mode not available")
+			}
+			message = &ClashMode{Mode: clashServer.Mode()}
+		} else {
+			message = &ClashMode{}
+		}
+		s.serviceAccess.RUnlock()
+		err = server.Send(message)
+		if err != nil {
+			return err
+		}
+		select {
+		case <-subscription:
+		case <-statusSubscription:
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-done:
+			return nil
+		case <-statusDone:
+			return nil
+		}
+	}
+}
+
+func (s *StartedService) SetClashMode(ctx context.Context, request *ClashMode) (*emptypb.Empty, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	clashServer := s.instance.clashServer
+	s.serviceAccess.RUnlock()
+	if clashServer == nil {
+		return nil, status.Error(codes.NotFound, "clash mode not available")
+	}
+	clashServer.SetMode(request.Mode)
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (*emptypb.Empty, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+	outboundTag := request.OutboundTag
+	outbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)
+	if !isLoaded {
+		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
+	}
+	historyStorage := boxService.urlTestHistoryStorage
+	urlTest, isURLTest := outbound.(*group.URLTest)
+	outboundGroup, isOutboundGroup := outbound.(adapter.OutboundGroup)
+	if isURLTest {
+		go urlTest.CheckOutbounds()
+	} else if isOutboundGroup {
+		outbounds := common.Filter(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
+			itOutbound, _ := boxService.outboundManager.Outbound(it)
+			return itOutbound
+		}), func(it adapter.Outbound) bool {
+			if it == nil {
+				return false
+			}
+			_, isGroup := it.(adapter.OutboundGroup)
+			return !isGroup
+		})
+		b, _ := batch.New(boxService.ctx, batch.WithConcurrencyNum[any](10))
+		for _, detour := range outbounds {
+			outboundToTest := detour
+			itemTag := outboundToTest.Tag()
+			b.Go(itemTag, func() (any, error) {
+				t, err := urltest.URLTest(boxService.ctx, "", outboundToTest)
+				if err != nil {
+					historyStorage.DeleteURLTestHistory(itemTag)
+				} else {
+					historyStorage.StoreURLTestHistory(itemTag, &adapter.URLTestHistory{
+						Time:  time.Now(),
+						Delay: t,
+					})
+				}
+				return nil, nil
+			})
+		}
+	} else {
+		go func() {
+			t, err := urltest.URLTest(boxService.ctx, "", outbound)
+			if err != nil {
+				historyStorage.DeleteURLTestHistory(outboundTag)
+			} else {
+				historyStorage.StoreURLTestHistory(outboundTag, &adapter.URLTestHistory{
+					Time:  time.Now(),
+					Delay: t,
+				})
+			}
+		}()
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutboundRequest) (*emptypb.Empty, error) {
+	s.serviceAccess.RLock()
+	switch s.serviceStatus.Status {
+	case ServiceStatus_STARTING, ServiceStatus_STARTED:
+	default:
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+	outboundGroup, isLoaded := boxService.outboundManager.Outbound(request.GroupTag)
+	if !isLoaded {
+		return nil, status.Error(codes.NotFound, "selector not found: "+request.GroupTag)
+	}
+	selector, isSelector := outboundGroup.(*group.Selector)
+	if !isSelector {
+		return nil, status.Error(codes.InvalidArgument, "outbound is not a selector: "+request.GroupTag)
+	}
+	if !selector.SelectOutbound(request.OutboundTag) {
+		return nil, status.Error(codes.NotFound, "outbound not found in selector: "+request.OutboundTag)
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SetGroupExpand(ctx context.Context, request *SetGroupExpandRequest) (*emptypb.Empty, error) {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		return nil, os.ErrInvalid
+	}
+	boxService := s.instance
+	if boxService.cacheFile != nil {
+		err := boxService.cacheFile.StoreGroupExpand(request.GroupTag, request.IsExpand)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsRequest, server grpc.ServerStreamingServer[ConnectionEvents]) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	trafficManager := boxService.trafficManager
+	if trafficManager == nil {
+		return status.Error(codes.Unimplemented, "connection tracking not available")
+	}
+
+	subscription, done, err := trafficManager.SubscribeEvents()
+	if err != nil {
+		return err
+	}
+	defer trafficManager.UnSubscribeEvents(subscription)
+
+	connectionSnapshots := make(map[uuid.UUID]connectionSnapshot)
+	initialEvents := s.buildInitialConnectionState(trafficManager, connectionSnapshots)
+	err = server.Send(&ConnectionEvents{
+		Events: initialEvents,
+		Reset_: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	interval := time.Duration(request.Interval)
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-done:
+			return nil
+
+		case event := <-subscription:
+			var pendingEvents []*ConnectionEvent
+			if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
+				pendingEvents = append(pendingEvents, protoEvent)
+			}
+		drain:
+			for {
+				select {
+				case event = <-subscription:
+					if protoEvent := s.applyConnectionEvent(event, connectionSnapshots); protoEvent != nil {
+						pendingEvents = append(pendingEvents, protoEvent)
+					}
+				default:
+					break drain
+				}
+			}
+			if len(pendingEvents) > 0 {
+				err = server.Send(&ConnectionEvents{Events: pendingEvents})
+				if err != nil {
+					return err
+				}
+			}
+
+		case <-ticker.C:
+			protoEvents := s.buildTrafficUpdates(trafficManager, connectionSnapshots)
+			if len(protoEvents) == 0 {
+				continue
+			}
+			err = server.Send(&ConnectionEvents{Events: protoEvents})
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+type connectionSnapshot struct {
+	uplink     int64
+	downlink   int64
+	hadTraffic bool
+}
+
+func (s *StartedService) buildInitialConnectionState(manager *trafficcontrol.Manager, snapshots map[uuid.UUID]connectionSnapshot) []*ConnectionEvent {
+	var events []*ConnectionEvent
+
+	for _, metadata := range manager.Connections() {
+		events = append(events, &ConnectionEvent{
+			Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
+			Id:         metadata.ID.String(),
+			Connection: buildConnectionProto(metadata),
+		})
+		snapshots[metadata.ID] = connectionSnapshot{
+			uplink:   metadata.Upload.Load(),
+			downlink: metadata.Download.Load(),
+		}
+	}
+
+	for _, metadata := range manager.ClosedConnections() {
+		conn := buildConnectionProto(metadata)
+		conn.ClosedAt = metadata.ClosedAt.UnixMilli()
+		events = append(events, &ConnectionEvent{
+			Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
+			Id:         metadata.ID.String(),
+			Connection: conn,
+		})
+	}
+
+	return events
+}
+
+func (s *StartedService) applyConnectionEvent(event trafficcontrol.ConnectionEvent, snapshots map[uuid.UUID]connectionSnapshot) *ConnectionEvent {
+	switch event.Type {
+	case trafficcontrol.ConnectionEventNew:
+		if _, exists := snapshots[event.ID]; exists {
+			return nil
+		}
+		snapshots[event.ID] = connectionSnapshot{
+			uplink:   event.Metadata.Upload.Load(),
+			downlink: event.Metadata.Download.Load(),
+		}
+		return &ConnectionEvent{
+			Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
+			Id:         event.ID.String(),
+			Connection: buildConnectionProto(event.Metadata),
+		}
+	case trafficcontrol.ConnectionEventClosed:
+		delete(snapshots, event.ID)
+		protoEvent := &ConnectionEvent{
+			Type: ConnectionEventType_CONNECTION_EVENT_CLOSED,
+			Id:   event.ID.String(),
+		}
+		closedAt := event.ClosedAt
+		if closedAt.IsZero() && !event.Metadata.ClosedAt.IsZero() {
+			closedAt = event.Metadata.ClosedAt
+		}
+		if closedAt.IsZero() {
+			closedAt = time.Now()
+		}
+		protoEvent.ClosedAt = closedAt.UnixMilli()
+		if event.Metadata.ID != uuid.Nil {
+			conn := buildConnectionProto(event.Metadata)
+			conn.ClosedAt = protoEvent.ClosedAt
+			protoEvent.Connection = conn
+		}
+		return protoEvent
+	default:
+		return nil
+	}
+}
+
+func (s *StartedService) buildTrafficUpdates(manager *trafficcontrol.Manager, snapshots map[uuid.UUID]connectionSnapshot) []*ConnectionEvent {
+	activeConnections := manager.Connections()
+	activeIndex := make(map[uuid.UUID]*trafficcontrol.TrackerMetadata, len(activeConnections))
+	var events []*ConnectionEvent
+
+	for _, metadata := range activeConnections {
+		activeIndex[metadata.ID] = metadata
+		currentUpload := metadata.Upload.Load()
+		currentDownload := metadata.Download.Load()
+		snapshot, exists := snapshots[metadata.ID]
+		if !exists {
+			snapshots[metadata.ID] = connectionSnapshot{
+				uplink:   currentUpload,
+				downlink: currentDownload,
+			}
+			events = append(events, &ConnectionEvent{
+				Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
+				Id:         metadata.ID.String(),
+				Connection: buildConnectionProto(metadata),
+			})
+			continue
+		}
+		uplinkDelta := currentUpload - snapshot.uplink
+		downlinkDelta := currentDownload - snapshot.downlink
+		if uplinkDelta < 0 || downlinkDelta < 0 {
+			if snapshot.hadTraffic {
+				events = append(events, &ConnectionEvent{
+					Type:          ConnectionEventType_CONNECTION_EVENT_UPDATE,
+					Id:            metadata.ID.String(),
+					UplinkDelta:   0,
+					DownlinkDelta: 0,
+				})
+			}
+			snapshot.uplink = currentUpload
+			snapshot.downlink = currentDownload
+			snapshot.hadTraffic = false
+			snapshots[metadata.ID] = snapshot
+			continue
+		}
+		if uplinkDelta > 0 || downlinkDelta > 0 {
+			snapshot.uplink = currentUpload
+			snapshot.downlink = currentDownload
+			snapshot.hadTraffic = true
+			snapshots[metadata.ID] = snapshot
+			events = append(events, &ConnectionEvent{
+				Type:          ConnectionEventType_CONNECTION_EVENT_UPDATE,
+				Id:            metadata.ID.String(),
+				UplinkDelta:   uplinkDelta,
+				DownlinkDelta: downlinkDelta,
+			})
+			continue
+		}
+		if snapshot.hadTraffic {
+			snapshot.uplink = currentUpload
+			snapshot.downlink = currentDownload
+			snapshot.hadTraffic = false
+			snapshots[metadata.ID] = snapshot
+			events = append(events, &ConnectionEvent{
+				Type:          ConnectionEventType_CONNECTION_EVENT_UPDATE,
+				Id:            metadata.ID.String(),
+				UplinkDelta:   0,
+				DownlinkDelta: 0,
+			})
+		}
+	}
+
+	var closedIndex map[uuid.UUID]*trafficcontrol.TrackerMetadata
+	for id := range snapshots {
+		if _, exists := activeIndex[id]; exists {
+			continue
+		}
+		if closedIndex == nil {
+			closedIndex = make(map[uuid.UUID]*trafficcontrol.TrackerMetadata)
+			for _, metadata := range manager.ClosedConnections() {
+				closedIndex[metadata.ID] = metadata
+			}
+		}
+		closedAt := time.Now()
+		var conn *Connection
+		if metadata, ok := closedIndex[id]; ok {
+			if !metadata.ClosedAt.IsZero() {
+				closedAt = metadata.ClosedAt
+			}
+			conn = buildConnectionProto(metadata)
+			conn.ClosedAt = closedAt.UnixMilli()
+		}
+		events = append(events, &ConnectionEvent{
+			Type:       ConnectionEventType_CONNECTION_EVENT_CLOSED,
+			Id:         id.String(),
+			ClosedAt:   closedAt.UnixMilli(),
+			Connection: conn,
+		})
+		delete(snapshots, id)
+	}
+
+	return events
+}
+
+func buildConnectionProto(metadata *trafficcontrol.TrackerMetadata) *Connection {
+	var rule string
+	if metadata.Rule != nil {
+		rule = metadata.Rule.String()
+	}
+	uplinkTotal := metadata.Upload.Load()
+	downlinkTotal := metadata.Download.Load()
+	var processInfo *ProcessInfo
+	if metadata.Metadata.ProcessInfo != nil {
+		processInfo = &ProcessInfo{
+			ProcessId:    metadata.Metadata.ProcessInfo.ProcessID,
+			UserId:       metadata.Metadata.ProcessInfo.UserId,
+			UserName:     metadata.Metadata.ProcessInfo.UserName,
+			ProcessPath:  metadata.Metadata.ProcessInfo.ProcessPath,
+			PackageNames: metadata.Metadata.ProcessInfo.AndroidPackageNames,
+		}
+	}
+	return &Connection{
+		Id:            metadata.ID.String(),
+		Inbound:       metadata.Metadata.Inbound,
+		InboundType:   metadata.Metadata.InboundType,
+		IpVersion:     int32(metadata.Metadata.IPVersion),
+		Network:       metadata.Metadata.Network,
+		Source:        metadata.Metadata.Source.String(),
+		Destination:   metadata.Metadata.Destination.String(),
+		Domain:        metadata.Metadata.Domain,
+		Protocol:      metadata.Metadata.Protocol,
+		User:          metadata.Metadata.User,
+		FromOutbound:  metadata.Metadata.Outbound,
+		CreatedAt:     metadata.CreatedAt.UnixMilli(),
+		UplinkTotal:   uplinkTotal,
+		DownlinkTotal: downlinkTotal,
+		Rule:          rule,
+		Outbound:      metadata.Outbound,
+		OutboundType:  metadata.OutboundType,
+		ChainList:     metadata.Chain,
+		ProcessInfo:   processInfo,
+	}
+}
+
+func (s *StartedService) CloseConnection(ctx context.Context, request *CloseConnectionRequest) (*emptypb.Empty, error) {
+	s.serviceAccess.RLock()
+	switch s.serviceStatus.Status {
+	case ServiceStatus_STARTING, ServiceStatus_STARTED:
+	default:
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+	if boxService.trafficManager == nil {
+		return nil, status.Error(codes.Unimplemented, "connection tracking not available")
+	}
+	targetConn := boxService.trafficManager.Connection(uuid.FromStringOrNil(request.Id))
+	if targetConn != nil {
+		targetConn.Close()
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) CloseAllConnections(ctx context.Context, empty *emptypb.Empty) (*emptypb.Empty, error) {
+	s.serviceAccess.RLock()
+	nowService := s.instance
+	s.serviceAccess.RUnlock()
+	if nowService != nil {
+		if nowService.connectionManager != nil {
+			nowService.connectionManager.CloseAll()
+		}
+		if nowService.trafficManager != nil {
+			nowService.trafficManager.CloseAllConnections()
+		}
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) GetDeprecatedWarnings(ctx context.Context, empty *emptypb.Empty) (*DeprecatedWarnings, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+	manager, isCollecting := service.FromContext[deprecated.Manager](boxService.ctx).(*deprecatedManager)
+	if !isCollecting {
+		return &DeprecatedWarnings{}, nil
+	}
+	notes := manager.Get()
+	selectedLocale := locale.FromContext(ctx)
+	return &DeprecatedWarnings{
+		Warnings: common.Map(notes, func(it deprecated.Note) *DeprecatedWarning {
+			return &DeprecatedWarning{
+				Message:           it.MessageForLocale(selectedLocale),
+				Impending:         it.Impending(),
+				MigrationLink:     it.MigrationLink,
+				Description:       it.Description,
+				DeprecatedVersion: it.DeprecatedVersion,
+				ScheduledVersion:  it.ScheduledVersion,
+			}
+		}),
+	}, nil
+}
+
+func (s *StartedService) GetStartedAt(ctx context.Context, empty *emptypb.Empty) (*StartedAt, error) {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	return &StartedAt{StartedAt: s.startedAt.UnixMilli()}, nil
+}
+
+func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.ServerStreamingServer[OutboundList]) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	subscription, done, err := s.urlTestObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.urlTestObserver.UnSubscribe(subscription)
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
+	var lastSendTime time.Time
+	for {
+		s.serviceAccess.RLock()
+		boxService := s.instance
+		started := s.serviceStatus.Status == ServiceStatus_STARTED
+		s.serviceAccess.RUnlock()
+		var list OutboundList
+		if started {
+			historyStorage := boxService.urlTestHistoryStorage
+			for _, ob := range boxService.outboundManager.Outbounds() {
+				item := &GroupItem{
+					Tag:  ob.Tag(),
+					Type: ob.Type(),
+				}
+				if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ob)); history != nil {
+					item.UrlTestTime = history.Time.Unix()
+					item.UrlTestDelay = int32(history.Delay)
+				}
+				list.Outbounds = append(list.Outbounds, item)
+			}
+			for _, ep := range boxService.endpointManager.Endpoints() {
+				item := &GroupItem{
+					Tag:  ep.Tag(),
+					Type: ep.Type(),
+				}
+				if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ep)); history != nil {
+					item.UrlTestTime = history.Time.Unix()
+					item.UrlTestDelay = int32(history.Delay)
+				}
+				list.Outbounds = append(list.Outbounds, item)
+			}
+		}
+		err = server.Send(&list)
+		if err != nil {
+			return err
+		}
+		lastSendTime = time.Now()
+		select {
+		case <-subscription:
+		case <-statusSubscription:
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-done:
+			return nil
+		case <-statusDone:
+			return nil
+		}
+		throttleDelay := urlTestPushMinInterval - time.Since(lastSendTime)
+		if throttleDelay <= 0 {
+			continue
+		}
+		throttleTimer := time.NewTimer(throttleDelay)
+		select {
+		case <-throttleTimer.C:
+		case <-s.ctx.Done():
+			throttleTimer.Stop()
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			throttleTimer.Stop()
+			return server.Context().Err()
+		case <-done:
+			throttleTimer.Stop()
+			return nil
+		case <-statusDone:
+			throttleTimer.Stop()
+			return nil
+		}
+		select {
+		case <-subscription:
+		default:
+		}
+		select {
+		case <-statusSubscription:
+		default:
+		}
+	}
+}
+
+func resolveOutbound(instance *Instance, tag string) (adapter.Outbound, error) {
+	if tag == "" {
+		return instance.outboundManager.Default(), nil
+	}
+	outbound, loaded := instance.outboundManager.Outbound(tag)
+	if !loaded {
+		return nil, status.Error(codes.NotFound, "outbound not found: "+tag)
+	}
+	return outbound, nil
+}
+
+func resolveTailscaleEndpoint(instance *Instance, tag string) (adapter.Endpoint, error) {
+	endpointManager := service.FromContext[adapter.EndpointManager](instance.ctx)
+	endpoint, loaded := endpointManager.Get(tag)
+	if !loaded {
+		return nil, status.Error(codes.NotFound, "endpoint not found: "+tag)
+	}
+	if endpoint.Type() != C.TypeTailscale {
+		return nil, status.Error(codes.InvalidArgument, "endpoint is not Tailscale: "+tag)
+	}
+	return endpoint, nil
+}
+
+func NewNetworkQualityTestProgress(progress networkquality.Progress) *NetworkQualityTestProgress {
+	return &NetworkQualityTestProgress{
+		Phase:                    int32(progress.Phase),
+		DownloadCapacity:         progress.DownloadCapacity,
+		UploadCapacity:           progress.UploadCapacity,
+		DownloadRPM:              progress.DownloadRPM,
+		UploadRPM:                progress.UploadRPM,
+		IdleLatencyMs:            progress.IdleLatencyMs,
+		ElapsedMs:                progress.ElapsedMs,
+		DownloadCapacityAccuracy: int32(progress.DownloadCapacityAccuracy),
+		UploadCapacityAccuracy:   int32(progress.UploadCapacityAccuracy),
+		DownloadRPMAccuracy:      int32(progress.DownloadRPMAccuracy),
+		UploadRPMAccuracy:        int32(progress.UploadRPMAccuracy),
+	}
+}
+
+func NewNetworkQualityTestResult(result *networkquality.Result) *NetworkQualityTestProgress {
+	return &NetworkQualityTestProgress{
+		Phase:                    int32(networkquality.PhaseDone),
+		DownloadCapacity:         result.DownloadCapacity,
+		UploadCapacity:           result.UploadCapacity,
+		DownloadRPM:              result.DownloadRPM,
+		UploadRPM:                result.UploadRPM,
+		IdleLatencyMs:            result.IdleLatencyMs,
+		IsFinal:                  true,
+		DownloadCapacityAccuracy: int32(result.DownloadCapacityAccuracy),
+		UploadCapacityAccuracy:   int32(result.UploadCapacityAccuracy),
+		DownloadRPMAccuracy:      int32(result.DownloadRPMAccuracy),
+		UploadRPMAccuracy:        int32(result.UploadRPMAccuracy),
+	}
+}
+
+func NewSTUNTestProgress(progress stun.Progress) *STUNTestProgress {
+	return &STUNTestProgress{
+		Phase:        int32(progress.Phase),
+		ExternalAddr: progress.ExternalAddr,
+		LatencyMs:    progress.LatencyMs,
+		NatMapping:   int32(progress.NATMapping),
+		NatFiltering: int32(progress.NATFiltering),
+	}
+}
+
+func NewSTUNTestResult(result *stun.Result) *STUNTestProgress {
+	return &STUNTestProgress{
+		Phase:            int32(stun.PhaseDone),
+		ExternalAddr:     result.ExternalAddr,
+		LatencyMs:        result.LatencyMs,
+		NatMapping:       int32(result.NATMapping),
+		NatFiltering:     int32(result.NATFiltering),
+		IsFinal:          true,
+		NatTypeSupported: result.NATTypeSupported,
+	}
+}
+
+func resolveEndpoint[T adapter.Endpoint](instance *Instance, tag string, endpointType string, endpointName string) (T, error) {
+	var zero T
+	endpointManager := service.FromContext[adapter.EndpointManager](instance.ctx)
+	endpoint, loaded := endpointManager.Get(tag)
+	if !loaded {
+		return zero, status.Error(codes.NotFound, "endpoint not found: "+tag)
+	}
+	if endpoint.Type() != endpointType {
+		return zero, status.Error(codes.InvalidArgument, "endpoint is not "+endpointName+": "+tag)
+	}
+	return endpoint.(T), nil
+}
+
+type endpointStatusProvider interface {
+	adapter.Endpoint
+	StatusUpdated() <-chan struct{}
+}
+
+func subscribeEndpointStatus[T endpointStatusProvider](ctx context.Context, startedService *StartedService, endpointType string, send func([]T) error) error {
+	return startedService.followInstance(ctx, func(runCtx context.Context, instance *Instance) error {
+		var endpoints []T
+		if instance != nil {
+			for _, endpoint := range instance.endpointManager.Endpoints() {
+				if endpoint.Type() == endpointType {
+					endpoints = append(endpoints, endpoint.(T))
+				}
+			}
+		}
+		updated := make(chan struct{}, 1)
+		updated <- struct{}{}
+		for _, endpoint := range endpoints {
+			go func(provider T) {
+				for {
+					statusUpdated := provider.StatusUpdated()
+					select {
+					case updated <- struct{}{}:
+					default:
+					}
+					select {
+					case <-statusUpdated:
+					case <-runCtx.Done():
+						return
+					}
+				}
+			}(endpoint)
+		}
+
+		for {
+			select {
+			case <-updated:
+			case <-runCtx.Done():
+				return nil
+			}
+			err := send(endpoints)
+			if err != nil {
+				return err
+			}
+		}
+	})
+}
+
+type taggedStatusSource[T any] struct {
+	tag       string
+	subscribe func(ctx context.Context, listener func(T))
+}
+
+func streamTaggedStatus[T any](ctx context.Context, sources []taggedStatusSource[T], send func(statuses map[string]T) error) error {
+	type subscription struct {
+		tag      string
+		latest   chan T
+		finished chan struct{}
+	}
+	var waitGroup sync.WaitGroup
+	subscriptions := make([]subscription, 0, len(sources))
+	for _, source := range sources {
+		current := subscription{
+			tag:      source.tag,
+			latest:   make(chan T, 1),
+			finished: make(chan struct{}),
+		}
+		subscriptions = append(subscriptions, current)
+		waitGroup.Go(func() {
+			defer close(current.finished)
+			source.subscribe(ctx, func(status T) {
+				storeLatestStatus(current.latest, status)
+			})
+		})
+	}
+
+	statuses := make(map[string]T, len(sources))
+	for _, current := range subscriptions {
+		select {
+		case status := <-current.latest:
+			statuses[current.tag] = status
+		case <-current.finished:
+			select {
+			case status := <-current.latest:
+				statuses[current.tag] = status
+			default:
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	err := send(statuses)
+	if err != nil {
+		return err
+	}
+
+	type taggedStatus struct {
+		tag    string
+		status T
+	}
+	updates := make(chan taggedStatus, len(sources))
+	for _, current := range subscriptions {
+		waitGroup.Go(func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case status := <-current.latest:
+					select {
+					case updates <- taggedStatus{tag: current.tag, status: status}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		})
+	}
+	go func() {
+		waitGroup.Wait()
+		close(updates)
+	}()
+
+	for update := range updates {
+		statuses[update.tag] = update.status
+		err = send(statuses)
+		if err != nil {
+			return err
+		}
+	}
+	<-ctx.Done()
+	return nil
+}
+
+func storeLatestStatus[T any](slot chan T, status T) {
+	select {
+	case slot <- status:
+		return
+	default:
+	}
+	select {
+	case <-slot:
+	default:
+	}
+	select {
+	case slot <- status:
+	default:
+	}
+}
+
+func (s *StartedService) StartNetworkQualityTest(
+	request *NetworkQualityTestRequest,
+	server grpc.ServerStreamingServer[NetworkQualityTestProgress],
+) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	outbound, err := resolveOutbound(boxService, request.OutboundTag)
+	if err != nil {
+		return err
+	}
+
+	resolvedDialer := dialer.NewResolveDialer(boxService.ctx, outbound, true, "", adapter.DNSQueryOptions{}, 0)
+	httpClient := networkquality.NewHTTPClient(resolvedDialer)
+	defer httpClient.CloseIdleConnections()
+
+	measurementClientFactory, err := networkquality.NewOptionalHTTP3Factory(resolvedDialer, request.Http3)
+	if err != nil {
+		return err
+	}
+
+	result, nqErr := networkquality.Run(networkquality.Options{
+		ConfigURL:            request.ConfigURL,
+		HTTPClient:           httpClient,
+		NewMeasurementClient: measurementClientFactory,
+		Serial:               request.Serial,
+		MaxRuntime:           time.Duration(request.MaxRuntimeSeconds) * time.Second,
+		Context:              server.Context(),
+		OnProgress: func(p networkquality.Progress) {
+			_ = server.Send(NewNetworkQualityTestProgress(p))
+		},
+	})
+	if nqErr != nil {
+		return server.Send(&NetworkQualityTestProgress{
+			IsFinal: true,
+			Error:   nqErr.Error(),
+		})
+	}
+	return server.Send(NewNetworkQualityTestResult(result))
+}
+
+func (s *StartedService) StartSTUNTest(
+	request *STUNTestRequest,
+	server grpc.ServerStreamingServer[STUNTestProgress],
+) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	outbound, err := resolveOutbound(boxService, request.OutboundTag)
+	if err != nil {
+		return err
+	}
+
+	resolvedDialer := dialer.NewResolveDialer(boxService.ctx, outbound, true, "", adapter.DNSQueryOptions{}, 0)
+
+	result, stunErr := stun.Run(stun.Options{
+		Server:  request.Server,
+		Dialer:  resolvedDialer,
+		Context: server.Context(),
+		OnProgress: func(p stun.Progress) {
+			_ = server.Send(NewSTUNTestProgress(p))
+		},
+	})
+	if stunErr != nil {
+		return server.Send(&STUNTestProgress{
+			IsFinal: true,
+			Error:   stunErr.Error(),
+		})
+	}
+	return server.Send(NewSTUNTestResult(result))
+}
+
+func (s *StartedService) SubscribeTailscaleStatus(
+	_ *emptypb.Empty,
+	server grpc.ServerStreamingServer[TailscaleStatusUpdate],
+) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	selectedLocale := locale.FromContext(server.Context())
+	return s.followInstance(server.Context(), func(ctx context.Context, instance *Instance) error {
+		type tailscaleEndpoint struct {
+			tag      string
+			provider adapter.TailscaleEndpoint
+		}
+		var endpoints []tailscaleEndpoint
+		if instance != nil {
+			for _, endpoint := range instance.endpointManager.Endpoints() {
+				if endpoint.Type() != C.TypeTailscale {
+					continue
+				}
+				provider, loaded := endpoint.(adapter.TailscaleEndpoint)
+				if !loaded {
+					continue
+				}
+				endpoints = append(endpoints, tailscaleEndpoint{
+					tag:      endpoint.Tag(),
+					provider: provider,
+				})
+			}
+		}
+		sources := common.Map(endpoints, func(endpoint tailscaleEndpoint) taggedStatusSource[*adapter.TailscaleEndpointStatus] {
+			return taggedStatusSource[*adapter.TailscaleEndpointStatus]{
+				tag: endpoint.tag,
+				subscribe: func(subscribeCtx context.Context, listener func(*adapter.TailscaleEndpointStatus)) {
+					_ = endpoint.provider.SubscribeTailscaleStatus(subscribeCtx, listener)
+				},
+			}
+		})
+		return streamTaggedStatus(ctx, sources, func(statuses map[string]*adapter.TailscaleEndpointStatus) error {
+			protoEndpoints := make([]*TailscaleEndpointStatus, 0, len(endpoints))
+			for _, endpoint := range endpoints {
+				endpointStatus, found := statuses[endpoint.tag]
+				if !found {
+					continue
+				}
+				protoEndpoints = append(protoEndpoints, tailscaleEndpointStatusToProto(endpoint.tag, endpointStatus, selectedLocale))
+			}
+			return server.Send(&TailscaleStatusUpdate{
+				Endpoints: protoEndpoints,
+			})
+		})
+	})
+}
+
+func tailscaleEndpointStatusToProto(tag string, s *adapter.TailscaleEndpointStatus, selectedLocale *locale.Locale) *TailscaleEndpointStatus {
+	userGroups := make([]*TailscaleUserGroup, len(s.UserGroups))
+	for i, group := range s.UserGroups {
+		peers := make([]*TailscalePeer, len(group.Peers))
+		for j, peer := range group.Peers {
+			peers[j] = tailscalePeerToProto(peer)
+		}
+		userGroups[i] = &TailscaleUserGroup{
+			UserID:        group.UserID,
+			LoginName:     group.LoginName,
+			DisplayName:   group.DisplayName,
+			ProfilePicURL: group.ProfilePicURL,
+			Peers:         peers,
+		}
+	}
+	result := &TailscaleEndpointStatus{
+		EndpointTag:        tag,
+		BackendState:       s.BackendState,
+		StateText:          selectedLocale.TailscaleStateText(s.BackendState),
+		AuthURL:            s.AuthURL,
+		NetworkName:        s.NetworkName,
+		MagicDNSSuffix:     s.MagicDNSSuffix,
+		UserGroups:         userGroups,
+		KeyAuth:            s.KeyAuth,
+		CanShareFiles:      s.CanShareFiles,
+		WaitingFileCount:   s.WaitingFileCount,
+		ReceivingFileCount: s.ReceivingFileCount,
+		UnreadFileCount:    s.UnreadFileCount,
+	}
+	if s.Self != nil {
+		result.Self = tailscalePeerToProto(s.Self)
+	}
+	if s.ExitNode != nil {
+		result.ExitNode = tailscalePeerToProto(s.ExitNode)
+	}
+	return result
+}
+
+func tailscalePeerToProto(peer *adapter.TailscalePeer) *TailscalePeer {
+	return &TailscalePeer{
+		StableID:        peer.StableID,
+		HostName:        peer.HostName,
+		DnsName:         peer.DNSName,
+		Os:              peer.OS,
+		TailscaleIPs:    peer.TailscaleIPs,
+		SshHostKeys:     peer.SSHHostKeys,
+		Online:          peer.Online,
+		ExitNode:        peer.ExitNode,
+		ExitNodeOption:  peer.ExitNodeOption,
+		ShareeNode:      peer.ShareeNode,
+		Expired:         peer.Expired,
+		Active:          peer.Active,
+		CanReceiveFiles: peer.CanReceiveFiles,
+		RxBytes:         peer.RxBytes,
+		TxBytes:         peer.TxBytes,
+		KeyExpiry:       peer.KeyExpiry,
+		LastSeen:        peer.LastSeen,
+	}
+}
+
+func (s *StartedService) StartTailscalePing(
+	request *TailscalePingRequest,
+	server grpc.ServerStreamingServer[TailscalePingResponse],
+) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	provider, _, err := resolveTailscaleProvider(boxService, request.EndpointTag)
+	if err != nil {
+		return err
+	}
+
+	return provider.StartTailscalePing(server.Context(), request.PeerIP, func(result *adapter.TailscalePingResult) {
+		_ = server.Send(&TailscalePingResponse{
+			LatencyMs:      result.LatencyMs,
+			IsDirect:       result.IsDirect,
+			Endpoint:       result.Endpoint,
+			PeerRelay:      result.PeerRelay,
+			DerpRegionID:   result.DERPRegionID,
+			DerpRegionCode: result.DERPRegionCode,
+			Error:          result.Error,
+		})
+	})
+}
+
+func (s *StartedService) SetTailscaleExitNode(ctx context.Context, request *SetTailscaleExitNodeRequest) (*emptypb.Empty, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveTailscaleEndpoint(boxService, request.EndpointTag)
+	if err != nil {
+		return nil, err
+	}
+	tsEndpoint, loaded := endpoint.(adapter.TailscaleEndpoint)
+	if !loaded {
+		return nil, status.Error(codes.FailedPrecondition, "endpoint does not support tailscale")
+	}
+	err = tsEndpoint.SetTailscaleExitNode(ctx, request.StableID)
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) TailscaleLogout(ctx context.Context, request *TailscaleLogoutRequest) (*emptypb.Empty, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveTailscaleEndpoint(boxService, request.EndpointTag)
+	if err != nil {
+		return nil, err
+	}
+	tsEndpoint, loaded := endpoint.(adapter.TailscaleEndpoint)
+	if !loaded {
+		return nil, status.Error(codes.FailedPrecondition, "endpoint does not support tailscale")
+	}
+	err = tsEndpoint.Logout(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SubscribeOpenConnectStatus(
+	_ *emptypb.Empty,
+	server grpc.ServerStreamingServer[OpenConnectStatusUpdate],
+) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	selectedLocale := locale.FromContext(server.Context())
+	return subscribeEndpointStatus(server.Context(), s, C.TypeOpenConnect, func(endpoints []adapter.OpenConnectEndpoint) error {
+		return server.Send(&OpenConnectStatusUpdate{
+			Endpoints: common.Map(endpoints, func(endpoint adapter.OpenConnectEndpoint) *OpenConnectEndpointStatus {
+				return openConnectEndpointStatusToProto(endpoint.Tag(), endpoint.OpenConnectStatus(), selectedLocale)
+			}),
+		})
+	})
+}
+
+func openConnectEndpointStatusToProto(tag string, endpointStatus adapter.OpenConnectStatus, selectedLocale *locale.Locale) *OpenConnectEndpointStatus {
+	result := &OpenConnectEndpointStatus{
+		EndpointTag: tag,
+		State:       endpointStatus.State,
+		StateText:   selectedLocale.VPNStateText(endpointStatus.State),
+		Error:       endpointStatus.Error,
+		TunnelInfo:  openConnectTunnelInfoToProto(endpointStatus.TunnelInfo),
+	}
+	if endpointStatus.AuthChallenge != nil {
+		challenge := &OpenConnectAuthChallenge{
+			Id:      endpointStatus.AuthChallenge.ID,
+			Banner:  endpointStatus.AuthChallenge.Banner,
+			Message: endpointStatus.AuthChallenge.Message,
+			Error:   endpointStatus.AuthChallenge.Error,
+		}
+		if endpointStatus.AuthChallenge.Form != nil {
+			challenge.Challenge = &OpenConnectAuthChallenge_Form{Form: &OpenConnectAuthForm{
+				Fields: common.Map(endpointStatus.AuthChallenge.Form.Fields, func(field adapter.OpenConnectAuthFormField) *OpenConnectAuthFormField {
+					return &OpenConnectAuthFormField{
+						SubmissionKey: field.SubmissionKey,
+						Name:          field.Name,
+						Label:         field.Label,
+						Kind:          field.Kind,
+						Value:         field.Value,
+						Options: common.Map(field.Options, func(option adapter.OpenConnectAuthFormChoice) *OpenConnectAuthFormChoice {
+							return &OpenConnectAuthFormChoice{
+								Value: option.Value,
+								Label: option.Label,
+							}
+						}),
+					}
+				}),
+			}}
+		}
+		if endpointStatus.AuthChallenge.Browser != nil {
+			challenge.Challenge = &OpenConnectAuthChallenge_Browser{Browser: &OpenConnectBrowserRequest{
+				Url:                 endpointStatus.AuthChallenge.Browser.URL,
+				FinalURL:            endpointStatus.AuthChallenge.Browser.FinalURL,
+				CookieNames:         endpointStatus.AuthChallenge.Browser.CookieNames,
+				EarlyCookieNames:    endpointStatus.AuthChallenge.Browser.EarlyCookieNames,
+				HeaderNames:         endpointStatus.AuthChallenge.Browser.HeaderNames,
+				CallbackURLPrefixes: endpointStatus.AuthChallenge.Browser.CallbackURLPrefixes,
+				CacheID:             endpointStatus.AuthChallenge.Browser.CacheID,
+			}}
+		}
+		result.AuthChallenge = challenge
+	}
+	return result
+}
+
+func (s *StartedService) SubmitOpenConnectAuthResponse(ctx context.Context, request *OpenConnectAuthResponseSubmission) (*emptypb.Empty, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveEndpoint[adapter.OpenConnectEndpoint](boxService, request.EndpointTag, C.TypeOpenConnect, "OpenConnect client")
+	if err != nil {
+		return nil, err
+	}
+	var authResponse adapter.OpenConnectAuthResponse
+	form := request.GetForm()
+	if form != nil {
+		authResponse.Form = &adapter.OpenConnectAuthFormResponse{Values: form.Values}
+	}
+	browser := request.GetBrowser()
+	if browser != nil {
+		authResponse.Browser = &adapter.OpenConnectBrowserResult{
+			FinalURL: browser.FinalURL,
+			Cookies: common.Map(browser.Cookies, func(cookie *OpenConnectBrowserCookie) adapter.OpenConnectBrowserCookie {
+				return adapter.OpenConnectBrowserCookie{Name: cookie.Name, Value: cookie.Value}
+			}),
+			Headers: common.Map(browser.Headers, func(header *OpenConnectBrowserHeader) adapter.OpenConnectBrowserHeader {
+				return adapter.OpenConnectBrowserHeader{Name: header.Name, Values: header.Values}
+			}),
+		}
+	}
+	err = endpoint.CompleteAuthChallenge(request.ChallengeID, authResponse)
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) CancelOpenConnectAuthChallenge(ctx context.Context, request *OpenConnectAuthChallengeCancel) (*emptypb.Empty, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveEndpoint[adapter.OpenConnectEndpoint](boxService, request.EndpointTag, C.TypeOpenConnect, "OpenConnect client")
+	if err != nil {
+		return nil, err
+	}
+	err = endpoint.CancelAuthChallenge(request.ChallengeID)
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SubscribeOpenVPNStatus(
+	_ *emptypb.Empty,
+	server grpc.ServerStreamingServer[OpenVPNStatusUpdate],
+) error {
+	err := s.waitForStarted(server.Context())
+	if err != nil {
+		return err
+	}
+	selectedLocale := locale.FromContext(server.Context())
+	return subscribeEndpointStatus(server.Context(), s, C.TypeOpenVPNClient, func(endpoints []adapter.OpenVPNEndpoint) error {
+		return server.Send(&OpenVPNStatusUpdate{
+			Endpoints: common.Map(endpoints, func(endpoint adapter.OpenVPNEndpoint) *OpenVPNEndpointStatus {
+				return openVPNEndpointStatusToProto(endpoint.Tag(), endpoint.OpenVPNStatus(), selectedLocale)
+			}),
+		})
+	})
+}
+
+func openVPNEndpointStatusToProto(tag string, endpointStatus adapter.OpenVPNStatus, selectedLocale *locale.Locale) *OpenVPNEndpointStatus {
+	result := &OpenVPNEndpointStatus{
+		EndpointTag: tag,
+		State:       endpointStatus.State,
+		StateText:   selectedLocale.VPNStateText(endpointStatus.State),
+		Error:       endpointStatus.Error,
+		TunnelInfo:  openVPNTunnelInfoToProto(endpointStatus.TunnelInfo),
+	}
+	if endpointStatus.Challenge != nil {
+		challenge := &OpenVPNChallenge{
+			Id:            endpointStatus.Challenge.ID,
+			Kind:          endpointStatus.Challenge.Kind,
+			Username:      endpointStatus.Challenge.Username,
+			Message:       endpointStatus.Challenge.Message,
+			Url:           endpointStatus.Challenge.URL,
+			SecretMessage: endpointStatus.Challenge.SecretMessage,
+			Echo:          endpointStatus.Challenge.Echo,
+			PreviousError: endpointStatus.Challenge.PreviousError,
+		}
+		if !endpointStatus.Challenge.Deadline.IsZero() {
+			challenge.Deadline = endpointStatus.Challenge.Deadline.Unix()
+		}
+		result.Challenge = challenge
+	}
+	return result
+}
+
+func openConnectTunnelInfoToProto(tunnelInfo *adapter.OpenConnectTunnelInfo) *OpenConnectTunnelInfo {
+	if tunnelInfo == nil {
+		return nil
+	}
+	result := &OpenConnectTunnelInfo{
+		Server:    tunnelInfo.Server,
+		Flavor:    tunnelInfo.Flavor,
+		Transport: tunnelInfo.Transport,
+		Mtu:       tunnelInfo.MTU,
+	}
+	if !tunnelInfo.ConnectedSince.IsZero() {
+		result.ConnectedSince = tunnelInfo.ConnectedSince.Unix()
+	}
+	result.Ipv4 = common.Map(tunnelInfo.IPv4, netip.Prefix.String)
+	result.Ipv6 = common.Map(tunnelInfo.IPv6, netip.Prefix.String)
+	result.Dns = common.Map(tunnelInfo.DNS, netip.Addr.String)
+	return result
+}
+
+func openVPNTunnelInfoToProto(tunnelInfo *adapter.OpenVPNTunnelInfo) *OpenVPNTunnelInfo {
+	if tunnelInfo == nil {
+		return nil
+	}
+	result := &OpenVPNTunnelInfo{
+		Server:  tunnelInfo.Server,
+		Network: tunnelInfo.Network,
+		Cipher:  tunnelInfo.Cipher,
+		Mtu:     tunnelInfo.MTU,
+	}
+	if !tunnelInfo.ConnectedSince.IsZero() {
+		result.ConnectedSince = tunnelInfo.ConnectedSince.Unix()
+	}
+	result.Ipv4 = common.Map(tunnelInfo.IPv4, netip.Prefix.String)
+	result.Ipv6 = common.Map(tunnelInfo.IPv6, netip.Prefix.String)
+	result.Dns = common.Map(tunnelInfo.DNS, netip.Addr.String)
+	return result
+}
+
+func (s *StartedService) SubmitOpenVPNChallengeResponse(ctx context.Context, request *OpenVPNChallengeSubmission) (*emptypb.Empty, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveEndpoint[adapter.OpenVPNEndpoint](boxService, request.EndpointTag, C.TypeOpenVPNClient, "OpenVPN client")
+	if err != nil {
+		return nil, err
+	}
+	err = endpoint.CompleteChallenge(request.ChallengeID, adapter.OpenVPNChallengeResponse{
+		Username: request.Username,
+		Password: request.Password,
+		Secret:   request.Secret,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) CancelOpenVPNChallenge(ctx context.Context, request *OpenVPNChallengeCancel) (*emptypb.Empty, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveEndpoint[adapter.OpenVPNEndpoint](boxService, request.EndpointTag, C.TypeOpenVPNClient, "OpenVPN client")
+	if err != nil {
+		return nil, err
+	}
+	err = endpoint.CancelChallenge(request.ChallengeID)
+	if err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) SendNotification(notification *adapter.Notification) error {
+	s.notificationSubscriber.Emit(&NotificationEvent{
+		Event: &NotificationEvent_Send{
+			Send: &Notification{
+				Identifier: notification.Identifier,
+				TypeName:   notification.TypeName,
+				TypeID:     notification.TypeID,
+				Title:      notification.Title,
+				Subtitle:   notification.Subtitle,
+				Body:       notification.Body,
+				OpenURL:    notification.OpenURL,
+			},
+		},
+	})
+	return nil
+}
+
+func (s *StartedService) CancelNotification(identifier string, typeID int32) error {
+	s.notificationSubscriber.Emit(&NotificationEvent{
+		Event: &NotificationEvent_Cancel{
+			Cancel: &NotificationCancel{
+				Identifier: identifier,
+				TypeID:     typeID,
+			},
+		},
+	})
+	return nil
+}
+
+func (s *StartedService) SubscribeNotifications(empty *emptypb.Empty, server grpc.ServerStreamingServer[NotificationEvent]) error {
+	subscription, done, err := s.notificationObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.notificationObserver.UnSubscribe(subscription)
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-done:
+			return nil
+		case event := <-subscription:
+			err = server.Send(event)
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *StartedService) mustEmbedUnimplementedStartedServiceServer() {
+}
+
+func (s *StartedService) WriteMessage(level log.Level, message string) {
+	item := &log.Entry{Level: level, Message: message}
+	s.logAccess.Lock()
+	s.logLines.PushBack(item)
+	if s.logLines.Len() > s.logMaxLines {
+		s.logLines.Remove(s.logLines.Front())
+	}
+	s.logAccess.Unlock()
+	s.logSubscriber.Emit(item)
+	if s.debug {
+		s.handler.WriteDebugMessage(message)
+	}
+}
+
+func (s *StartedService) SavedLog() []*log.Entry {
+	s.logAccess.RLock()
+	defer s.logAccess.RUnlock()
+	return s.logLines.Array()
+}
+
+func (s *StartedService) Instance() *Instance {
+	s.serviceAccess.RLock()
+	defer s.serviceAccess.RUnlock()
+	return s.instance
+}
