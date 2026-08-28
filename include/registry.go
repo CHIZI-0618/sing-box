@@ -53,6 +53,7 @@ func InboundRegistry() *inbound.Registry {
 	registry := inbound.NewRegistry()
 
 	tun.RegisterInbound(registry)
+	registerEBPFInbound(registry)
 	redirect.RegisterRedirect(registry)
 	redirect.RegisterTProxy(registry)
 	direct.RegisterInbound(registry)
