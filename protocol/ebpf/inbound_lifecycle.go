@@ -11,6 +11,7 @@ import (
 func (i *Inbound) Start(stage adapter.StartStage) error {
 	switch stage {
 	case adapter.StartStateInitialize:
+		i.startDebug()
 		if err := i.startSocketProtection(); err != nil {
 			return err
 		}
@@ -83,7 +84,9 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				", exclude:[", formatUIDRanges(i.cgroupPolicy.ExcludeUID), "]}",
 				", bypass_cidr={ipv4:", bypassIPv4Count, ", ipv6:", bypassIPv6Count, "}",
 			)
+			i.logDebugLocalDetails(backend)
 		}
+		i.logDebugSnapshot("startup")
 	}
 	return nil
 }
@@ -148,6 +151,7 @@ func (i *Inbound) cleanupStartFailure() error {
 }
 
 func (i *Inbound) closeResources() error {
+	debugErr := i.stopDebug()
 	i.stopTCPRedirectJanitor()
 	i.stopBypassRuleSets()
 	i.closeSocketProtection()
@@ -177,7 +181,7 @@ func (i *Inbound) closeResources() error {
 	}
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()
-	return E.Errors(sharedErr, backendErr, listenerErr, i.removeLocalRoutes())
+	return E.Errors(sharedErr, backendErr, listenerErr, debugErr, i.removeLocalRoutes())
 }
 
 func (i *Inbound) cgroupBackendInstance() *ECommon.CgroupBackend {

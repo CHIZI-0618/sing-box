@@ -169,6 +169,7 @@ func (s *sharedNetwork) sharedNetworkReady() {
 		", source_mac={include:", len(s.inbound.sharedNetworkIncludeMAC),
 		", exclude:", len(s.inbound.sharedNetworkExcludeMAC), "}",
 	)
+	s.inbound.logDebugSharedDetails(s)
 }
 
 func (s *sharedNetwork) startListeners() error {
@@ -384,6 +385,7 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			if result.Complete {
 				lastSweep = now
 			}
+			s.inbound.logDebugSharedFlowCleanup(result)
 			if !result.Complete {
 				continue
 			}

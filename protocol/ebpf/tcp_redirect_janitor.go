@@ -110,6 +110,7 @@ func (i *Inbound) runTCPRedirectJanitor(ctx context.Context, done chan<- struct{
 		if !result.Complete {
 			nextInterval = localTCPRedirectScanInterval
 		}
+		i.logDebugLocalTCPCleanup(result)
 		resetTimer(nextInterval)
 	}
 }

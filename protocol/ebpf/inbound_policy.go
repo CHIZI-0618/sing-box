@@ -28,10 +28,13 @@ func (i *Inbound) startBypassRuleSets() error {
 		)
 	}
 	i.bypassRuleSetStarted = true
-	_, err := i.refreshBypassRuleSetsLocked(true, true, true)
+	updated, err := i.refreshBypassRuleSetsLocked(true, true, true)
 	if err != nil {
 		i.stopBypassRuleSetsLocked()
 		return err
+	}
+	if updated {
+		i.logDebugBypassCIDRUpdate()
 	}
 	return nil
 }
@@ -64,10 +67,13 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	if !i.bypassRuleSetStarted {
 		return
 	}
-	_, err := i.refreshBypassRuleSetsLocked(true, false, true)
+	updated, err := i.refreshBypassRuleSetsLocked(true, false, true)
 	if err != nil {
 		i.policyWarnings.warn(i.logger, "refresh eBPF bypass_rule_set; keeping previous policy: ", err)
 		return
+	}
+	if updated {
+		i.logDebugBypassCIDRUpdate()
 	}
 }
 
@@ -89,6 +95,7 @@ func (i *Inbound) refreshBypassRuleSetsLocked(
 				ruleSetPrefixes = append(ruleSetPrefixes, prefixes...)
 			}
 		}
+		i.logDebugBypassRuleSetExtraction(len(ruleSetPrefixes))
 		if conflicts := i.fakeIPBypassConflictCount(ruleSetPrefixes); conflicts > 0 && warnConflicts {
 			i.logger.Warn(
 				"eBPF FakeIP force interception overrides bypass_rule_set CIDRs: overlaps=",
@@ -188,9 +195,11 @@ func (i *Inbound) InterfaceUpdated(ctx context.Context) {
 		return
 	}
 	if i.bypassRuleSetStarted {
-		_, err := i.refreshBypassRuleSetsLocked(false, false, false)
+		updated, err := i.refreshBypassRuleSetsLocked(false, false, false)
 		if err != nil {
 			i.policyWarnings.warn(i.logger, "refresh eBPF local interface bypass; keeping previous policy: ", err)
+		} else if updated {
+			i.logDebugBypassCIDRUpdate()
 		}
 	}
 	i.bypassRuleSetAccess.Unlock()

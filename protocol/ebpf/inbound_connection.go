@@ -79,6 +79,7 @@ func (i *Inbound) logMissingTCPRedirect(ctx context.Context, listener netip.Addr
 		args = append(args, " (", suppressed, " similar errors suppressed)")
 	}
 	i.logger.ErrorContext(ctx, args...)
+	i.logDebugSnapshot("missing_tcp_redirect")
 }
 
 func (i *Inbound) isRedirectListenerDestination(destination netip.AddrPort, listenerPort uint16) bool {

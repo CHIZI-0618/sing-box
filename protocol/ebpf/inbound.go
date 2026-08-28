@@ -106,6 +106,7 @@ type Inbound struct {
 	tcpJanitorStop    context.CancelFunc
 	tcpJanitorDone    chan struct{}
 	tcpJanitorWake    chan struct{}
+	debug             eBPFDebugState
 }
 
 var _ adapter.InterfaceUpdateListener = (*Inbound)(nil)

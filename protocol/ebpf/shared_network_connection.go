@@ -75,6 +75,7 @@ func (s *sharedNetwork) logMissingSharedTCPRedirect(
 		args = append(args, " (", suppressed, " similar errors suppressed)")
 	}
 	s.inbound.logger.ErrorContext(ctx, args...)
+	s.inbound.logDebugSnapshot("missing_shared_tcp_redirect")
 }
 
 func (s *sharedNetwork) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
