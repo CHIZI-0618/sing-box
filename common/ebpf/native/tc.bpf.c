@@ -548,7 +548,7 @@ NOINLINE struct bpf_sock *lookup_tcp_socket(struct __sk_buff *skb,
 }
 
 NOINLINE struct bpf_sock *lookup_tcp_socket_legacy(struct __sk_buff *skb,
-    const struct sb_tc_assign_key *key) {
+    const struct sb_tc_control *control, const struct sb_tc_assign_key *key) {
     struct bpf_sock_tuple tuple = {};
     __u32 tuple_size;
     if (key->family == AF_INET_VALUE) {
@@ -563,6 +563,18 @@ NOINLINE struct bpf_sock *lookup_tcp_socket_legacy(struct __sk_buff *skb,
         tuple.ipv6.sport = network_order16(key->source_port);
         tuple.ipv6.dport = network_order16(key->destination_port);
         tuple_size = sizeof(tuple.ipv6);
+    }
+    struct bpf_sock *socket = skc_lookup_tcp(skb, &tuple, tuple_size, BPF_F_CURRENT_NETNS, 0U);
+    if (socket != 0 && socket->state != BPF_TCP_LISTEN) return socket;
+    if (socket != 0) sk_release(socket);
+
+    // The legacy path has no SOCKMAP. Query the actual transparent listener
+    // port after the established-socket lookup so wildcard listeners remain
+    // usable on kernels that reject SOCKMAP or map-backed sk_assign.
+    if (key->family == AF_INET_VALUE) {
+        tuple.ipv4.dport = network_order16(control->listener_port);
+    } else {
+        tuple.ipv6.dport = network_order16(control->listener_port);
     }
     return skc_lookup_tcp(skb, &tuple, tuple_size, BPF_F_CURRENT_NETNS, 0U);
 }
@@ -638,7 +650,7 @@ NOINLINE int assign_socket_legacy(struct __sk_buff *skb, const struct sb_tc_cont
     bool source_mac_valid = (path & SB_TC_PATH_SOURCE_MAC_VALID) != 0U;
     path &= ~SB_TC_PATH_SOURCE_MAC_VALID;
     struct bpf_sock *socket = key->protocol == IPPROTO_TCP_VALUE
-        ? lookup_tcp_socket_legacy(skb, key)
+        ? lookup_tcp_socket_legacy(skb, control, key)
         : lookup_udp_socket(skb, control, key);
     if (socket == 0) return TC_ACT_SHOT;
     struct sb_tc_assign_key assignment_key = *key;
