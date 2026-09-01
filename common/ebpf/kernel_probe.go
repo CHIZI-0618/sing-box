@@ -232,7 +232,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 
 	probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.Array,
 		"Stores runtime controls.")
-	if needTC || needCgroup {
+	if needTC || needPacketRewrite || needCgroup {
 		probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.Hash,
 			"Stores source MAC, host-address, and port policies.")
 		probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.LRUHash,
