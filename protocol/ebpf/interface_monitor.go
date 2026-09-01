@@ -219,7 +219,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		i.interfaceWarnings.inventory.warn(i.logger, "update interfaces for TC eBPF: ", err)
 	}
 	defaultInterface := i.monitoredDefaultInterfaceName()
-	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
+	localTCEnabled := i.localTCEnabled()
 	localInterface, err := availableLocalTCInterface(localTCEnabled, defaultInterface)
 	if err != nil {
 		i.interfaceWarnings.topology.warn(i.logger, "inspect TC eBPF local interface: ", err)
@@ -230,7 +230,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
 	tcSharedInterfaces := sharedInterfaces
-	if i.sharedDataPlane == sharedDataPlanePacketRewrite {
+	if i.sharedRewriteEnabled() {
 		tcSharedInterfaces = nil
 	}
 	hostAddresses := i.hostAddresses()

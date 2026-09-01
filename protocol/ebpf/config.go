@@ -47,6 +47,31 @@ func normalizeMode(mode string, localOption, sharedOption *bool) (string, bool, 
 	}
 }
 
+type normalizedDataPlanes struct {
+	mode            string
+	localEnabled    bool
+	localDataPlane  string
+	cgroupPath      string
+	sharedEnabled   bool
+	sharedDataPlane string
+}
+
+func normalizeDataPlanes(options option.EBPFInboundOptions) (normalizedDataPlanes, error) {
+	mode, localEnabled, sharedEnabled, err := normalizeMode(options.Mode, options.Local.Enabled, options.Shared.Enabled)
+	if err != nil {
+		return normalizedDataPlanes{}, err
+	}
+	localDataPlane, cgroupPath, err := normalizeLocalDataPlane(options.Local)
+	if err != nil {
+		return normalizedDataPlanes{}, err
+	}
+	sharedDataPlane, err := normalizeSharedDataPlane(options.Shared)
+	if err != nil {
+		return normalizedDataPlanes{}, err
+	}
+	return normalizedDataPlanes{mode: mode, localEnabled: localEnabled, localDataPlane: localDataPlane, cgroupPath: cgroupPath, sharedEnabled: sharedEnabled, sharedDataPlane: sharedDataPlane}, nil
+}
+
 func normalizeSharedDataPlane(options option.EBPFSharedOptions) (string, error) {
 	switch options.DataPlane {
 	case "", sharedDataPlaneSocketAssign:
