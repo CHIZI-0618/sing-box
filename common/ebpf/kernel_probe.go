@@ -306,6 +306,11 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			helpers = append(helpers, helper)
 		}
 	}
+	if needCgroup && enableUDP {
+		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
+			asm.FnKtimeGetCoarseNs, "bpf_ktime_get_coarse_ns",
+			"Uses coarse monotonic time for the UDP flow-cache expiry fast path when available; the precise helper remains the fallback.")
+	}
 	if needSelfBypass {
 		// Local TC and local cgroup both use this optional optimization when the
 		// process cgroup hooks can be attached. It is never a required data-plane
