@@ -95,6 +95,19 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 			return err
 		}
 	}
+	if i.sharedRewrite != nil {
+		if backend := i.sharedRewrite.sharedBackendInstance(); backend != nil {
+			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+				ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
+				if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
+					return err
+				}
+			} else if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
+				return err
+			}
+		}
+	}
+	i.bypassRuleSetPolicy = policy
 	return nil
 }
 

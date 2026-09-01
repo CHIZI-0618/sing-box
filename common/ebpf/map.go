@@ -19,6 +19,7 @@ const (
 	bpfMapLookupElem          = 1
 	bpfMapUpdateElem          = 2
 	bpfMapDeleteElem          = 3
+	bpfMapGetNextKey          = 4
 	bpfMapLookupAndDeleteElem = 21
 	bpfNoExist                = 1
 
@@ -67,6 +68,138 @@ func updateMapWithFlags(mapFD int, key unsafe.Pointer, value unsafe.Pointer, fla
 
 func deleteMap(mapFD int, key unsafe.Pointer) error {
 	return mapOperation(bpfMapDeleteElem, mapFD, key, nil, 0)
+}
+
+func (s *mapScanScratch[K, V]) scan(
+	mapInstance *CiliumEBPF.Map,
+	capacity uint32,
+	fallbackBudget uint32,
+	visit func(K, V),
+) (mapScanResult, error) {
+	if mapInstance == nil {
+		return mapScanResult{}, errBackendClosed
+	}
+	if capacity == 0 || fallbackBudget == 0 {
+		return mapScanResult{}, unix.EINVAL
+	}
+	if s.lookupSupport.mode.Load() != mapBatchUnsupported {
+		count, err := s.scanBatch(mapInstance, capacity, visit)
+		if err == nil {
+			return mapScanResult{Scanned: count, Entries: count, Complete: true}, nil
+		}
+		if !mapBatchUnsupportedError(err) {
+			return mapScanResult{Scanned: count}, err
+		}
+		s.lookupSupport.mode.Store(mapBatchUnsupported)
+		s.resetFallbackScan()
+	}
+	return s.scanFallback(mapInstance.FD(), capacity, fallbackBudget, visit)
+}
+
+func (s *mapScanScratch[K, V]) scanBatch(
+	mapInstance *CiliumEBPF.Map,
+	capacity uint32,
+	visit func(K, V),
+) (uint32, error) {
+	if cap(s.keys) < mapBatchMaxEntries {
+		s.keys = make([]K, mapBatchMaxEntries)
+		s.values = make([]V, mapBatchMaxEntries)
+	} else {
+		s.keys = s.keys[:mapBatchMaxEntries]
+		s.values = s.values[:mapBatchMaxEntries]
+	}
+	var cursor CiliumEBPF.MapBatchCursor
+	var scanned uint32
+	for scanned < capacity {
+		batchSize := min(uint32(mapBatchMaxEntries), capacity-scanned)
+		countValue, err := mapInstance.BatchLookup(&cursor, s.keys[:batchSize], s.values[:batchSize], nil)
+		count := uint32(countValue)
+		for index := range count {
+			visit(s.keys[index], s.values[index])
+		}
+		scanned += count
+		if errors.Is(err, CiliumEBPF.ErrKeyNotExist) {
+			s.lookupSupport.mode.CompareAndSwap(mapBatchUnknown, mapBatchSupported)
+			return scanned, nil
+		}
+		if err != nil {
+			return scanned, err
+		}
+		if count == 0 {
+			return scanned, unix.EIO
+		}
+		s.lookupSupport.mode.CompareAndSwap(mapBatchUnknown, mapBatchSupported)
+	}
+	return scanned, nil
+}
+
+func (s *mapScanScratch[K, V]) scanFallback(
+	mapFD int,
+	capacity uint32,
+	budget uint32,
+	visit func(K, V),
+) (mapScanResult, error) {
+	if !s.fallbackActive {
+		s.fallbackActive = true
+		s.cursorValid = false
+		var zero K
+		s.cursor = zero
+	}
+	if s.seen == nil {
+		s.seen = make(map[K]struct{})
+	} else if len(s.seen) > 0 && !s.cursorValid {
+		clear(s.seen)
+	}
+	var scanned uint32
+	var attempts uint32
+	for uint32(len(s.seen)) < capacity && scanned < budget && attempts < budget*2 {
+		attempts++
+		var currentPointer unsafe.Pointer
+		if s.cursorValid {
+			currentPointer = unsafe.Pointer(&s.cursor)
+		}
+		var next K
+		err := mapOperation(bpfMapGetNextKey, mapFD, currentPointer, unsafe.Pointer(&next), 0)
+		if errors.Is(err, unix.ENOENT) {
+			return s.completeFallbackScan(scanned), nil
+		}
+		if err != nil {
+			return mapScanResult{Scanned: scanned}, err
+		}
+		s.cursor = next
+		s.cursorValid = true
+		if _, loaded := s.seen[next]; loaded {
+			continue
+		}
+		s.seen[next] = struct{}{}
+		scanned++
+		var value V
+		if err = lookupMap(mapFD, unsafe.Pointer(&next), unsafe.Pointer(&value)); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			return mapScanResult{Scanned: scanned}, err
+		}
+		visit(next, value)
+	}
+	if uint32(len(s.seen)) >= capacity {
+		return s.completeFallbackScan(scanned), nil
+	}
+	return mapScanResult{Scanned: scanned}, nil
+}
+
+func (s *mapScanScratch[K, V]) completeFallbackScan(scanned uint32) mapScanResult {
+	entries := uint32(len(s.seen))
+	s.resetFallbackScan()
+	return mapScanResult{Scanned: scanned, Entries: entries, Complete: true}
+}
+
+func (s *mapScanScratch[K, V]) resetFallbackScan() {
+	s.fallbackActive = false
+	s.cursorValid = false
+	if s.seen != nil {
+		clear(s.seen)
+	}
 }
 
 func updateMapBatch[K any, V any](
@@ -218,6 +351,13 @@ func mapOperation(command uintptr, mapFD int, key unsafe.Pointer, value unsafe.P
 
 var errBackendClosed = syscall.EBADF
 
+func validateMapCapacity(name string, capacity uint32) error {
+	if capacity == 0 || capacity > MaxConfigurableMapCapacity {
+		return E.New("invalid ", name, " map capacity: ", capacity)
+	}
+	return nil
+}
+
 type backendHealth struct {
 	rebuildRequired error
 }
@@ -257,4 +397,20 @@ func policyUpdateError(updateErr error, rollbackErr error) error {
 func policyRollbackFailed(err error) bool {
 	var rollbackErr *policyRollbackError
 	return errors.As(err, &rollbackErr)
+}
+
+type mapScanScratch[K comparable, V any] struct {
+	lookupSupport  mapBatchSupport
+	keys           []K
+	values         []V
+	seen           map[K]struct{}
+	cursor         K
+	cursorValid    bool
+	fallbackActive bool
+}
+
+type mapScanResult struct {
+	Scanned  uint32
+	Entries  uint32
+	Complete bool
 }

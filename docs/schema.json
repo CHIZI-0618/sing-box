@@ -3552,6 +3552,9 @@
     "EBPFLocalOptions": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
         "dns_mode": {
           "type": "string",
           "enum": [
@@ -3711,6 +3714,16 @@
     "EBPFSharedOptions": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "data_plane": {
+          "type": "string",
+          "enum": [
+            "socket_assign",
+            "packet_rewrite"
+          ]
+        },
         "dns_mode": {
           "type": "string",
           "enum": [

@@ -1,10 +1,12 @@
 # eBPF inbound backends
 
-The eBPF inbound uses TC by default for local, shared, and hybrid operation.
-Local mode can instead use an explicit cgroup v2 socket-address backend.
-Shared interception always remains on TC. Both backends feed the same internal
-listeners, routing pipeline, policy compiler, UDP session service, and
-self-bypass owner.
+The eBPF inbound uses TC by default for local and shared operation. Local mode
+can instead use an explicit cgroup v2 socket-address backend. Shared TC has two
+data planes: `socket_assign` preserves the original tuple and assigns packets
+to the delivery listener; `packet_rewrite` uses an internal token address and
+restores replies on the downstream interface. Both backends feed the same
+internal listeners, routing pipeline, policy compiler, UDP session service,
+and lifecycle owner.
 
 ## Packet paths
 
@@ -17,12 +19,16 @@ reply sockets register their own cookie once at creation time.
 Selected packets are addressed to the delivery peer, cross the veth, and are assigned at
 its ingress hook. L3-only links receive an Ethernet header before this redirect.
 
-Shared traffic is selected and assigned at TC ingress on each configured
-downstream interface. Hybrid mode installs both roles and keeps their policy and
-IPv6 gates independent, including when one interface has both roles.
+Shared `socket_assign` traffic is selected and assigned at TC ingress on each
+configured downstream interface. Shared `packet_rewrite` traffic is selected
+and rewritten at ingress, then restored at egress. Local and shared roles can
+be enabled independently, including with local cgroup plus shared
+`packet_rewrite`.
 
-Local egress and shared ingress each have Ethernet and raw-IP program variants;
-the selected variant follows the link encapsulation reported by netlink.
+Local egress and shared `socket_assign` ingress each have Ethernet and raw-IP
+program variants; the selected variant follows the link encapsulation reported
+by netlink. Shared `packet_rewrite` intentionally accepts Ethernet framing
+only because it edits L2 packets in place.
 `classifier/delivery_ingress` always parses Ethernet from the internal veth.
 Local and delivery use the local IPv6 flag; shared uses the shared IPv6 flag.
 Both flags are static for the lifetime of the inbound.
@@ -172,12 +178,14 @@ listeners and UDP sessions, detaches filters or BPF links,
 removes policy routing, restores delivery sysctls, removes the veth, and closes
 programs and maps. Startup failures use the same cleanup path.
 
-For local cgroup mode, startup selects redirect prefixes, creates the shared
-listeners and local routes, prepares maps, loads the enabled program set, and
-attaches it last. Hybrid mode then starts only the shared half of TC. Shutdown
-detaches cgroup programs before closing listeners and removes only routes owned
-by this instance. Default TC configurations never load the cgroup object or
-create token routes.
+For local cgroup mode, startup selects redirect prefixes, creates the local
+listeners and routes, prepares maps, loads the enabled program set, and
+attaches it last. Shared `packet_rewrite` uses its own listeners and token
+routes, while shared `socket_assign` uses the local TC delivery path. Any
+combination of those local and shared choices is valid. Shutdown detaches
+each selected backend before closing listeners and removes only routes owned
+by this instance. A path that is disabled does not load its object or create
+its network state.
 
 ## Generation and tests
 

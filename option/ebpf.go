@@ -18,6 +18,7 @@ type EBPFInboundOptions struct {
 }
 
 type EBPFLocalOptions struct {
+	Enabled              *bool                      `json:"enabled,omitempty"`
 	DNSMode              string                     `json:"dns_mode,omitempty" enum:"hijack,respect_policy,off"`
 	DataPlane            string                     `json:"data_plane,omitempty" enum:"tc,cgroup"`
 	CgroupPath           string                     `json:"cgroup_path,omitempty"`
@@ -35,6 +36,8 @@ type EBPFLocalOptions struct {
 }
 
 type EBPFSharedOptions struct {
+	Enabled              *bool                            `json:"enabled,omitempty"`
+	DataPlane            string                           `json:"data_plane,omitempty" enum:"socket_assign,packet_rewrite"`
 	DNSMode              string                           `json:"dns_mode,omitempty" enum:"hijack,respect_policy,off"`
 	Interface            badoption.Listable[string]       `json:"interface,omitempty"`
 	IPv6                 *bool                            `json:"ipv6,omitempty"`

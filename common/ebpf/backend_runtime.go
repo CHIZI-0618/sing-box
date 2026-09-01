@@ -59,12 +59,14 @@ func eBPFBackendOperationError(operation string, stage string, err error) error 
 }
 
 func checkKernelCapabilities(scope string, cgroupPath string) error {
-	var fileSystem unix.Statfs_t
-	if err := unix.Statfs(cgroupPath, &fileSystem); err != nil {
-		return E.Cause(err, "check ", scope, " eBPF cgroup2 mount")
-	}
-	if fileSystem.Type != unix.CGROUP2_SUPER_MAGIC {
-		return E.New("eBPF inbound is not supported: ", cgroupPath, " is not a cgroup2 mount")
+	if cgroupPath != "" {
+		var fileSystem unix.Statfs_t
+		if err := unix.Statfs(cgroupPath, &fileSystem); err != nil {
+			return E.Cause(err, "check ", scope, " eBPF cgroup2 mount")
+		}
+		if fileSystem.Type != unix.CGROUP2_SUPER_MAGIC {
+			return E.New("eBPF inbound is not supported: ", cgroupPath, " is not a cgroup2 mount")
+		}
 	}
 	if err := features.HaveMapType(CiliumEBPF.Array); err != nil {
 		return eBPFOperationError("probe "+scope+" BPF_MAP_TYPE_ARRAY", err)
