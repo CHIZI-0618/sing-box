@@ -5,7 +5,6 @@ package ebpf
 import (
 	"errors"
 	"net/netip"
-	"time"
 	"unsafe"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -19,25 +18,6 @@ const (
 	mapLookupAndDeleteSupported
 	mapLookupAndDeleteUnsupported
 )
-
-func (b *CgroupBackend) RegisterProtectedSocket(cookie uint64) error {
-	if b == nil {
-		return errBackendClosed
-	}
-	if cookie == 0 {
-		return E.New("invalid socket cookie")
-	}
-	b.access.RLock()
-	defer b.access.RUnlock()
-	if b.runtime == nil || b.socketBypassMapFD < 0 {
-		return errBackendClosed
-	}
-	value := uint8(1)
-	if err := updateMap(b.socketBypassMapFD, unsafe.Pointer(&cookie), unsafe.Pointer(&value)); err != nil {
-		return E.Cause(err, "register eBPF bypass socket")
-	}
-	return nil
-}
 
 func (b *CgroupBackend) LookupOriginal(protocol uint8, listenerDestination netip.AddrPort) (OriginalDestination, error) {
 	return b.lookupOriginal(protocol, listenerDestination, false)
@@ -437,87 +417,6 @@ func mapLookupAndDeleteUnavailable(err error) bool {
 		errors.Is(err, linuxErrnoNotSupported)
 }
 
-type tcpRedirectEntry struct {
-	key   listenerLookupKey
-	value originalDestinationValue
-}
-
-func (b *CgroupBackend) SweepStaleTCPRedirects(
-	maxAge time.Duration,
-	fallbackBudget uint32,
-) (CgroupTCPRedirectSweepResult, error) {
-	if b == nil {
-		return CgroupTCPRedirectSweepResult{}, errBackendClosed
-	}
-	if maxAge <= 0 || fallbackBudget == 0 {
-		return CgroupTCPRedirectSweepResult{}, unix.EINVAL
-	}
-	b.tcpSweepAccess.Lock()
-	defer b.tcpSweepAccess.Unlock()
-
-	var now unix.Timespec
-	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &now); err != nil {
-		return CgroupTCPRedirectSweepResult{}, err
-	}
-	nowNS := uint64(now.Sec)*uint64(time.Second) + uint64(now.Nsec)
-	maxAgeNS := uint64(maxAge)
-	if nowNS <= maxAgeNS {
-		return CgroupTCPRedirectSweepResult{
-			Complete: true,
-		}, nil
-	}
-	staleBefore := nowNS - maxAgeNS
-
-	b.access.RLock()
-	defer b.access.RUnlock()
-	if b.runtime == nil {
-		return CgroupTCPRedirectSweepResult{}, errBackendClosed
-	}
-	b.tcpSweepCandidates = b.tcpSweepCandidates[:0]
-	b.tcpSweepDeleteKeys = b.tcpSweepDeleteKeys[:0]
-	scan, err := b.tcpSweepScratch.scan(
-		b.runtime.maps["cgroup_tcp_redirect"],
-		b.mapCapacity.TCPRedirect,
-		fallbackBudget,
-		func(key listenerLookupKey, value originalDestinationValue) {
-			if value.CreatedAtNS != 0 && value.CreatedAtNS <= staleBefore {
-				b.tcpSweepCandidates = append(b.tcpSweepCandidates, tcpRedirectEntry{key: key, value: value})
-			}
-		},
-	)
-	if err != nil {
-		return CgroupTCPRedirectSweepResult{}, err
-	}
-	result := CgroupTCPRedirectSweepResult{
-		Scanned:  scan.Scanned,
-		Complete: scan.Complete,
-	}
-	var sweepErr error
-	for _, entry := range b.tcpSweepCandidates {
-		var current originalDestinationValue
-		if err = lookupMap(b.tcpRedirectMapFD, unsafe.Pointer(&entry.key), unsafe.Pointer(&current)); err != nil {
-			if !errors.Is(err, unix.ENOENT) {
-				sweepErr = E.Errors(sweepErr, err)
-			}
-			continue
-		}
-		if current != entry.value {
-			continue
-		}
-		b.tcpSweepDeleteKeys = append(b.tcpSweepDeleteKeys, entry.key)
-	}
-	removed, deleteErr := deleteMapBatchIfExists(
-		b.runtime.maps["cgroup_tcp_redirect"],
-		b.tcpSweepDeleteKeys,
-		&b.tcpSweepDeleteSupport,
-	)
-	result.Removed = removed
-	if deleteErr != nil {
-		sweepErr = E.Errors(sweepErr, deleteErr)
-	}
-	return result, sweepErr
-}
-
 func (b *CgroupBackend) DeleteRedirect(protocol uint8, listenerDestination netip.AddrPort) error {
 	if b == nil {
 		return errBackendClosed
@@ -576,21 +475,4 @@ func (b *CgroupBackend) redirectMap(protocol uint8) (int, error) {
 	default:
 		return -1, E.New("unsupported eBPF redirect protocol: ", protocol)
 	}
-}
-
-func (b *CgroupBackend) TCPRedirectReservationFailures() (uint64, error) {
-	if b == nil {
-		return 0, errBackendClosed
-	}
-	b.access.RLock()
-	defer b.access.RUnlock()
-	if b.runtime == nil {
-		return 0, errBackendClosed
-	}
-	var key uint32
-	var failures uint64
-	if err := lookupMap(b.statsMapFD, unsafe.Pointer(&key), unsafe.Pointer(&failures)); err != nil {
-		return 0, err
-	}
-	return failures, nil
 }

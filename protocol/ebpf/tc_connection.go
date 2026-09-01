@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"syscall"
@@ -108,7 +109,7 @@ func (i *Inbound) prepareTCPacketConnection(
 	clientState := i.udpClientTable.loadOrCreate(client)
 	writer := &tcPacketWriter{inbound: i, client: client, clientState: clientState}
 	return true, ctx, writer, func(error) {
-		i.udpClientTable.delete(client, clientState)
+		i.deleteCgroupUDPRedirects(i.udpClientTable.delete(client, clientState))
 	}
 }
 
@@ -121,7 +122,7 @@ type tcPacketWriter struct {
 func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	defer buffer.Release()
 	destinationAddress := destination.AddrPort()
-	_, loaded := w.clientState.redirectBinding(destinationAddress)
+	binding, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
 		if w.clientState.isCgroupDataPlane() {
 			backend := w.inbound.cgroupBackendInstance()
@@ -133,9 +134,13 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 				return err
 			}
 			if !w.inbound.udpClientTable.setCgroupReplyBinding(w.client, w.clientState, destinationAddress, redirectAddress) {
+				_ = backend.DeleteRedirect(
+					commonEBPF.ProtocolUDP,
+					netip.AddrPortFrom(redirectAddress, w.inbound.listeners.selectedPort()),
+				)
 				return E.New("cgroup eBPF UDP reply binding was rejected")
 			}
-			_, loaded = w.clientState.redirectBinding(destinationAddress)
+			binding, loaded = w.clientState.redirectBinding(destinationAddress)
 			if !loaded {
 				return E.New("cgroup eBPF UDP reply binding is unavailable")
 			}
@@ -153,10 +158,13 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 		if !installed {
 			return E.New("TC eBPF UDP session closed or reply alias was rejected")
 		}
-		_, loaded = w.clientState.redirectBinding(destinationAddress)
+		binding, loaded = w.clientState.redirectBinding(destinationAddress)
 		if !loaded {
 			return E.New("TC eBPF UDP reply binding is unavailable")
 		}
+	}
+	if w.clientState.isCgroupDataPlane() {
+		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.redirectAddress)
 	}
 	socket, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
 	if err != nil {
@@ -164,6 +172,19 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	}
 	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.client)
 	return err
+}
+
+func (i *Inbound) deleteCgroupUDPRedirects(addresses []netip.Addr) {
+	backend := i.cgroupBackendInstance()
+	if backend == nil {
+		return
+	}
+	for _, address := range addresses {
+		destination := netip.AddrPortFrom(address, i.listeners.selectedPort())
+		if err := backend.DeleteRedirect(commonEBPF.ProtocolUDP, destination); err != nil && !errors.Is(err, unix.ENOENT) {
+			i.udpWarnings.cleanup.warn(i.logger, "delete cgroup eBPF UDP redirect: ", err)
+		}
+	}
 }
 
 func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, error) {

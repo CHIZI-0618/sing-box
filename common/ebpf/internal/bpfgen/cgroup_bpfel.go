@@ -23,7 +23,6 @@ const (
 	CgroupMapCgroupHostIpv4              = "cgroup_host_ipv4"
 	CgroupMapCgroupHostIpv6              = "cgroup_host_ipv6"
 	CgroupMapCgroupSocketBypass          = "cgroup_socket_bypass"
-	CgroupMapCgroupStats                 = "cgroup_stats"
 	CgroupMapCgroupTcpRedirect           = "cgroup_tcp_redirect"
 	CgroupMapCgroupUdpFlow               = "cgroup_udp_flow"
 	CgroupMapCgroupUdpPeer               = "cgroup_udp_peer"
@@ -120,7 +119,6 @@ type CgroupMapSpecs struct {
 	CgroupHostIpv4     *ebpf.MapSpec `ebpf:"cgroup_host_ipv4"`
 	CgroupHostIpv6     *ebpf.MapSpec `ebpf:"cgroup_host_ipv6"`
 	CgroupSocketBypass *ebpf.MapSpec `ebpf:"cgroup_socket_bypass"`
-	CgroupStats        *ebpf.MapSpec `ebpf:"cgroup_stats"`
 	CgroupTcpRedirect  *ebpf.MapSpec `ebpf:"cgroup_tcp_redirect"`
 	CgroupUdpFlow      *ebpf.MapSpec `ebpf:"cgroup_udp_flow"`
 	CgroupUdpPeer      *ebpf.MapSpec `ebpf:"cgroup_udp_peer"`
@@ -163,7 +161,6 @@ type CgroupMaps struct {
 	CgroupHostIpv4     *ebpf.Map `ebpf:"cgroup_host_ipv4"`
 	CgroupHostIpv6     *ebpf.Map `ebpf:"cgroup_host_ipv6"`
 	CgroupSocketBypass *ebpf.Map `ebpf:"cgroup_socket_bypass"`
-	CgroupStats        *ebpf.Map `ebpf:"cgroup_stats"`
 	CgroupTcpRedirect  *ebpf.Map `ebpf:"cgroup_tcp_redirect"`
 	CgroupUdpFlow      *ebpf.Map `ebpf:"cgroup_udp_flow"`
 	CgroupUdpPeer      *ebpf.Map `ebpf:"cgroup_udp_peer"`
@@ -182,7 +179,6 @@ func (m *CgroupMaps) Close() error {
 		m.CgroupHostIpv4,
 		m.CgroupHostIpv6,
 		m.CgroupSocketBypass,
-		m.CgroupStats,
 		m.CgroupTcpRedirect,
 		m.CgroupUdpFlow,
 		m.CgroupUdpPeer,

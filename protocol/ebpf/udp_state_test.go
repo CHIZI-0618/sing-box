@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/netip"
 	"testing"
+
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
 
 func TestUDPDirectBinding(t *testing.T) {
@@ -27,6 +29,30 @@ func TestUDPDirectBinding(t *testing.T) {
 	}
 	if state.processSocketCookie() != 42 {
 		t.Fatalf("unexpected process socket cookie: %d", state.processSocketCookie())
+	}
+}
+
+func TestUDPCgroupBindingLifecycle(t *testing.T) {
+	var table udpClientTable
+	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	destination := netip.MustParseAddrPort("1.1.1.1:53")
+	redirect := netip.MustParseAddr("127.128.0.7")
+	table.setCgroupBinding(client, commonEBPF.OriginalDestination{
+		Destination:  destination,
+		ConnectedUDP: true,
+		SocketCookie: 42,
+	}, redirect)
+	state, loaded := table.load(client)
+	if !loaded || !state.isCgroupDataPlane() {
+		t.Fatal("cgroup client state was not created")
+	}
+	binding, loaded := state.redirectBinding(destination)
+	if !loaded || binding.redirectAddress != redirect || !binding.connected {
+		t.Fatalf("unexpected cgroup binding: %+v", binding)
+	}
+	released := table.delete(client, state)
+	if len(released) != 1 || released[0] != redirect {
+		t.Fatalf("unexpected released redirects: %v", released)
 	}
 }
 

@@ -172,21 +172,26 @@ func (t *udpClientTable) setDirectReplyBinding(
 	return true
 }
 
-func (t *udpClientTable) delete(client netip.AddrPort, expected *udpClientState) {
+func (t *udpClientTable) delete(client netip.AddrPort, expected *udpClientState) []netip.Addr {
 	shard := t.clientShard(client)
 	shard.access.Lock()
 	defer shard.access.Unlock()
 	if shard.clients[client] != expected {
-		return
+		return nil
 	}
 	delete(shard.clients, client)
 	expected.access.Lock()
+	redirects := make([]netip.Addr, 0, len(expected.cgroupOriginals))
+	for address := range expected.cgroupOriginals {
+		redirects = append(redirects, address)
+	}
 	expected.closed = true
 	clear(expected.bindings)
 	clear(expected.cgroupOriginals)
 	expected.cgroupDataPlane = false
 	expected.replyAliasCount = 0
 	expected.access.Unlock()
+	return redirects
 }
 
 func (s *udpClientState) isCgroupDataPlane() bool {
