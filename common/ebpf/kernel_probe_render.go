@@ -31,6 +31,8 @@ type kernelProbeJSONReport struct {
 	KernelRelease    string                   `json:"kernel_release"`
 	Architecture     string                   `json:"architecture"`
 	Mode             KernelProbeMode          `json:"mode"`
+	LocalDataPlane   KernelProbeDataPlane     `json:"local_data_plane,omitempty"`
+	SharedDataPlane  KernelProbeDataPlane     `json:"shared_data_plane,omitempty"`
 	Network          []string                 `json:"network"`
 	IPv6             bool                     `json:"ipv6"`
 	Findings         []KernelProbeFinding     `json:"findings"`
@@ -43,14 +45,16 @@ type kernelProbeJSONReport struct {
 func WriteKernelProbeReportJSON(writer io.Writer, report *KernelProbeReport) error {
 	counts := report.Counts()
 	output := kernelProbeJSONReport{
-		Platform:       report.Platform,
-		KernelRelease:  report.KernelRelease,
-		Architecture:   report.Architecture,
-		Mode:           report.Mode,
-		Network:        report.Network,
-		IPv6:           report.IPv6,
-		Findings:       report.Findings,
-		ActivePrograms: make([]kernelProbeJSONProgram, 0, len(report.ActivePrograms)),
+		Platform:        report.Platform,
+		KernelRelease:   report.KernelRelease,
+		Architecture:    report.Architecture,
+		Mode:            report.Mode,
+		LocalDataPlane:  report.LocalDataPlane,
+		SharedDataPlane: report.SharedDataPlane,
+		Network:         report.Network,
+		IPv6:            report.IPv6,
+		Findings:        report.Findings,
+		ActivePrograms:  make([]kernelProbeJSONProgram, 0, len(report.ActivePrograms)),
 		Summary: kernelProbeJSONSummary{
 			Pass:             counts[KernelProbePass],
 			Warn:             counts[KernelProbeWarn],
@@ -92,8 +96,8 @@ func WriteKernelProbeReport(writer io.Writer, report *KernelProbeReport) error {
 	if _, err := fmt.Fprintln(writer, "sing-box eBPF inbound kernel capability probe"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(writer, "Platform: %s; kernel: %s; architecture: %s; mode: %s; network: %s; ipv6: %t\n",
-		report.Platform, report.KernelRelease, report.Architecture, report.Mode, strings.Join(report.Network, ","), report.IPv6); err != nil {
+	if _, err := fmt.Fprintf(writer, "Platform: %s; kernel: %s; architecture: %s; mode: %s; local_data_plane: %s; shared_data_plane: %s; network: %s; ipv6: %t\n",
+		report.Platform, report.KernelRelease, report.Architecture, report.Mode, report.LocalDataPlane, report.SharedDataPlane, strings.Join(report.Network, ","), report.IPv6); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(writer, "Runtime feature probe: cilium/ebpf direct bpf(2) probes (no shell, bpftool, or tc dependency)"); err != nil {
