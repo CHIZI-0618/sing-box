@@ -328,14 +328,15 @@ func (i *Inbound) startSelfBypass() error {
 
 func (i *Inbound) checkKernelCapabilities() error {
 	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
+	localCgroupEnabled := i.localEnabled && i.localDataPlane == localDataPlaneCgroup
 	sharedSocketAssignEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlaneSocketAssign
-	if !localTCEnabled && !sharedSocketAssignEnabled {
-		return nil
-	}
+	sharedRewriteEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite
 	mode := commonEBPF.KernelProbeModeShared
-	if localTCEnabled && sharedSocketAssignEnabled {
+	localSelected := localTCEnabled || localCgroupEnabled
+	sharedSelected := sharedSocketAssignEnabled || sharedRewriteEnabled
+	if localSelected && sharedSelected {
 		mode = commonEBPF.KernelProbeModeAll
-	} else if localTCEnabled {
+	} else if localSelected {
 		mode = commonEBPF.KernelProbeModeLocal
 	}
 	network := make([]string, 0, 2)
@@ -349,13 +350,27 @@ func (i *Inbound) checkKernelCapabilities() error {
 	if len(i.sharedOptions.Interface) > 0 {
 		interfaceName = i.sharedOptions.Interface[0]
 	}
+	localPlane := commonEBPF.KernelProbeDataPlane("")
+	if localTCEnabled {
+		localPlane = commonEBPF.KernelProbeDataPlaneTC
+	} else if localCgroupEnabled {
+		localPlane = commonEBPF.KernelProbeDataPlaneCgroup
+	}
+	sharedPlane := commonEBPF.KernelProbeDataPlane("")
+	if sharedSocketAssignEnabled {
+		sharedPlane = commonEBPF.KernelProbeDataPlaneSocketAssign
+	} else if sharedRewriteEnabled {
+		sharedPlane = commonEBPF.KernelProbeDataPlanePacketRewrite
+	}
 	report, err := commonEBPF.ProbeKernel(commonEBPF.KernelProbeOptions{
-		Mode:          mode,
-		Network:       network,
-		InterfaceName: interfaceName,
-		EnableIPv6:    localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6,
-		NeedLPMPolicy: localTCEnabled && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) ||
-			sharedSocketAssignEnabled && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0),
+		Mode:            mode,
+		LocalDataPlane:  localPlane,
+		SharedDataPlane: sharedPlane,
+		Network:         network,
+		InterfaceName:   interfaceName,
+		EnableIPv6:      localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6,
+		NeedLPMPolicy: (localTCEnabled || localCgroupEnabled) && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) ||
+			(sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0),
 		NeedProcessTracking: localTCEnabled && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})
 	if err != nil {
