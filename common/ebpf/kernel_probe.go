@@ -299,6 +299,8 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			{asm.FnCsumDiff, "bpf_csum_diff", "Recomputes checksums after packet tuple rewriting."},
 			{asm.FnL3CsumReplace, "bpf_l3_csum_replace", "Updates IPv4 checksums after packet tuple rewriting."},
 			{asm.FnL4CsumReplace, "bpf_l4_csum_replace", "Updates transport checksums after packet tuple rewriting."},
+			{asm.FnSkbStoreBytes, "bpf_skb_store_bytes", "Writes rewritten addresses and ports into packet data."},
+			{asm.FnKtimeGetNs, "bpf_ktime_get_ns", "Timestamps packet-rewrite flow activity."},
 		} {
 			helpers = append(helpers, helper)
 		}
