@@ -146,8 +146,8 @@ INLINE bool fakeip_ipv6(const struct sb_ebpf_cgroup_control *config, const __u8 
 }
 
 INLINE bool base_bypass(void *ctx, const struct sb_ebpf_cgroup_control *config, __u8 protocol, __u16 port) {
-    if (is_cookie_bypassed(ctx)) return true;
     if (!protocol_selected(config, protocol)) return true;
+    if (is_cookie_bypassed(ctx)) return true;
     if (service_port(protocol, port)) return true;
     if (port_bypassed(config, protocol, port)) return true;
     return false;
