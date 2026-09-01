@@ -9,6 +9,7 @@ import (
 
 	CiliumEBPF "github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/features"
 	"golang.org/x/sys/unix"
 )
 
@@ -66,6 +67,22 @@ func prepareCgroupMaps(runtimeState *cgroupRuntime, capacity CgroupMapCapacity, 
 	if err = validateCgroupUDPCleanupMaps(runtimeState); err != nil {
 		return err
 	}
+	if runtimeState.socket_storage_supported {
+		storageMaps, storageErr := loadObjectMaps(loadCgroupStorage, map[string]mapSpecOverride{
+			"cgroup_udp_socket_storage": {
+				name:       "sb_cg_udp_sock",
+				mapType:    CiliumEBPF.SkStorage,
+				maxEntries: 0,
+				flags:      bpfFlagNoPrealloc,
+			},
+		})
+		if storageErr == nil && storageMaps["cgroup_udp_socket_storage"] != nil {
+			runtimeState.maps["cgroup_udp_socket_storage"] = storageMaps["cgroup_udp_socket_storage"]
+		} else {
+			_ = closeMaps(storageMaps)
+			runtimeState.socket_storage_supported = false
+		}
+	}
 	runtimeState.control_map_fd = runtimeState.maps["cgroup_control"].FD()
 	runtimeState.tcp_redirect_map_fd = runtimeState.maps["cgroup_tcp_redirect"].FD()
 	runtimeState.udp_redirect_map_fd = runtimeState.maps["cgroup_udp_redirect"].FD()
@@ -80,6 +97,12 @@ func prepareCgroupMaps(runtimeState *cgroupRuntime, capacity CgroupMapCapacity, 
 	runtimeState.host_ipv4_map_fd = runtimeState.maps["cgroup_host_ipv4"].FD()
 	runtimeState.host_ipv6_map_fd = runtimeState.maps["cgroup_host_ipv6"].FD()
 	return nil
+}
+
+func probeCgroupSocketStorageSupport() bool {
+	return features.HaveMapType(CiliumEBPF.SkStorage) == nil &&
+		features.HaveProgramHelper(CiliumEBPF.CGroupSockAddr, asm.FnSkStorageGet) == nil &&
+		features.HaveProgramHelper(CiliumEBPF.CGroupSockAddr, asm.FnSkStorageDelete) == nil
 }
 
 type cgroupUDPMapLayout struct {
