@@ -6,7 +6,9 @@ icon: material/linux
 
 eBPF 入站使用 TC 分类器、透明 socket、socket lookup 和 `bpf_sk_assign`。是否支持
 由运行时能力探测决定，不使用 Linux 版本号判断。供应商内核可能回移、禁用或限制
-单项能力。若 TCX link 能力可用则优先使用，否则回退兼容的 `clsact` 挂载。
+单项能力。下述 LPM trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，
+因此需要保守地检查版本范围。若 TCX link 能力可用则优先使用，否则回退兼容的
+`clsact` 挂载。
 
 ## 内核配置
 
@@ -61,8 +63,20 @@ hook 以及 `bpf_get_socket_cookie`、`bpf_get_current_uid_gid`。它们将 sock
 
 ## 已知 LPM trie 安全问题
 
-部分内核可能包含 LPM trie 更新缺陷。sing-box 启动时会实际更新临时 LPM map 探测，
-而不是依赖版本字符串；探测失败时拒绝需要 LPM 的 UID、应用或 CIDR 策略。
+Linux 6.6.0 至 6.6.46 包含一个上游 `LPM_TRIE` key 布局缺陷。在启用相关 UBSAN
+检查的内核上，更新 LPM trie 可能报告越界访问，甚至导致内核 panic。上游修复提交
+`bpf: Replace bpf_lpm_trie_key 0-length array with flexible array` 已包含在 Linux
+6.6.47，也可能由厂商回移植。
+
+这是 LPM 更新路径缺陷，不是 map 类型缺失。通用的 `HaveMapType(LPM_TRIE)` 探测无法
+安全发现它。对于确实需要写入 LPM 项的策略，sing-box 会先检查运行内核版本，并在
+BTF 中确认存在修复后的 `bpf_lpm_trie_key_u8` 布局。若内核处于受影响范围且无法
+确认修复，sing-box 会在执行任何 LPM 更新前拒绝该策略。其他版本继续执行常规的
+运行时 map 和更新能力检查。
+
+只有 UID、应用、源 CIDR 或目标 bypass 策略实际包含条目时才需要这项检查。TC 对象
+仍会创建空的策略 map，但不会写入。精确主机地址策略使用 `HASH` map，不受此问题
+影响。后续动态更新 bypass 策略时也会重复执行同一保护。
 
 ## 权限
 

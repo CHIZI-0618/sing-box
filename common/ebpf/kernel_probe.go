@@ -46,6 +46,7 @@ type KernelProbeOptions struct {
 	Network             []string
 	InterfaceName       string
 	EnableIPv6          bool
+	NeedLPMPolicy       bool
 	NeedProcessTracking bool
 }
 
@@ -158,7 +159,7 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 		IPv6:          options.EnableIPv6,
 	}
 	needLocal := options.Mode == KernelProbeModeAll || options.Mode == KernelProbeModeLocal
-	probeCommonCapabilities(report, memlockErr, options.EnableIPv6, enableTCP, enableUDP, needLocal, options.NeedProcessTracking)
+	probeCommonCapabilities(report, memlockErr, options.EnableIPv6, enableTCP, enableUDP, needLocal, options.NeedLPMPolicy, options.NeedProcessTracking)
 	if options.Mode == KernelProbeModeAll || options.Mode == KernelProbeModeLocal {
 		probeLocalCapabilities(report, enableTCP, enableUDP)
 	}
@@ -169,8 +170,8 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 	return report, nil
 }
 
-func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enableIPv6, enableTCP, enableUDP, needLocal, needProcessTracking bool) {
-	probeLPMTrieUpdateSafety(report)
+func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enableIPv6, enableTCP, enableUDP, needLocal, needLPMPolicy, needProcessTracking bool) {
+	probeLPMTrieUpdateSafety(report, needLPMPolicy)
 
 	probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.Hash,
 		"Stores source MAC and exact host-address policy.")
@@ -293,7 +294,12 @@ func probeNetlinkAccess(report *KernelProbeReport) {
 		"Reads the links used by TC and policy-routing setup. Write permissions are checked by the real startup operations.", err)
 }
 
-func probeLPMTrieUpdateSafety(report *KernelProbeReport) {
+func probeLPMTrieUpdateSafety(report *KernelProbeReport, needed bool) {
+	if !needed {
+		report.Add(KernelProbePass, "common", KernelProbePerformance, "LPM trie policy updates",
+			"No configured UID, application, or CIDR policy requires an LPM trie update.")
+		return
+	}
 	if err := checkLPMTriePolicyCompatibility("policy", 1); err != nil {
 		report.Add(KernelProbeFail, "common", KernelProbeRequired, "LPM trie policy updates", err.Error())
 		return

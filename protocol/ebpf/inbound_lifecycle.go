@@ -217,10 +217,12 @@ func (i *Inbound) checkKernelCapabilities() error {
 		interfaceName = i.sharedOptions.Interface[0]
 	}
 	report, err := commonEBPF.ProbeKernel(commonEBPF.KernelProbeOptions{
-		Mode:                mode,
-		Network:             network,
-		InterfaceName:       interfaceName,
-		EnableIPv6:          i.localIPv6 || i.sharedIPv6,
+		Mode:          mode,
+		Network:       network,
+		InterfaceName: interfaceName,
+		EnableIPv6:    i.localIPv6 || i.sharedIPv6,
+		NeedLPMPolicy: i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0 ||
+			len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0,
 		NeedProcessTracking: i.localEnabled && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})
 	if err != nil {
