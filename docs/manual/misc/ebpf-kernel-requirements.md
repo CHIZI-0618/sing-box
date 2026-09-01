@@ -42,7 +42,8 @@ token routes.
 ## Required BPF facilities
 
 The selected kernel must support the following facilities for any TC data
-plane:
+plane. `packet_rewrite` uses the same TC program type but does not require the
+socket-lookup helpers listed below.
 
 - `SCHED_CLS` programs on TC ingress and egress;
 - `ARRAY`, `HASH`, `LRU_HASH`, and `LPM_TRIE` maps;
@@ -159,12 +160,24 @@ The local TC delivery veth requires writable per-interface IPv4 sysctls under
 
 ## Probe
 
-Use the built-in kernel probe with the same mode and protocols as the intended
-configuration. For shared mode, pass one active downstream interface so its
-link type can be checked.
+Use the built-in kernel probe with the same data planes, protocols, and IPv6
+setting as the intended configuration. Select concrete paths with
+`--local-data-plane=tc|cgroup` and
+`--shared-data-plane=socket_assign|packet_rewrite`; omit either flag to disable
+that path. For shared mode, pass one active downstream interface so its link
+type can be checked.
 
-The probe uses the selected protocols, address families, and shared interface.
-For local mode it reports the required TC socket-cookie helper and the optional
+```sh
+sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
+sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan --json
+sing-box tools ebpf status --local-data-plane tc --shared-data-plane socket_assign --interface wlan1 --json
+```
+
+The legacy `--mode local|shared|all` form remains equivalent to local TC,
+shared `socket_assign`, or both.
+
+The probe uses the selected protocols, address families, data planes, and shared interface.
+For local TC mode it reports the required TC socket-cookie helper and the optional
 cgroup socket-cookie hooks. It also reports the optional socket-address process
 tracker capabilities. A real startup determines whether the process cgroup is
 exclusive and uses cgroup registration when possible, otherwise enabling the
