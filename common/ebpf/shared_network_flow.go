@@ -277,6 +277,18 @@ func (b *SharedNetworkBackend) TCPFlowReleaseWake() <-chan struct{} {
 	return b.flowReleaseWake
 }
 
+// HasTrackedFlows reports whether userspace currently owns any flow reference.
+// It is used only to select the janitor wake-up cadence; orphan cleanup still
+// runs on the regular sweep deadline when no references are tracked.
+func (b *SharedNetworkBackend) HasTrackedFlows() bool {
+	if b == nil {
+		return false
+	}
+	b.flowAccess.Lock()
+	defer b.flowAccess.Unlock()
+	return len(b.flowReferences) != 0
+}
+
 func (b *SharedNetworkBackend) NextTCPFlowReleaseDelay(now time.Time) (time.Duration, bool) {
 	if b == nil {
 		return 0, false
