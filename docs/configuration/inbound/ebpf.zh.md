@@ -91,18 +91,19 @@ filter 协调顺序时修改。
 
 默认 TC 数据面的 local 接管跟随系统当前默认网络接口。默认网络变化时会自动切换；
 没有可用默认接口时会保留旧 attachment，待新接口准备好后切换。cgroup 数据面跟随
-配置的进程组，不依赖网络接口。
+当前可见的 cgroup v2 层级，不依赖网络接口。
 
 #### local.data_plane
 
-选择本机接管的数据面。默认值 `tc` 保持现有行为；`cgroup` 使用配置的 cgroup v2
-路径接管本机 socket。为兼容旧配置，未设置 `data_plane` 时，填写 `cgroup_path` 会
+选择本机接管的数据面。默认值 `tc` 保持现有行为；`cgroup` 接管当前可见的 cgroup
+v2 层级中的 socket。为兼容旧配置，未设置 `data_plane` 时，填写 `cgroup_path` 会
 自动选择 `cgroup`。
 
 #### local.cgroup_path
 
-`data_plane: cgroup` 使用的绝对 cgroup v2 路径，必须明确指定需要接管 socket 的
-进程组。
+将 `data_plane: cgroup` 的接管范围限制到指定的绝对 cgroup v2 子树。省略时接管
+当前可见的 cgroup v2 根层级及其所有子 cgroup。它不是 sing-box 服务自身 cgroup
+的配置项，除非用户确实只希望接管该服务子树。
 
 #### local.dns_mode
 

@@ -114,6 +114,7 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 	}{
 		{name: "default", options: option.EBPFLocalOptions{}, dataPlane: localDataPlaneTC},
 		{name: "explicit tc", options: option.EBPFLocalOptions{DataPlane: "tc"}, dataPlane: localDataPlaneTC},
+		{name: "cgroup root", options: option.EBPFLocalOptions{DataPlane: "cgroup"}, dataPlane: localDataPlaneCgroup},
 		{name: "explicit cgroup", options: option.EBPFLocalOptions{DataPlane: "cgroup", CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
 		{name: "legacy cgroup path", options: option.EBPFLocalOptions{CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
 	} {
@@ -131,7 +132,6 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 		{DataPlane: "invalid"},
 		{DataPlane: "tc", CgroupPath: "/sys/fs/cgroup/sing-box"},
 		{DataPlane: "cgroup", CgroupPath: "relative"},
-		{DataPlane: "cgroup"},
 	} {
 		if _, _, err := normalizeLocalDataPlane(options); err == nil {
 			t.Fatalf("expected invalid local data plane options to fail: %+v", options)

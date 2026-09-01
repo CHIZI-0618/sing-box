@@ -28,9 +28,9 @@ trie 安全检查是例外：受影响内核可能在探测动作本身执行时
 强烈建议启用 `CONFIG_BPF_JIT`，否则报文路径性能可能明显下降。
 
 local 的 `data_plane` 设为 `cgroup` 时，需要 `CONFIG_CGROUP_BPF` 和 cgroup v2
-挂载，且必须明确指定 `cgroup_path`。仅使用 cgroup local 的入站不要求
-`CONFIG_VETH`、TC qdisc、TC socket
-lookup 或 `bpf_sk_assign`；hybrid 模式仍需要 TC shared 的相关能力。
+挂载。sing-box 默认挂载到当前可见的 cgroup v2 根层级；可使用 `cgroup_path` 将
+接管范围限制到指定子树。仅使用 cgroup local 的入站不要求 `CONFIG_VETH`、TC
+qdisc、TC socket lookup 或 `bpf_sk_assign`；hybrid 模式仍需要 TC shared 的相关能力。
 
 ## 必需的 BPF 能力
 

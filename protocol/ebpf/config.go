@@ -52,9 +52,6 @@ func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, e
 		return "", "", E.New("local.cgroup_path requires local.data_plane=cgroup")
 	}
 	if options.CgroupPath == "" {
-		if dataPlane == localDataPlaneCgroup {
-			return "", "", E.New("local.cgroup_path is required when local.data_plane=cgroup")
-		}
 		return dataPlane, "", nil
 	}
 	if !filepath.IsAbs(options.CgroupPath) {

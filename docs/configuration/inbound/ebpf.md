@@ -94,19 +94,22 @@ inbound. Non-IP rules are ignored.
 With the default TC data plane, local interception follows the current system
 default network interface and moves when it changes. During a short handoff,
 the previous attachment remains active until the replacement is ready. The
-cgroup data plane follows the configured process group instead of an interface.
+cgroup data plane intercepts sockets in the visible cgroup v2 hierarchy instead
+of following an interface.
 
 #### local.data_plane
 
 Selects the local interception backend. `tc` is the default and preserves the
-existing behavior. `cgroup` attaches local sockets to the configured cgroup v2
-path. The legacy `cgroup_path` option implies `cgroup` when `data_plane` is
-omitted.
+existing behavior. `cgroup` intercepts sockets in the visible cgroup v2
+hierarchy. The legacy `cgroup_path` option implies `cgroup` when `data_plane`
+is omitted.
 
 #### local.cgroup_path
 
-Absolute cgroup v2 path used by `data_plane: cgroup`. It must identify the
-process group whose sockets should be intercepted.
+Limits `data_plane: cgroup` interception to the specified absolute cgroup v2
+subtree. When omitted, the visible cgroup v2 root and all its descendants are
+intercepted. This is not the path of the sing-box service unless only that
+service subtree should be intercepted.
 
 #### local.dns_mode
 
