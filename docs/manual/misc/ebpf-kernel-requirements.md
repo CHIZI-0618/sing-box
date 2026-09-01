@@ -7,8 +7,10 @@ icon: material/linux
 The eBPF inbound uses TC classifiers, transparent sockets, socket lookup and
 `bpf_sk_assign`. Support is determined by runtime capability probes rather than
 by a Linux version number. Vendor kernels may backport, disable, or restrict
-individual facilities. When TCX link creation is available it is preferred;
-otherwise sing-box uses the compatible `clsact` attachment.
+individual facilities. The LPM-trie safety exception described below uses a
+conservative release check because affected kernels can fault while that
+capability is being probed. When TCX link creation is available it is
+preferred; otherwise sing-box uses the compatible `clsact` attachment.
 
 ## Kernel configuration
 
@@ -69,11 +71,25 @@ predictable.
 
 ## Known LPM trie safety issue
 
-Some kernels may contain an LPM trie update defect. sing-box probes an actual
-temporary LPM update at startup instead of relying on a version string.
-The default exact host-address policy uses `HASH` maps and is unaffected.
-Configured UID/package filters, source CIDR filters, and destination bypass
-CIDR and UID policies use LPM tries and are rejected when that probe fails.
+Linux 6.6.0 through 6.6.46 contain an upstream `LPM_TRIE` key-layout defect.
+On kernels built with the relevant UBSAN checks, updating an LPM trie can
+report an out-of-bounds access and may panic the kernel. The upstream fix,
+`bpf: Replace bpf_lpm_trie_key 0-length array with flexible array`, is included
+in Linux 6.6.47 and may also be backported by vendors.
+
+This is an LPM update defect, not a missing map-type capability. A generic
+`HaveMapType(LPM_TRIE)` probe cannot detect it safely. For a policy that really
+needs LPM entries, sing-box first checks the running release and accepts a
+positive BTF indication of the fixed `bpf_lpm_trie_key_u8` layout. If a kernel
+is in the affected release range and the fix cannot be confirmed, sing-box
+rejects the policy before performing any LPM update. Kernels outside that
+range continue through the normal runtime map and update checks.
+
+The check is only required when UID, application, source-CIDR, or destination
+bypass policies contain entries. Empty policy maps are still created as part
+of the TC object but are not updated. The exact host-address policy uses
+`HASH` maps and is unaffected. A later dynamic bypass-policy update repeats the
+same guard.
 
 ## Privileges
 

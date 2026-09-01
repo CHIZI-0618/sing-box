@@ -76,6 +76,10 @@ func AttachProcessTracker(config ProcessTrackerConfig) (*ProcessTracker, error) 
 		owners: owners,
 	}
 	if len(uidEntries) > 0 || defaultBypass {
+		if err = checkLPMTriePolicyCompatibility("eBPF process UID policy", len(uidEntries)); err != nil {
+			_ = owners.Close()
+			return nil, err
+		}
 		uidPolicy, mapErr := CiliumEBPF.NewMap(&CiliumEBPF.MapSpec{
 			Name:       "sb_proc_uid",
 			Type:       CiliumEBPF.LPMTrie,
