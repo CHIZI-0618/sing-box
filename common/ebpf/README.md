@@ -89,6 +89,22 @@ MAC include/exclude policies are evaluated only on the shared path.
 | prefix policy | `LPM_TRIE` | UID ranges, source CIDRs, and destination bypass CIDRs. |
 | exact policy | `HASH` | Host addresses and shared source MAC policy. |
 
+### LPM trie kernel safety
+
+The LPM maps are created for a uniform object layout, but they are updated only
+when the corresponding policy has entries. Linux 6.6.0 through 6.6.46 has an
+upstream LPM key-layout defect that can trigger an out-of-bounds report, or a
+kernel fault on affected UBSAN/fortify builds, during an update. The upstream
+fix (`bpf_lpm_trie_key_u8`) is present in 6.6.47 and may be backported by a
+vendor.
+
+Because a generic map-type probe cannot safely detect this defect, policy setup
+uses a conservative release check for that range and accepts it only when the
+fixed BTF type is positively visible. If the fix cannot be confirmed, setup
+fails before issuing an LPM update. Other kernel capabilities continue to use
+runtime map, program, and helper probes; this version check is limited to the
+LPM update safety exception.
+
 The object is generated for little-endian and big-endian BPF without BTF or
 CO-RE sections. Source and object hashes are recorded in
 `internal/bpfgen/manifest.txt`.
