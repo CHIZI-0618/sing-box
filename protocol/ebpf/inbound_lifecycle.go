@@ -15,8 +15,7 @@ import (
 func (i *Inbound) Start(stage adapter.StartStage) error {
 	switch stage {
 	case adapter.StartStateInitialize:
-		if i.localEnabled && i.localDataPlane == localDataPlaneCgroup ||
-			i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite {
+		if i.localCgroupEnabled() || i.sharedRewriteEnabled() {
 			if err := i.selectRedirectPrefixes(); err != nil {
 				return err
 			}
@@ -50,9 +49,9 @@ func (i *Inbound) startInbound() error {
 	defaultInterface := i.currentDefaultInterfaceName()
 	hostAddresses := i.hostAddresses()
 	localInterface := ""
-	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
-	sharedSocketAssignEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlaneSocketAssign
-	sharedRewriteEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite
+	localTCEnabled := i.localTCEnabled()
+	sharedSocketAssignEnabled := i.sharedSocketAssignEnabled()
+	sharedRewriteEnabled := i.sharedRewriteEnabled()
 	if localTCEnabled {
 		localInterface = defaultInterface
 		if localInterface == "" {
@@ -69,7 +68,7 @@ func (i *Inbound) startInbound() error {
 			return err
 		}
 	}
-	if i.localEnabled && i.localDataPlane == localDataPlaneCgroup {
+	if i.localCgroupEnabled() {
 		if err := i.prepareCgroupBackend(); err != nil {
 			return err
 		}
@@ -81,7 +80,7 @@ func (i *Inbound) startInbound() error {
 			return err
 		}
 	}
-	if i.localEnabled && i.localDataPlane == localDataPlaneCgroup || sharedRewriteEnabled {
+	if i.localCgroupEnabled() || sharedRewriteEnabled {
 		if err := i.setupLocalRoutes(); err != nil {
 			return E.Cause(err, "configure eBPF redirect routes")
 		}
@@ -327,10 +326,10 @@ func (i *Inbound) startSelfBypass() error {
 }
 
 func (i *Inbound) checkKernelCapabilities() error {
-	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
-	localCgroupEnabled := i.localEnabled && i.localDataPlane == localDataPlaneCgroup
-	sharedSocketAssignEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlaneSocketAssign
-	sharedRewriteEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite
+	localTCEnabled := i.localTCEnabled()
+	localCgroupEnabled := i.localCgroupEnabled()
+	sharedSocketAssignEnabled := i.sharedSocketAssignEnabled()
+	sharedRewriteEnabled := i.sharedRewriteEnabled()
 	mode := commonEBPF.KernelProbeModeShared
 	localSelected := localTCEnabled || localCgroupEnabled
 	sharedSelected := sharedSocketAssignEnabled || sharedRewriteEnabled

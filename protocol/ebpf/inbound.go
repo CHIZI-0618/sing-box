@@ -115,13 +115,27 @@ type Inbound struct {
 	interfaceWarnings interfaceWarningLimiters
 }
 
+func (i *Inbound) localTCEnabled() bool {
+	return i.localEnabled && i.localDataPlane == localDataPlaneTC
+}
+func (i *Inbound) localCgroupEnabled() bool {
+	return i.localEnabled && i.localDataPlane == localDataPlaneCgroup
+}
+func (i *Inbound) sharedSocketAssignEnabled() bool {
+	return i.sharedEnabled && i.sharedDataPlane == sharedDataPlaneSocketAssign
+}
+func (i *Inbound) sharedRewriteEnabled() bool {
+	return i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite
+}
+
 var _ adapter.InterfaceUpdateListener = (*Inbound)(nil)
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.EBPFInboundOptions) (adapter.Inbound, error) {
-	mode, localEnabled, sharedEnabled, err := normalizeMode(options.Mode, options.Local.Enabled, options.Shared.Enabled)
+	selection, err := normalizeDataPlanes(options)
 	if err != nil {
 		return nil, err
 	}
+	mode, localEnabled, sharedEnabled := selection.mode, selection.localEnabled, selection.sharedEnabled
 	if err = validateLocalOptions(localEnabled, options.Local); err != nil {
 		return nil, err
 	}
@@ -131,14 +145,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err = validateAndroidUIDOptions(runtime.GOOS, options.Local); err != nil {
 		return nil, err
 	}
-	localDataPlane, cgroupPath, err := normalizeLocalDataPlane(options.Local)
-	if err != nil {
-		return nil, err
-	}
-	sharedDataPlane, err := normalizeSharedDataPlane(options.Shared)
-	if err != nil {
-		return nil, err
-	}
+	localDataPlane, cgroupPath, sharedDataPlane := selection.localDataPlane, selection.cgroupPath, selection.sharedDataPlane
 	localDNSMode, err := normalizeDNSMode(options.Local.DNSMode)
 	if err != nil {
 		return nil, E.Cause(err, "parse local.dns_mode")
