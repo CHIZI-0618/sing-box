@@ -235,7 +235,8 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 	needLocal := localPlane != ""
 	needTC := localPlane == KernelProbeDataPlaneTC || sharedPlane == KernelProbeDataPlaneSocketAssign
 	needPacketRewrite := sharedPlane == KernelProbeDataPlanePacketRewrite
-	needCgroup := localPlane == KernelProbeDataPlaneCgroup || needLocal
+	needCgroup := localPlane == KernelProbeDataPlaneCgroup
+	needSelfBypass := needLocal
 	needTCProgram := needTC || needPacketRewrite
 	probeLPMTrieUpdateSafety(report, needLPMPolicy)
 
@@ -305,7 +306,10 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			helpers = append(helpers, helper)
 		}
 	}
-	if needCgroup {
+	if needSelfBypass {
+		// Local TC and local cgroup both use this optional optimization when the
+		// process cgroup hooks can be attached. It is never a required data-plane
+		// capability because userspace socket-cookie registration is the fallback.
 		probeProgramType(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSock,
 			"Registers and releases sing-box socket cookies for self-bypass.")
 		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSock, asm.FnGetSocketCookie,
@@ -331,7 +335,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			}
 		}
 	}
-	if needTC && needProcessTracking {
+	if needProcessTracking {
 		probeProgramType(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
 			"Tracks socket ownership at connect and UDP sendmsg for process-aware routing without a procfs descriptor scan.")
 		for _, helper := range []struct {
