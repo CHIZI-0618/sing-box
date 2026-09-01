@@ -1,3 +1,6 @@
+// Copyright 2026, sing-box contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef SING_BOX_EBPF_ABI_H
 #define SING_BOX_EBPF_ABI_H
 
@@ -29,9 +32,6 @@
 #define SB_EBPF_CGROUP_FLAG_FAKEIP_IPV4 (1U << 15U)
 #define SB_EBPF_CGROUP_FLAG_FAKEIP_IPV6 (1U << 16U)
 #define SB_EBPF_CGROUP_FLAG_BYPASS_PORT (1U << 17U)
-#define SB_EBPF_CGROUP_STAT_TCP_REDIRECT_FAILURE 0U
-#define SB_EBPF_CGROUP_STAT_COUNT 1U
-
 struct sb_ebpf_cgroup_control {
     __u32 flags;
 	__u32 reserved;

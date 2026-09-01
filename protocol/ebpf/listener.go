@@ -192,6 +192,18 @@ func listenerTCP(current *listener.Listener) net.Listener {
 	return current.TCPListener()
 }
 
+func (s *internalListenerSet) writeUDP(payload, packetInfo []byte, client netip.AddrPort, source netip.Addr) error {
+	current := s.udp4
+	if source.Is6() {
+		current = s.udp6
+	}
+	if current == nil {
+		return E.New("eBPF UDP redirect listener is unavailable for ", source)
+	}
+	_, _, err := current.UDPConn().WriteMsgUDPAddrPort(payload, packetInfo, client)
+	return err
+}
+
 func (s *internalListenerSet) String() string {
 	var listeners []string
 	if s.tcp4 != nil {

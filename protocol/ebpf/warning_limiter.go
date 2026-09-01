@@ -62,6 +62,7 @@ func (l *warningLimiter) errorContext(logger contextErrorLogger, ctx context.Con
 type udpWarningLimiters struct {
 	packetInfo          warningLimiter
 	originalDestination warningLimiter
+	cleanup             warningLimiter
 }
 
 type interfaceWarningLimiters struct {

@@ -45,13 +45,6 @@ MAP(cgroup_bypass_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM
 MAP(cgroup_bypass_ipv6, struct sb_ebpf_ipv6_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_host_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_HASH);
 MAP(cgroup_host_ipv6, struct sb_ebpf_ipv6_cidr_lpm_key, __u8, BPF_MAP_TYPE_HASH);
-struct bpf_map_def SEC("maps") cgroup_stats = {
-    .type = BPF_MAP_TYPE_ARRAY,
-    .key_size = sizeof(__u32),
-    .value_size = sizeof(__u64),
-    .max_entries = SB_EBPF_CGROUP_STAT_COUNT,
-};
-
 static void *(*map_lookup)(void *map, const void *key) = (void *)BPF_FUNC_map_lookup_elem;
 static long (*map_update)(void *map, const void *key, const void *value, __u64 flags) =
     (void *)BPF_FUNC_map_update_elem;
@@ -67,12 +60,6 @@ INLINE const struct sb_ebpf_cgroup_control *control(void) {
     __u32 key = 0U;
     return map_lookup(&cgroup_control, &key);
 }
-INLINE void record_tcp_redirect_failure(void) {
-    __u32 key = SB_EBPF_CGROUP_STAT_TCP_REDIRECT_FAILURE;
-    __u64 *counter = map_lookup(&cgroup_stats, &key);
-    if (counter != 0) __sync_fetch_and_add(counter, 1U);
-}
-
 INLINE bool is_cookie_bypassed(void *ctx) {
     __u64 cookie = get_socket_cookie(ctx);
     if (cookie == 0U) return false;
@@ -234,7 +221,6 @@ INLINE bool token_v4(
                 : map_update(&cgroup_udp_redirect, key, value, BPF_NOEXIST)) == 0) return true;
         seed += 0x9e3779b9U;
     }
-    if (protocol == TCP_VALUE) record_tcp_redirect_failure();
     return false;
 }
 
@@ -266,7 +252,6 @@ INLINE bool token_v6(
         seed0 += 0x9e3779b9U;
         seed1 += 0x7f4a7c15U;
     }
-    if (protocol == TCP_VALUE) record_tcp_redirect_failure();
     return false;
 }
 

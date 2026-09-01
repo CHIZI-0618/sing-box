@@ -73,9 +73,6 @@ func (i *Inbound) startInbound() error {
 		if err := cgroupBackend.LoadPrograms(i.listeners.selectedPort()); err != nil {
 			return err
 		}
-		if err := cgroupBackend.Attach(); err != nil {
-			return err
-		}
 	}
 	backendConfig := commonEBPF.TCConfig{
 		ListenerPort:        i.listeners.selectedPort(),
@@ -125,10 +122,11 @@ func (i *Inbound) startInbound() error {
 	}
 	var dataPlane *tcDataPlane
 	if backend != nil {
+		tcIPv6Enabled := localTCEnabled && i.localIPv6 || i.sharedEnabled && i.sharedIPv6
 		dataPlane, err = startTCDataPlane(
 			backend,
 			localTCEnabled,
-			i.localIPv6 || i.sharedIPv6,
+			tcIPv6Enabled,
 			localInterface,
 			sharedInterfaces,
 			i.hostAddresses(),
@@ -143,12 +141,17 @@ func (i *Inbound) startInbound() error {
 	if err = i.startBypassRuleSets(); err != nil {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")
 	}
+	if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+		if err = cgroupBackend.Attach(); err != nil {
+			return err
+		}
+	}
 	if backend != nil {
 		if err = backend.Enable(); err != nil {
 			return err
 		}
 	}
-	if backend != nil {
+	if backend != nil || i.cgroupBackendInstance() != nil {
 		if err = i.startTCInterfaceMonitor(); err != nil {
 			return err
 		}
@@ -159,8 +162,32 @@ func (i *Inbound) startInbound() error {
 	} else if i.enableUDP {
 		network = "udp"
 	}
+	if dataPlane == nil {
+		cgroupBackend := i.cgroupBackendInstance()
+		i.logger.Debug(
+			"eBPF cgroup active: mode=", i.mode,
+			", network=", network,
+			", cgroup=", cgroupBackend.CgroupPath(),
+			", ipv6=", i.cgroupIPv6Enabled(),
+			", listeners=[", i.listeners.String(), "]",
+			", udp_cleanup=", cgroupBackend.UDPCleanupMode(),
+		)
+		return nil
+	}
 	i.logger.Debug(
 		"eBPF TC active: mode=", i.mode,
+		", local_data_plane=", func() string {
+			if !i.localEnabled {
+				return "off"
+			}
+			return i.localDataPlane
+		}(),
+		", local_cgroup=", func() string {
+			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+				return cgroupBackend.CgroupPath()
+			}
+			return ""
+		}(),
 		", network=", network,
 		", local_ipv6=", i.localIPv6,
 		", shared_ipv6=", i.sharedIPv6,
@@ -220,7 +247,7 @@ func (i *Inbound) startInbound() error {
 }
 
 func (i *Inbound) startProcessTracker() {
-	if !i.localEnabled || i.localDataPlane != localDataPlaneTC || !i.router.NeedFindProcess() || i.usePlatformProcessFinder || i.processTracker != nil {
+	if !i.localEnabled || !i.router.NeedFindProcess() || i.usePlatformProcessFinder || i.processTracker != nil {
 		return
 	}
 	tracker, err := commonEBPF.AttachProcessTracker(commonEBPF.ProcessTrackerConfig{
@@ -266,11 +293,11 @@ func (i *Inbound) startSelfBypass() error {
 }
 
 func (i *Inbound) checkKernelCapabilities() error {
-	if i.localEnabled && i.localDataPlane == localDataPlaneCgroup && !i.sharedEnabled {
+	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
+	if !localTCEnabled && !i.sharedEnabled {
 		return nil
 	}
 	mode := commonEBPF.KernelProbeModeShared
-	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
 	if localTCEnabled && i.sharedEnabled {
 		mode = commonEBPF.KernelProbeModeAll
 	} else if localTCEnabled {
@@ -291,8 +318,8 @@ func (i *Inbound) checkKernelCapabilities() error {
 		Mode:          mode,
 		Network:       network,
 		InterfaceName: interfaceName,
-		EnableIPv6:    i.localIPv6 || i.sharedIPv6,
-		NeedLPMPolicy: i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0 ||
+		EnableIPv6:    localTCEnabled && i.localIPv6 || i.sharedEnabled && i.sharedIPv6,
+		NeedLPMPolicy: localTCEnabled && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) ||
 			len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0,
 		NeedProcessTracking: localTCEnabled && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})
@@ -327,15 +354,15 @@ func (i *Inbound) closeResources() error {
 	i.stopBypassRuleSets()
 	dataPlane := i.takeTCDataPlane()
 	disableErr := dataPlane.disable()
-	listenerErr := i.closeListeners()
-	i.udpNat.Purge()
-	udpReplySocketErr := i.udpReplySockets.close()
-	dataPlaneErr := dataPlane.Close()
 	cgroupBackend := i.takeCgroupBackend()
 	cgroupErr := error(nil)
 	if cgroupBackend != nil {
 		cgroupErr = cgroupBackend.Close()
 	}
+	listenerErr := i.closeListeners()
+	i.udpNat.Purge()
+	udpReplySocketErr := i.udpReplySockets.close()
+	dataPlaneErr := dataPlane.Close()
 	routeErr := i.removeLocalRoutes()
 	selfBypassErr := error(nil)
 	if i.selfBypass != nil {
@@ -356,6 +383,8 @@ func (i *Inbound) closeResources() error {
 }
 
 func (i *Inbound) prepareCgroupBackend() error {
+	policy := i.localPolicy
+	policy.EnableBypassCIDR = true
 	backend, err := commonEBPF.PrepareCgroup(commonEBPF.CgroupConfig{
 		Path:          i.cgroupPath,
 		EnableTCP:     i.enableTCP,
@@ -367,7 +396,7 @@ func (i *Inbound) prepareCgroupBackend() error {
 		FakeIPIPv6:    i.fakeIPIPv6Prefix,
 		MapCapacity:   commonEBPF.DefaultCgroupMapCapacity(),
 		UDPTimeout:    i.udpTimeout,
-		Policy:        i.localPolicy,
+		Policy:        policy,
 		SelfBypassMap: i.selfBypass.Map(),
 		BypassPort:    i.localBypassPort,
 	})

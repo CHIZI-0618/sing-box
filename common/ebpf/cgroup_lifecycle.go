@@ -35,6 +35,7 @@ func (b *CgroupBackend) Close() error {
 	b.bypassIPv6CIDR = nil
 	b.hostIPv4 = nil
 	b.hostIPv6 = nil
+	b.listenerPort = 0
 	return closeErr
 }
 
