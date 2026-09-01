@@ -31,8 +31,9 @@ The following options, or their vendor equivalents, are required:
 `CONFIG_BPF_JIT` is strongly recommended for packet-path performance.
 
 `CONFIG_CGROUP_BPF` and a cgroup v2 mount are required when local
-`data_plane` is `cgroup`, and `cgroup_path` must be explicit. `CONFIG_VETH`,
-TC qdiscs, TC socket lookup, and
+`data_plane` is `cgroup`. By default, sing-box attaches to the visible cgroup
+v2 root; `cgroup_path` may restrict interception to a specific subtree.
+`CONFIG_VETH`, TC qdiscs, TC socket lookup, and
 `bpf_sk_assign` are not required by a cgroup-only local inbound. Hybrid mode
 still requires the TC shared facilities.
 

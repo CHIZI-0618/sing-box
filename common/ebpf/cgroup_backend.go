@@ -175,7 +175,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		return nil, err
 	}
 	if cgroupPath == "" {
-		cgroupPath, err = DetectProcessCgroup2Path()
+		cgroupPath, err = DetectCgroup2Root()
 		if err != nil {
 			return nil, err
 		}
