@@ -184,10 +184,10 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 	probeCommonCapabilities(report, memlockErr, options.EnableIPv6, enableTCP, enableUDP,
 		localPlane, sharedPlane, options.NeedLPMPolicy, options.NeedProcessTracking)
 	if needLocal {
-		probeLocalCapabilities(report, enableTCP, enableUDP)
+		probeLocalCapabilities(report, localPlane, enableTCP, enableUDP)
 	}
 	if needShared {
-		probeSharedCapabilities(report, options.InterfaceName)
+		probeSharedCapabilities(report, sharedPlane, options.InterfaceName)
 	}
 	report.ActivePrograms, report.ActiveStateErr = probeActivePrograms()
 	return report, nil
@@ -491,14 +491,25 @@ func memlockProbeResult(limit unix.Rlimit, readErr error, raiseErr error) (Kerne
 	return KernelProbeWarn, detail
 }
 
-func probeLocalCapabilities(report *KernelProbeReport, enableTCP bool, enableUDP bool) {
+func probeLocalCapabilities(report *KernelProbeReport, plane KernelProbeDataPlane, enableTCP bool, enableUDP bool) {
 	const scope = "local"
 	protocols := selectedProtocolDetail(enableTCP, enableUDP)
+	if plane == KernelProbeDataPlaneCgroup {
+		report.Add(KernelProbePass, scope, KernelProbeRequired, "cgroup local program facilities",
+			protocols+" use the selected cgroup v2 socket-address hooks; cgroup path and attachment are verified during startup.")
+		return
+	}
 	report.Add(KernelProbePass, scope, KernelProbeRequired, "TC local program facilities", protocols+" use the default-interface egress classifier and internal delivery veth; TC attachment and veth creation are verified during startup.")
 }
 
-func probeSharedCapabilities(report *KernelProbeReport, interfaceName string) {
+func probeSharedCapabilities(report *KernelProbeReport, plane KernelProbeDataPlane, interfaceName string) {
 	const scope = "shared"
+	if plane == KernelProbeDataPlanePacketRewrite {
+		report.Add(KernelProbePass, scope, KernelProbeRequired, "TC shared packet-rewrite facilities",
+			"Configured downstream interfaces use ingress and egress classifiers with token tuple rewriting; TC attachment is verified during startup.")
+		probeSharedInterface(report, interfaceName)
+		return
+	}
 	report.Add(KernelProbePass, scope, KernelProbeRequired, "TC shared program facilities",
 		"Configured downstream interfaces use the ingress classifier and transparent socket assignment; TC attachment is verified during startup.")
 	probeSharedInterface(report, interfaceName)
