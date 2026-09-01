@@ -22,7 +22,8 @@ func PrepareEBPFSelfBypass(networkManager adapter.NetworkManager, inbounds []opt
 			if !loaded {
 				return E.New("invalid eBPF inbound options")
 			}
-			if ebpfOptions.Mode == "" || ebpfOptions.Mode == "local" || ebpfOptions.Mode == "hybrid" {
+			localEnabled, _ := ebpfOptions.EffectiveEnablement()
+			if localEnabled {
 				localInstances++
 			}
 		}
