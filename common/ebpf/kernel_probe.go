@@ -167,13 +167,22 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 	if err != nil {
 		return nil, err
 	}
+	reportMode := options.Mode
+	switch {
+	case localPlane != "" && sharedPlane != "":
+		reportMode = KernelProbeModeAll
+	case localPlane != "":
+		reportMode = KernelProbeModeLocal
+	default:
+		reportMode = KernelProbeModeShared
+	}
 	memlockErr := raiseMemlockLimit()
 
 	report := &KernelProbeReport{
 		Platform:        kernelProbePlatform(),
 		KernelRelease:   kernelProbeRelease(),
 		Architecture:    runtime.GOARCH,
-		Mode:            options.Mode,
+		Mode:            reportMode,
 		LocalDataPlane:  localPlane,
 		SharedDataPlane: sharedPlane,
 		Network:         network,
