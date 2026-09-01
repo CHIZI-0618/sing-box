@@ -10,6 +10,12 @@ and lifecycle owner.
 
 ## Packet paths
 
+The runtime has four concrete backend choices: local `tc` or `cgroup`, and
+shared `socket_assign` or `packet_rewrite`. The inbound may enable either path
+independently. `sing-box tools ebpf status` accepts the same choices through
+`--local-data-plane` and `--shared-data-plane`; its legacy `--mode` flags map to
+local TC and shared `socket_assign`.
+
 Local traffic is selected at TC egress on the current default interface.
 Forwarded packets are excluded through `ingress_ifindex`; sockets created by
 sing-box are identified by their kernel socket cookie. An exclusive process
@@ -115,6 +121,7 @@ MAC include/exclude policies are evaluated only on the shared path.
 | sockets and assignments | `SOCKMAP` (optional), `LRU_HASH` | Preferred TCP listener fallback, original-flow metadata, and local self-bypass cookies. Legacy TCP lookup does not use SOCKMAP. |
 | prefix policy | `LPM_TRIE` | UID ranges, source CIDRs, and destination bypass CIDRs. |
 | exact policy | `HASH` | Host addresses and shared source MAC policy. |
+| packet rewrite scratch | `PERCPU_ARRAY` | Per-CPU scratch and counters used only by shared `packet_rewrite`. |
 
 ### LPM trie kernel safety
 

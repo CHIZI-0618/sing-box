@@ -20,15 +20,16 @@ Include:
 6. A capability report matching the intended path:
 
 ```sh
-sing-box tools ebpf status --mode local --network tcp,udp --json
-sing-box tools ebpf status --mode shared --interface br-lan --json
+sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
+sing-box tools ebpf status --shared-data-plane socket_assign --interface br-lan --json
 ```
 
 Add `--ipv6=false` when the inbound configuration disables IPv6. The command
 exits non-zero when a required capability is missing or cannot be verified.
 
-For hybrid mode, run both probes or use `--mode all` with the downstream
-interface. Run probes with the same privileges as the service.
+For a hybrid configuration, pass both data-plane flags in one command. The
+legacy `--mode local|shared|all` spelling is still accepted. Run probes with
+the same privileges as the service.
 
 Useful platform information:
 
