@@ -310,6 +310,14 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
 			asm.FnKtimeGetCoarseNs, "bpf_ktime_get_coarse_ns",
 			"Uses coarse monotonic time for the UDP flow-cache expiry fast path when available; the precise helper remains the fallback.")
+		probeMapType(report, "local", KernelProbePerformance, CiliumEBPF.SkStorage,
+			"Provides an optional per-socket UDP flow-cache fast path; the global LRU cache remains the fallback.")
+		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
+			asm.FnSkStorageGet, "bpf_sk_storage_get",
+			"Reads and creates optional per-socket UDP flow metadata.")
+		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
+			asm.FnSkStorageDelete, "bpf_sk_storage_delete",
+			"Expires optional per-socket UDP flow metadata.")
 	}
 	if needSelfBypass {
 		// Local TC and local cgroup both use this optional optimization when the

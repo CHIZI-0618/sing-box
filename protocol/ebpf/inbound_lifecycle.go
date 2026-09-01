@@ -189,6 +189,7 @@ func (i *Inbound) startInbound() error {
 			", listeners=[", i.listeners.String(), "]",
 			", udp_cleanup=", cgroupBackend.UDPCleanupMode(),
 			", udp_time=", cgroupBackend.UDPTimeMode(),
+			", udp_storage=", cgroupBackend.UDPStorageMode(),
 		)
 		return nil
 	}
