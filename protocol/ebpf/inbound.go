@@ -256,6 +256,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err = inbound.normalizeFakeIPPrefixes(); err != nil {
 		return nil, err
 	}
+	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort, inbound.fakeIPIPv4Prefix.IsValid() || inbound.fakeIPIPv6Prefix.IsValid())
+	warnBypassPortConflicts(logger, "shared", sharedDNSMode, sharedBypassPort, inbound.fakeIPIPv4Prefix.IsValid() || inbound.fakeIPIPv6Prefix.IsValid())
 	for _, ruleSetTag := range options.BypassRuleSet {
 		ruleSet, loaded := router.RuleSet(ruleSetTag)
 		if !loaded {
@@ -270,6 +272,29 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	inbound.udpTimeout = udpTimeout
 	inbound.udpNat = udpnat.New(inbound, inbound.preparePacketConnection, udpTimeout, false)
 	return inbound, nil
+}
+
+func warnBypassPortConflicts(logger log.ContextLogger, scope, dnsMode string, ports []commonEBPF.PortRange, fakeIPEnabled bool) {
+	if logger == nil || len(ports) == 0 {
+		return
+	}
+	for _, portRange := range ports {
+		if portRange.Start > 53 || portRange.End < 53 {
+			continue
+		}
+		switch dnsMode {
+		case dnsModeHijack:
+			logger.Warn("eBPF ", scope, ".bypass_port includes DNS port 53, but dns_mode=hijack always intercepts it")
+		case dnsModeRespectPolicy:
+			logger.Warn("eBPF ", scope, ".bypass_port includes DNS port 53; dns_mode=respect_policy applies UID/source policy before DNS interception")
+		case dnsModeOff:
+			logger.Warn("eBPF ", scope, ".bypass_port includes DNS port 53, but dns_mode=off already bypasses DNS")
+		}
+		break
+	}
+	if fakeIPEnabled {
+		logger.Warn("eBPF ", scope, ".bypass_port does not override FakeIP force interception")
+	}
 }
 
 func toCommonDNSMode(mode string) commonEBPF.DNSMode {
