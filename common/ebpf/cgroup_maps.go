@@ -34,8 +34,7 @@ func prepareCgroupMaps(runtimeState *cgroupRuntime, capacity CgroupMapCapacity, 
 	var err error
 	runtimeState.maps, err = loadObjectMaps(loadCgroup, map[string]mapSpecOverride{
 		"cgroup_control":       {name: "sb_cg_control", mapType: CiliumEBPF.Array, maxEntries: 1},
-		"cgroup_stats":         {name: "sb_cg_stats", mapType: CiliumEBPF.Array, maxEntries: 1},
-		"cgroup_tcp_redirect":  {name: "sb_cg_tcp", mapType: CiliumEBPF.Hash, maxEntries: tcpCapacity, flags: bpfFlagNoPrealloc},
+		"cgroup_tcp_redirect":  {name: "sb_cg_tcp", mapType: CiliumEBPF.LRUHash, maxEntries: tcpCapacity},
 		"cgroup_udp_redirect":  {name: "sb_cg_udp", mapType: udpLayout.cleanupType, maxEntries: udpCapacity, flags: udpLayout.cleanupFlags},
 		"cgroup_udp_recovery":  {name: "sb_cg_recover", mapType: CiliumEBPF.LRUHash, maxEntries: recoveryCapacity},
 		"cgroup_udp_token":     {name: "sb_cg_token", mapType: udpLayout.cleanupType, maxEntries: udpCapacity, flags: udpLayout.cleanupFlags},
@@ -68,7 +67,6 @@ func prepareCgroupMaps(runtimeState *cgroupRuntime, capacity CgroupMapCapacity, 
 		return err
 	}
 	runtimeState.control_map_fd = runtimeState.maps["cgroup_control"].FD()
-	runtimeState.stats_map_fd = runtimeState.maps["cgroup_stats"].FD()
 	runtimeState.tcp_redirect_map_fd = runtimeState.maps["cgroup_tcp_redirect"].FD()
 	runtimeState.udp_redirect_map_fd = runtimeState.maps["cgroup_udp_redirect"].FD()
 	runtimeState.udp_recovery_map_fd = runtimeState.maps["cgroup_udp_recovery"].FD()

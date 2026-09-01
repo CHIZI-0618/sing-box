@@ -51,6 +51,7 @@ func (i *Inbound) NewConnection(
 		metadata.InboundType = i.Type()
 		metadata.Source = M.SocksaddrFromNet(conn.RemoteAddr())
 		metadata.Destination = M.SocksaddrFromNetIP(original.Destination)
+		metadata.ProcessInfo = i.lookupProcessInfo(original.SocketCookie)
 		i.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 		return
 	}
@@ -104,7 +105,7 @@ func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 		}
 		i.udpClientTable.setCgroupBinding(client, original, redirectAddress)
 	}
-	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination), nil)
+	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination), original.ConnectedUDP)
 }
 
 func (i *Inbound) NewPacketConnectionEx(
@@ -123,6 +124,9 @@ func (i *Inbound) NewPacketConnectionEx(
 	if clientState, loaded := i.udpClientTable.load(source.AddrPort()); loaded {
 		metadata.SourceMACAddress = clientState.sourceMACAddress()
 		metadata.ProcessInfo = i.lookupProcessInfo(clientState.processSocketCookie())
+		if binding, found := clientState.redirectBinding(destination.AddrPort()); found {
+			metadata.UDPConnect = binding.connected
+		}
 	}
 	i.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
@@ -137,8 +141,9 @@ func (i *Inbound) preparePacketConnection(
 
 func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 	return func(network string, _ string, rawConn syscall.RawConn) error {
+		var configureErr error
 		if ipv6Listener {
-			return control.Raw(rawConn, func(fd uintptr) error {
+			configureErr = control.Raw(rawConn, func(fd uintptr) error {
 				if err := unix.SetsockoptInt(int(fd), unix.SOL_IPV6, unix.IPV6_TRANSPARENT, 1); err != nil {
 					return err
 				}
@@ -153,9 +158,8 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 				}
 				return nil
 			})
-		}
-		if network == "udp4" {
-			return control.Raw(rawConn, func(fd uintptr) error {
+		} else if network == "udp4" {
+			configureErr = control.Raw(rawConn, func(fd uintptr) error {
 				if err := unix.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_TRANSPARENT, 1); err != nil {
 					return err
 				}
@@ -164,13 +168,15 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 				}
 				return unix.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_RECVORIGDSTADDR, 1)
 			})
-		}
-		if network == "tcp4" || network == "tcp" {
-			return control.Raw(rawConn, func(fd uintptr) error {
+		} else if network == "tcp4" || network == "tcp" {
+			configureErr = control.Raw(rawConn, func(fd uintptr) error {
 				return unix.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_TRANSPARENT, 1)
 			})
 		}
-		return nil
+		if configureErr != nil {
+			return configureErr
+		}
+		return i.selfBypass.RegisterSocket(rawConn)
 	}
 }
 

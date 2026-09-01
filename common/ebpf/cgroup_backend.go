@@ -56,7 +56,6 @@ type cgroupRuntime struct {
 	links                       [cgroupProgramCount]link.Link
 	attached                    [cgroupProgramCount]bool
 	control_map_fd              int
-	stats_map_fd                int
 	tcp_redirect_map_fd         int
 	udp_redirect_map_fd         int
 	udp_recovery_map_fd         int
@@ -76,25 +75,20 @@ type cgroupRuntime struct {
 	uid_default_bypass          bool
 	bypass_ipv4_policy          bool
 	bypass_ipv6_policy          bool
+	bypass_port_policy          bool
 }
 
 type CgroupBackend struct {
 	access                         sync.RWMutex
 	health                         backendHealth
-	tcpSweepAccess                 sync.Mutex
 	udpRecoveryAccess              sync.Mutex
 	udpReplyTokenSequence          atomic.Uint64
-	tcpSweepScratch                mapScanScratch[listenerLookupKey, originalDestinationValue]
-	tcpSweepCandidates             []tcpRedirectEntry
-	tcpSweepDeleteKeys             []listenerLookupKey
-	tcpSweepDeleteSupport          mapBatchSupport
 	connectedUDPTokenLookupSupport mapBatchSupport
 	connectedUDPTokenKeys          []uint64
 	connectedUDPTokenValues        []listenerLookupKey
 	lookupAndDeleteMode            atomic.Int32
 	udpRecoveryConsumeMode         atomic.Int32
 	runtime                        *cgroupRuntime
-	statsMapFD                     int
 	mapCapacity                    CgroupMapCapacity
 	tcpRedirectMapFD               int
 	udpRedirectMapFD               int
@@ -119,6 +113,7 @@ type CgroupBackend struct {
 	dnsMode                        DNSMode
 	bypassPrivateAddress           bool
 	udpTimeoutSeconds              uint32
+	listenerPort                   uint16
 }
 
 func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
@@ -180,7 +175,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		return nil, err
 	}
 	if cgroupPath == "" {
-		cgroupPath, err = DetectCgroup2Mount()
+		cgroupPath, err = DetectProcessCgroup2Path()
 		if err != nil {
 			return nil, err
 		}
@@ -225,6 +220,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		uid_default_bypass:       uidDefaultBypass,
 		bypass_ipv4_policy:       policy.EnableBypassCIDR && redirectIPv4.IsValid(),
 		bypass_ipv6_policy:       policy.EnableBypassCIDR && redirectIPv6.IsValid(),
+		bypass_port_policy:       len(config.BypassPort) > 0,
 		socket_release_supported: socketReleaseSupported,
 	}
 	if err = prepareCgroupMaps(runtimeState, mapCapacity, len(uidPolicyEntries), config.SelfBypassMap); err != nil {
@@ -239,7 +235,6 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		mapCapacity:          mapCapacity,
 		runtime:              runtimeState,
 		tcpRedirectMapFD:     runtimeState.tcp_redirect_map_fd,
-		statsMapFD:           runtimeState.stats_map_fd,
 		udpRedirectMapFD:     runtimeState.udp_redirect_map_fd,
 		udpRecoveryMapFD:     runtimeState.udp_recovery_map_fd,
 		udpFlowMapFD:         runtimeState.udp_flow_map_fd,

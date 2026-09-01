@@ -105,6 +105,40 @@ func TestValidateScopedOptions(t *testing.T) {
 	}
 }
 
+func TestNormalizeLocalDataPlane(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		options    option.EBPFLocalOptions
+		dataPlane  string
+		cgroupPath string
+	}{
+		{name: "default", options: option.EBPFLocalOptions{}, dataPlane: localDataPlaneTC},
+		{name: "explicit tc", options: option.EBPFLocalOptions{DataPlane: "tc"}, dataPlane: localDataPlaneTC},
+		{name: "explicit cgroup", options: option.EBPFLocalOptions{DataPlane: "cgroup", CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
+		{name: "legacy cgroup path", options: option.EBPFLocalOptions{CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			dataPlane, path, err := normalizeLocalDataPlane(testCase.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dataPlane != testCase.dataPlane || path != testCase.cgroupPath {
+				t.Fatalf("got data_plane=%q path=%q", dataPlane, path)
+			}
+		})
+	}
+	for _, options := range []option.EBPFLocalOptions{
+		{DataPlane: "invalid"},
+		{DataPlane: "tc", CgroupPath: "/sys/fs/cgroup/sing-box"},
+		{DataPlane: "cgroup", CgroupPath: "relative"},
+		{DataPlane: "cgroup"},
+	} {
+		if _, _, err := normalizeLocalDataPlane(options); err == nil {
+			t.Fatalf("expected invalid local data plane options to fail: %+v", options)
+		}
+	}
+}
+
 func TestEnabledByDefault(t *testing.T) {
 	if !enabledByDefault(nil) || !enabledByDefault(common.Ptr(true)) || enabledByDefault(common.Ptr(false)) {
 		t.Fatal("unexpected default-enabled boolean behavior")

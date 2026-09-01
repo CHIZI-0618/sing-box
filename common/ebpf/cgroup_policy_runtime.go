@@ -57,15 +57,6 @@ func (b *CgroupBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool,
 	return changed, nil
 }
 
-func (b *CgroupBackend) BypassCIDRCount() (int, int) {
-	if b == nil {
-		return 0, 0
-	}
-	b.access.RLock()
-	defer b.access.RUnlock()
-	return len(b.bypassIPv4CIDR), len(b.bypassIPv6CIDR)
-}
-
 func (b *CgroupBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 	if b == nil {
 		return errBackendClosed
@@ -87,11 +78,13 @@ func (b *CgroupBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 	if err := b.health.requireUsable(b.runtime != nil); err != nil {
 		return err
 	}
-	_, err := replaceDualStackCIDRPolicy(
+	previous := dualStackCIDRPrefixes{b.hostIPv4, b.hostIPv6}
+	next := dualStackCIDRPrefixes{ipv4Prefixes, ipv6Prefixes}
+	changed, err := replaceDualStackCIDRPolicy(
 		b.runtime.maps["cgroup_host_ipv4"],
 		b.runtime.maps["cgroup_host_ipv6"],
-		dualStackCIDRPrefixes{b.hostIPv4, b.hostIPv6},
-		dualStackCIDRPrefixes{ipv4Prefixes, ipv6Prefixes},
+		previous,
+		next,
 		"eBPF cgroup ", "host address",
 	)
 	if err != nil {
@@ -102,6 +95,23 @@ func (b *CgroupBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 	}
 	b.hostIPv4 = slices.Clone(ipv4Prefixes)
 	b.hostIPv6 = slices.Clone(ipv6Prefixes)
+	if changed && b.listenerPort != 0 {
+		if err = b.updateCgroupControl(b.listenerPort); err != nil {
+			_, rollbackErr := replaceDualStackCIDRPolicy(
+				b.runtime.maps["cgroup_host_ipv4"],
+				b.runtime.maps["cgroup_host_ipv6"],
+				next,
+				previous,
+				"eBPF cgroup ", "host address rollback",
+			)
+			b.hostIPv4 = slices.Clone(previous.ipv4)
+			b.hostIPv6 = slices.Clone(previous.ipv6)
+			if rollbackErr != nil {
+				return E.Errors(err, rollbackErr, b.health.invalidate("cgroup", "host address control"))
+			}
+			return E.Cause(err, "update cgroup host address control")
+		}
+	}
 	return nil
 }
 

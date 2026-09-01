@@ -32,11 +32,14 @@ func (b *CgroupBackend) loadPrograms(listenerPort uint16) error {
 	if listenerPort == 0 {
 		return E.New("missing eBPF redirect listener port")
 	}
+	b.listenerPort = listenerPort
 	if err := b.updateCgroupControl(listenerPort); err != nil {
+		b.listenerPort = 0
 		return E.Cause(err, "update cgroup control map")
 	}
 	programs, err := b.loadCgroupObjectPrograms()
 	if err != nil {
+		b.listenerPort = 0
 		return eBPFBackendOperationError("load eBPF inbound programs", verifierErrorStage(err), err)
 	}
 	b.runtime.programs = programs
@@ -171,6 +174,9 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16) error {
 	}
 	if b.runtime.bypass_ipv6_policy {
 		flags |= cgroupFlagBypassIPv6
+	}
+	if b.runtime.bypass_port_policy {
+		flags |= cgroupFlagBypassPort
 	}
 	flags |= b.hostAddressFlags()
 	if b.runtime.enable_udp && b.runtime.socket_release_supported {

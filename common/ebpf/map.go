@@ -19,7 +19,6 @@ const (
 	bpfMapLookupElem          = 1
 	bpfMapUpdateElem          = 2
 	bpfMapDeleteElem          = 3
-	bpfMapGetNextKey          = 4
 	bpfMapLookupAndDeleteElem = 21
 	bpfNoExist                = 1
 
@@ -198,30 +197,6 @@ func mapBatchUnsupportedError(err error) bool {
 		errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, linuxErrnoNotSupported)
 }
 
-func deleteMapBatchIfExists[K any](mapInstance *CiliumEBPF.Map, keys []K, support *mapBatchSupport) (uint32, error) {
-	processed, err := deleteMapBatch(mapInstance, keys, support)
-	if err == nil {
-		return processed, nil
-	}
-	if !errors.Is(err, unix.ENOENT) && !errors.Is(err, CiliumEBPF.ErrKeyNotExist) {
-		return processed, err
-	}
-	if mapInstance == nil {
-		return processed, errBackendClosed
-	}
-	for index := int(processed); index < len(keys); index++ {
-		deleteErr := deleteMap(mapInstance.FD(), unsafe.Pointer(&keys[index]))
-		if errors.Is(deleteErr, unix.ENOENT) || errors.Is(deleteErr, CiliumEBPF.ErrKeyNotExist) {
-			continue
-		}
-		if deleteErr != nil {
-			return processed, deleteErr
-		}
-		processed++
-	}
-	return processed, nil
-}
-
 func mapOperation(command uintptr, mapFD int, key unsafe.Pointer, value unsafe.Pointer, flags uint64) error {
 	if mapFD < 0 {
 		return errBackendClosed
@@ -257,116 +232,6 @@ func (h *backendHealth) requireUsable(runtimeAvailable bool) error {
 func (h *backendHealth) invalidate(scope string, operation string) error {
 	h.rebuildRequired = E.New(scope, " backend requires rebuild after failed ", operation, " rollback")
 	return h.rebuildRequired
-}
-
-type mapScanScratch[K comparable, V any] struct {
-	lookupSupport  mapBatchSupport
-	keys           []K
-	values         []V
-	seen           map[K]struct{}
-	cursor         K
-	cursorValid    bool
-	fallbackActive bool
-}
-
-type mapScanResult struct {
-	Scanned  uint32
-	Entries  uint32
-	Complete bool
-}
-
-func (s *mapScanScratch[K, V]) scan(mapInstance *CiliumEBPF.Map, capacity uint32, fallbackBudget uint32, visit func(K, V)) (mapScanResult, error) {
-	if mapInstance == nil {
-		return mapScanResult{}, errBackendClosed
-	}
-	if s.lookupSupport.mode.Load() != mapBatchUnsupported {
-		if cap(s.keys) < mapBatchMaxEntries {
-			s.keys = make([]K, mapBatchMaxEntries)
-			s.values = make([]V, mapBatchMaxEntries)
-		} else {
-			s.keys = s.keys[:mapBatchMaxEntries]
-			s.values = s.values[:mapBatchMaxEntries]
-		}
-		var cursor CiliumEBPF.MapBatchCursor
-		var scanned uint32
-		for scanned < capacity {
-			batchSize := min(uint32(mapBatchMaxEntries), capacity-scanned)
-			countValue, err := mapInstance.BatchLookup(&cursor, s.keys[:batchSize], s.values[:batchSize], nil)
-			count := uint32(countValue)
-			for index := range count {
-				visit(s.keys[index], s.values[index])
-			}
-			scanned += count
-			if errors.Is(err, CiliumEBPF.ErrKeyNotExist) {
-				s.lookupSupport.mode.CompareAndSwap(mapBatchUnknown, mapBatchSupported)
-				return mapScanResult{Scanned: scanned, Entries: scanned, Complete: true}, nil
-			}
-			if err != nil {
-				if !mapBatchUnsupportedError(err) {
-					return mapScanResult{Scanned: scanned}, err
-				}
-				s.lookupSupport.mode.Store(mapBatchUnsupported)
-				break
-			}
-			if count == 0 {
-				return mapScanResult{Scanned: scanned}, unix.EIO
-			}
-			s.lookupSupport.mode.CompareAndSwap(mapBatchUnknown, mapBatchSupported)
-		}
-		if s.lookupSupport.mode.Load() == mapBatchSupported {
-			return mapScanResult{Scanned: scanned, Entries: scanned, Complete: true}, nil
-		}
-	}
-	return s.scanFallback(mapInstance.FD(), capacity, fallbackBudget, visit)
-}
-
-func (s *mapScanScratch[K, V]) scanFallback(mapFD int, capacity uint32, budget uint32, visit func(K, V)) (mapScanResult, error) {
-	if !s.fallbackActive {
-		s.fallbackActive = true
-		s.cursorValid = false
-		var zero K
-		s.cursor = zero
-	}
-	if s.seen == nil {
-		s.seen = make(map[K]struct{})
-	} else if !s.cursorValid {
-		clear(s.seen)
-	}
-	var scanned, attempts uint32
-	for uint32(len(s.seen)) < capacity && scanned < budget && attempts < budget*2 {
-		attempts++
-		var current unsafe.Pointer
-		if s.cursorValid {
-			current = unsafe.Pointer(&s.cursor)
-		}
-		var next K
-		err := mapOperation(bpfMapGetNextKey, mapFD, current, unsafe.Pointer(&next), 0)
-		if errors.Is(err, unix.ENOENT) {
-			s.fallbackActive = false
-			s.cursorValid = false
-			clear(s.seen)
-			return mapScanResult{Scanned: scanned, Entries: scanned, Complete: true}, nil
-		}
-		if err != nil {
-			return mapScanResult{Scanned: scanned}, err
-		}
-		s.cursor = next
-		s.cursorValid = true
-		if _, loaded := s.seen[next]; loaded {
-			continue
-		}
-		s.seen[next] = struct{}{}
-		scanned++
-		var value V
-		if err = lookupMap(mapFD, unsafe.Pointer(&next), unsafe.Pointer(&value)); err != nil {
-			if errors.Is(err, unix.ENOENT) {
-				continue
-			}
-			return mapScanResult{Scanned: scanned}, err
-		}
-		visit(next, value)
-	}
-	return mapScanResult{Scanned: scanned, Entries: uint32(len(s.seen))}, nil
 }
 
 type policyRollbackError struct {

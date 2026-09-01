@@ -219,12 +219,13 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		i.interfaceWarnings.inventory.warn(i.logger, "update interfaces for TC eBPF: ", err)
 	}
 	defaultInterface := i.monitoredDefaultInterfaceName()
-	localInterface, err := availableLocalTCInterface(i.localEnabled, defaultInterface)
+	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
+	localInterface, err := availableLocalTCInterface(localTCEnabled, defaultInterface)
 	if err != nil {
 		i.interfaceWarnings.topology.warn(i.logger, "inspect TC eBPF local interface: ", err)
 		return
 	}
-	if i.localEnabled && localInterface == "" {
+	if localTCEnabled && localInterface == "" {
 		i.interfaceWarnings.defaultInterface.warn(i.logger, "default interface unavailable; retaining previous local TC attachment")
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
@@ -243,6 +244,9 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		if err = i.updateTCHostAddresses(hostAddresses); err != nil {
 			i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh TC eBPF host addresses: ", err)
 		}
+		if err = i.updateCgroupHostAddresses(hostAddresses); err != nil {
+			i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh cgroup eBPF host addresses: ", err)
+		}
 		if infrastructureChanged && infrastructureHealthy {
 			i.logger.Debug("eBPF TC network state restored")
 		}
@@ -256,6 +260,9 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 	if err = i.reconcileTCDataPlane(localInterface, sharedInterfaces, hostAddresses); err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "refresh TC eBPF interfaces: ", err)
 		return
+	}
+	if err = i.updateCgroupHostAddresses(hostAddresses); err != nil {
+		i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh cgroup eBPF host addresses: ", err)
 	}
 	attachments := i.tcAttachmentDescriptions()
 	if !slices.Equal(previousAttachments, attachments) {
@@ -328,6 +335,14 @@ func (i *Inbound) updateTCHostAddresses(hostAddresses []netip.Addr) error {
 		return nil
 	}
 	return i.tcDataPlane.updateHostAddresses(hostAddresses)
+}
+
+func (i *Inbound) updateCgroupHostAddresses(hostAddresses []netip.Addr) error {
+	backend := i.cgroupBackendInstance()
+	if backend == nil {
+		return nil
+	}
+	return backend.UpdateHostAddresses(hostAddresses)
 }
 
 func (i *Inbound) hostAddresses() []netip.Addr {

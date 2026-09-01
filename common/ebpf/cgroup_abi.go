@@ -23,7 +23,6 @@ const (
 	SharedNetworkBypassCapacity         = 16384
 	UDPRecoveryMapCapacity              = 8192
 	MaxConfigurableMapCapacity          = 1 << 20
-	cgroupStatTCPRedirectFailure        = 0
 	originalDestinationFlagConnectedUDP = 1
 	udpFlowActionProxy                  = 1
 	udpFlowActionBypass                 = 2
@@ -95,12 +94,6 @@ type CgroupMapCapacity struct {
 type MapUsage struct {
 	Entries  uint32
 	Capacity uint32
-}
-
-type CgroupTCPRedirectSweepResult struct {
-	Scanned  uint32
-	Removed  uint32
-	Complete bool
 }
 
 type SharedNetworkMapCapacities struct {
