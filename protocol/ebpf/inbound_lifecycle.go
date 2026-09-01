@@ -190,6 +190,8 @@ func (i *Inbound) startInbound() error {
 			", udp_cleanup=", cgroupBackend.UDPCleanupMode(),
 			", udp_time=", cgroupBackend.UDPTimeMode(),
 			", udp_storage=", cgroupBackend.UDPStorageMode(),
+			", self_bypass=", i.selfBypassMode(),
+			", process_tracking=", i.processTrackingMode(),
 		)
 		return nil
 	}
@@ -210,6 +212,18 @@ func (i *Inbound) startInbound() error {
 		", local_cgroup_udp_time=", func() string {
 			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
 				return cgroupBackend.UDPTimeMode()
+			}
+			return "disabled"
+		}(),
+		", local_cgroup_udp_cleanup=", func() string {
+			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+				return cgroupBackend.UDPCleanupMode()
+			}
+			return "disabled"
+		}(),
+		", local_cgroup_udp_storage=", func() string {
+			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+				return cgroupBackend.UDPStorageMode()
 			}
 			return "disabled"
 		}(),
@@ -272,15 +286,7 @@ func (i *Inbound) startInbound() error {
 			}
 			return strconv.Itoa(dataPlane.routing.priority)
 		}(),
-		", self_bypass=", func() string {
-			if !i.localEnabled {
-				return "none"
-			}
-			if i.selfBypassCgroup {
-				return i.selfBypass.Mode().String()
-			}
-			return "userspace_socket_cookie"
-		}(),
+		", self_bypass=", i.selfBypassMode(),
 		", process_tracking=", i.processTrackingMode(),
 		", tc_priority=", i.tcPriority,
 	)
@@ -316,6 +322,16 @@ func (i *Inbound) processTrackingMode() string {
 		return "cgroup_socket"
 	}
 	return "userspace"
+}
+
+func (i *Inbound) selfBypassMode() string {
+	if !i.localEnabled || i.selfBypass == nil {
+		return "none"
+	}
+	if i.selfBypassCgroup {
+		return i.selfBypass.Mode().String()
+	}
+	return "userspace_socket_cookie"
 }
 
 func (i *Inbound) startSelfBypass() error {
