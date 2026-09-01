@@ -16,7 +16,25 @@ import (
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
-func normalizeMode(mode string) (string, bool, bool, error) {
+func normalizeMode(mode string, localOption, sharedOption *bool) (string, bool, bool, error) {
+	if localOption != nil || sharedOption != nil {
+		if mode != "" {
+			return "", false, false, E.New("mode cannot be combined with local.enabled or shared.enabled")
+		}
+		localEnabled := localOption != nil && *localOption
+		sharedEnabled := sharedOption != nil && *sharedOption
+		if !localEnabled && !sharedEnabled {
+			return "", false, false, E.New("local.enabled or shared.enabled must be enabled")
+		}
+		switch {
+		case localEnabled && sharedEnabled:
+			return ebpfModeHybrid, true, true, nil
+		case localEnabled:
+			return ebpfModeLocal, true, false, nil
+		default:
+			return ebpfModeShared, false, true, nil
+		}
+	}
 	switch mode {
 	case "", ebpfModeLocal:
 		return ebpfModeLocal, true, false, nil
@@ -26,6 +44,17 @@ func normalizeMode(mode string) (string, bool, bool, error) {
 		return ebpfModeHybrid, true, true, nil
 	default:
 		return "", false, false, E.New("unknown eBPF mode: ", mode)
+	}
+}
+
+func normalizeSharedDataPlane(options option.EBPFSharedOptions) (string, error) {
+	switch options.DataPlane {
+	case "", sharedDataPlaneSocketAssign:
+		return sharedDataPlaneSocketAssign, nil
+	case sharedDataPlanePacketRewrite:
+		return sharedDataPlanePacketRewrite, nil
+	default:
+		return "", E.New("unknown shared.data_plane: ", options.DataPlane)
 	}
 }
 
@@ -65,25 +94,25 @@ func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 		return nil
 	}
 	if options.DataPlane != "" {
-		return E.New("local.data_plane requires local or hybrid mode")
+		return E.New("local.data_plane requires local interception")
 	}
 	if options.CgroupPath != "" {
-		return E.New("local.cgroup_path requires local or hybrid mode")
+		return E.New("local.cgroup_path requires local interception")
 	}
 	if options.DNSMode != "" {
-		return E.New("local.dns_mode requires local or hybrid mode")
+		return E.New("local.dns_mode requires local interception")
 	}
 	if options.IPv6 != nil {
-		return E.New("local.ipv6 requires local or hybrid mode")
+		return E.New("local.ipv6 requires local interception")
 	}
 	if options.BypassPrivateAddress != nil {
-		return E.New("local.bypass_private_address requires local or hybrid mode")
+		return E.New("local.bypass_private_address requires local interception")
 	}
 	if len(options.IncludeUID) > 0 || len(options.IncludeUIDRange) > 0 ||
 		len(options.ExcludeUID) > 0 || len(options.ExcludeUIDRange) > 0 ||
 		len(options.IncludeAndroidUser) > 0 || len(options.IncludePackage) > 0 ||
 		len(options.ExcludePackage) > 0 || len(options.BypassPort) > 0 || len(options.BypassPortRange) > 0 {
-		return E.New("local options require local or hybrid mode")
+		return E.New("local options require local interception")
 	}
 	return nil
 }
@@ -159,11 +188,11 @@ func validateSharedOptions(enabled bool, options option.EBPFSharedOptions) error
 	if enabled {
 		return nil
 	}
-	if options.DNSMode != "" || len(options.Interface) > 0 || options.IPv6 != nil || options.BypassPrivateAddress != nil ||
+	if options.DataPlane != "" || options.DNSMode != "" || len(options.Interface) > 0 || options.IPv6 != nil || options.BypassPrivateAddress != nil ||
 		len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 		len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0 ||
 		len(options.BypassPort) > 0 || len(options.BypassPortRange) > 0 {
-		return E.New("shared options require shared or hybrid mode")
+		return E.New("shared options require shared interception")
 	}
 	return nil
 }

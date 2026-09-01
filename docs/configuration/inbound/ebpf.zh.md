@@ -20,12 +20,12 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
 {
   "type": "ebpf",
   "tag": "ebpf-in",
-  "mode": "hybrid",
   "network": ["tcp", "udp"],
   "udp_timeout": "5m",
   "tc_priority": 1,
   "bypass_rule_set": [],
   "local": {
+    "enabled": true,
     "data_plane": "tc",
     "dns_mode": "respect_policy",
     "ipv6": true,
@@ -41,6 +41,8 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
     "bypass_port_range": []
   },
   "shared": {
+    "enabled": true,
+    "data_plane": "socket_assign",
     "dns_mode": "respect_policy",
     "interface": ["wlan1"],
     "ipv6": true,
@@ -59,14 +61,16 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
 
 #### mode
 
+旧版路径选择项。新配置应改用 `local.enabled` 和 `shared.enabled`，`mode` 不可与任一
+`enabled` 字段同时使用。
+
 | 值 | 行为 |
 | --- | --- |
 | `local` | 接管本机生成的流量。 |
 | `shared` | 接管从配置的下游接口进入的流量。 |
 | `hybrid` | 同时启用两条路径。 |
 
-默认值为 `local`。`local` 字段仅可用于 local 或 hybrid 模式，`shared` 字段仅可用于
-shared 或 hybrid 模式。
+未配置两个 `enabled` 字段和 `mode` 时，为保持兼容仍默认启用 local 接管。
 
 #### network
 
@@ -88,6 +92,11 @@ filter 协调顺序时修改。
 匹配这些规则集中目标 IP CIDR 的流量绕过此入站，非 IP 规则会被忽略。
 
 ### local
+
+#### local.enabled
+
+启用本机产生流量的接管。只要任一路径使用了新的 `enabled` 字段，另一路径省略
+`enabled` 时即视为 `false`。至少需要启用一条路径。
 
 默认 TC 数据面的 local 接管跟随系统当前默认网络接口。默认网络变化时会自动切换；
 没有可用默认接口时会保留旧 attachment，待新接口准备好后切换。cgroup 数据面跟随
@@ -163,6 +172,20 @@ DoT 流量。
 
 ### shared
 
+#### shared.enabled
+
+启用从配置的下游接口进入流量的接管。
+
+#### shared.data_plane
+
+| 值 | 行为 |
+| --- | --- |
+| `socket_assign` | 将选中的流量直接分配给内部透明监听器。默认值，保持现有行为。 |
+| `packet_rewrite` | 将选中的流量改写到内部 token 地址，并在下游接口恢复回复报文。 |
+
+`packet_rewrite` 要求下游接口使用以太网帧，不使用 `socket_assign` 所需的 delivery
+veth 和策略路由。local 与 shared 数据面可以独立选择。
+
 #### shared.dns_mode
 
 取值与 `local.dns_mode` 相同。`respect_policy` 模式会先应用来源 CIDR 与 MAC
@@ -170,10 +193,11 @@ DoT 流量。
 
 #### shared.interface
 
-==在 shared 或 hybrid 模式下必填==
+==启用 shared 接管时必填==
 
-客户端流量进入本机的下游接口，支持 Ethernet/IPoE、raw-IP（包括 Android rmnet）
-和 PPP/PPPoE 接口，也可同时配置多个接口。暂时不存在的接口会在网络更新后重试，
+客户端流量进入本机的下游接口。默认的 `socket_assign` 数据面支持
+Ethernet/IPoE、raw-IP（包括 Android rmnet）和 PPP/PPPoE 接口；`packet_rewrite`
+要求接口使用以太网帧。也可同时配置多个接口。暂时不存在的接口会在网络更新后重试，
 当某个接口成为当前默认上游时，会停止其 shared 接管；该接口重新作为下游后自动
 恢复。不接受 loopback。
 

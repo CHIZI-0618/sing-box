@@ -24,13 +24,15 @@ import (
 )
 
 const (
-	ebpfModeLocal        = "local"
-	ebpfModeShared       = "shared"
-	ebpfModeHybrid       = "hybrid"
-	dnsModeHijack        = "hijack"
-	dnsModeRespectPolicy = "respect_policy"
-	dnsModeOff           = "off"
-	defaultTCPriority    = 1
+	ebpfModeLocal                = "local"
+	ebpfModeShared               = "shared"
+	ebpfModeHybrid               = "hybrid"
+	sharedDataPlaneSocketAssign  = "socket_assign"
+	sharedDataPlanePacketRewrite = "packet_rewrite"
+	dnsModeHijack                = "hijack"
+	dnsModeRespectPolicy         = "respect_policy"
+	dnsModeOff                   = "off"
+	defaultTCPriority            = 1
 )
 
 var (
@@ -83,6 +85,8 @@ type Inbound struct {
 	androidUIDOptions        *androidUIDOptions
 	sharedOptions            option.EBPFSharedOptions
 	sharedEnabled            bool
+	sharedDataPlane          string
+	sharedRewrite            *sharedRewrite
 	sharedIPv6               bool
 	sharedBypassPrivate      bool
 	localBypassPort          []commonEBPF.PortRange
@@ -101,6 +105,7 @@ type Inbound struct {
 	bypassRuleSet          []adapter.RuleSet
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
+	bypassRuleSetPolicy    commonEBPF.BypassCIDRPolicy
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool
@@ -113,7 +118,7 @@ type Inbound struct {
 var _ adapter.InterfaceUpdateListener = (*Inbound)(nil)
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.EBPFInboundOptions) (adapter.Inbound, error) {
-	mode, localEnabled, sharedEnabled, err := normalizeMode(options.Mode)
+	mode, localEnabled, sharedEnabled, err := normalizeMode(options.Mode, options.Local.Enabled, options.Shared.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +132,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, err
 	}
 	localDataPlane, cgroupPath, err := normalizeLocalDataPlane(options.Local)
+	if err != nil {
+		return nil, err
+	}
+	sharedDataPlane, err := normalizeSharedDataPlane(options.Shared)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +225,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		localIPv6:           localEnabled && enabledByDefault(options.Local.IPv6),
 		sharedOptions:       sharedOptions,
 		sharedEnabled:       sharedEnabled,
+		sharedDataPlane:     sharedDataPlane,
 		sharedIPv6:          sharedEnabled && enabledByDefault(options.Shared.IPv6),
 		sharedBypassPrivate: options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
 		localBypassPort:     localBypassPort,

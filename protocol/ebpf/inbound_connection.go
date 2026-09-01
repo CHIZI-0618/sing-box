@@ -176,6 +176,9 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 		if configureErr != nil {
 			return configureErr
 		}
+		if i.selfBypass == nil {
+			return nil
+		}
 		return i.selfBypass.RegisterSocket(rawConn)
 	}
 }

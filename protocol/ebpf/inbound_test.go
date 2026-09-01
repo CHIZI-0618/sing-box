@@ -97,6 +97,12 @@ func TestValidateScopedOptions(t *testing.T) {
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{Interface: []string{"ap0"}}); err == nil {
 		t.Fatal("expected shared-only options to be rejected")
 	}
+	if err := validateLocalOptions(false, option.EBPFLocalOptions{DataPlane: localDataPlaneCgroup}); err == nil {
+		t.Fatal("expected a local data plane to be rejected when local interception is disabled")
+	}
+	if err := validateSharedOptions(false, option.EBPFSharedOptions{DataPlane: sharedDataPlanePacketRewrite}); err == nil {
+		t.Fatal("expected a shared data plane to be rejected when shared interception is disabled")
+	}
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{IPv6: common.Ptr(false)}); err == nil {
 		t.Fatal("expected shared IPv6 option to be rejected without shared mode")
 	}
@@ -163,26 +169,64 @@ func TestParsePortRanges(t *testing.T) {
 
 func TestNormalizeMode(t *testing.T) {
 	for _, test := range []struct {
-		input  string
-		mode   string
-		local  bool
-		shared bool
+		inputMode    string
+		localOption  *bool
+		sharedOption *bool
+		expectedMode string
+		local        bool
+		shared       bool
 	}{
-		{"", ebpfModeLocal, true, false},
-		{ebpfModeLocal, ebpfModeLocal, true, false},
-		{ebpfModeShared, ebpfModeShared, false, true},
-		{ebpfModeHybrid, ebpfModeHybrid, true, true},
+		{expectedMode: ebpfModeLocal, local: true},
+		{inputMode: ebpfModeLocal, expectedMode: ebpfModeLocal, local: true},
+		{inputMode: ebpfModeShared, expectedMode: ebpfModeShared, shared: true},
+		{inputMode: ebpfModeHybrid, expectedMode: ebpfModeHybrid, local: true, shared: true},
+		{localOption: common.Ptr(true), expectedMode: ebpfModeLocal, local: true},
+		{sharedOption: common.Ptr(true), expectedMode: ebpfModeShared, shared: true},
+		{localOption: common.Ptr(true), sharedOption: common.Ptr(true), expectedMode: ebpfModeHybrid, local: true, shared: true},
 	} {
-		mode, local, shared, err := normalizeMode(test.input)
+		mode, local, shared, err := normalizeMode(test.inputMode, test.localOption, test.sharedOption)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if mode != test.mode || local != test.local || shared != test.shared {
-			t.Fatalf("unexpected normalized mode for %q: %q %v %v", test.input, mode, local, shared)
+		if mode != test.expectedMode || local != test.local || shared != test.shared {
+			t.Fatalf("unexpected normalized mode: %q %v %v", mode, local, shared)
 		}
 	}
-	if _, _, _, err := normalizeMode("disabled"); err == nil {
-		t.Fatal("expected an unknown mode to be rejected")
+	for _, test := range []struct {
+		mode         string
+		localOption  *bool
+		sharedOption *bool
+	}{
+		{mode: "disabled"},
+		{localOption: common.Ptr(false)},
+		{sharedOption: common.Ptr(false)},
+		{mode: ebpfModeHybrid, localOption: common.Ptr(true)},
+	} {
+		if _, _, _, err := normalizeMode(test.mode, test.localOption, test.sharedOption); err == nil {
+			t.Fatalf("expected invalid enablement to be rejected: %+v", test)
+		}
+	}
+}
+
+func TestNormalizeSharedDataPlane(t *testing.T) {
+	for _, test := range []struct {
+		input  string
+		output string
+	}{
+		{"", sharedDataPlaneSocketAssign},
+		{sharedDataPlaneSocketAssign, sharedDataPlaneSocketAssign},
+		{sharedDataPlanePacketRewrite, sharedDataPlanePacketRewrite},
+	} {
+		output, err := normalizeSharedDataPlane(option.EBPFSharedOptions{DataPlane: test.input})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output != test.output {
+			t.Fatalf("unexpected shared data plane for %q: %q", test.input, output)
+		}
+	}
+	if _, err := normalizeSharedDataPlane(option.EBPFSharedOptions{DataPlane: "invalid"}); err == nil {
+		t.Fatal("expected unknown shared data plane to be rejected")
 	}
 }
 

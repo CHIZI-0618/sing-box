@@ -57,6 +57,15 @@ func (b *CgroupBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool,
 	return changed, nil
 }
 
+func (b *CgroupBackend) BypassCIDRCount() (int, int) {
+	if b == nil {
+		return 0, 0
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return len(b.bypassIPv4CIDR), len(b.bypassIPv6CIDR)
+}
+
 func (b *CgroupBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 	if b == nil {
 		return errBackendClosed
