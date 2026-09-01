@@ -368,11 +368,11 @@ func (i *Inbound) checkKernelCapabilities() error {
 		SharedDataPlane: sharedPlane,
 		Network:         network,
 		InterfaceName:   interfaceName,
-		EnableIPv6:      localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6,
+		EnableIPv6:      (localSelected && i.localIPv6) || (sharedSelected && i.sharedIPv6),
 		NeedLPMPolicy: ((localTCEnabled || localCgroupEnabled) && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0)) ||
 			((sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0)) ||
 			len(i.bypassRuleSet) > 0,
-		NeedProcessTracking: localTCEnabled && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
+		NeedProcessTracking: localSelected && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})
 	if err != nil {
 		return E.Cause(err, "probe eBPF kernel capabilities")

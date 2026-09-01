@@ -50,6 +50,26 @@ type EBPFSharedOptions struct {
 	BypassPortRange      badoption.Listable[string]       `json:"bypass_port_range,omitempty"`
 }
 
+// EffectiveEnablement returns the local and shared paths selected by the
+// current configuration. It intentionally mirrors the legacy mode defaults so
+// callers outside protocol/ebpf (such as the dialer self-bypass preparer) do
+// not reinterpret enabled fields independently.
+func (o EBPFInboundOptions) EffectiveEnablement() (local, shared bool) {
+	if o.Local.Enabled != nil || o.Shared.Enabled != nil {
+		return o.Local.Enabled != nil && *o.Local.Enabled, o.Shared.Enabled != nil && *o.Shared.Enabled
+	}
+	switch o.Mode {
+	case "shared":
+		return false, true
+	case "hybrid":
+		return true, true
+	case "", "local":
+		return true, false
+	default:
+		return false, false
+	}
+}
+
 type EBPFTCPriority uint16
 
 func (EBPFTCPriority) DescribeSchema(schema.Builder) (*schema.Node, error) {
