@@ -12,6 +12,8 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 
 	CiliumEBPF "github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/features"
 	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
 )
@@ -69,6 +71,7 @@ type cgroupRuntime struct {
 	host_ipv4_map_fd            int
 	host_ipv6_map_fd            int
 	socket_release_supported    bool
+	coarse_time_supported       bool
 	enable_tcp                  bool
 	enable_udp                  bool
 	uid_policy                  bool
@@ -203,7 +206,9 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		return nil, eBPFOperationError("detach stale cgroup programs", err)
 	}
 	socketReleaseSupported := false
+	coarseTimeSupported := false
 	if config.EnableUDP {
+		coarseTimeSupported = features.HaveProgramHelper(CiliumEBPF.CGroupSockAddr, asm.FnKtimeGetCoarseNs) == nil
 		socketReleaseSupported, err = probeSocketReleaseSupport(int(cgroupFile.Fd()))
 		if err != nil {
 			_ = cgroupFile.Close()
@@ -222,6 +227,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		bypass_ipv6_policy:       policy.EnableBypassCIDR && redirectIPv6.IsValid(),
 		bypass_port_policy:       len(config.BypassPort) > 0,
 		socket_release_supported: socketReleaseSupported,
+		coarse_time_supported:    coarseTimeSupported,
 	}
 	if err = prepareCgroupMaps(runtimeState, mapCapacity, len(uidPolicyEntries), config.SelfBypassMap); err != nil {
 		_ = closeMaps(runtimeState.maps)

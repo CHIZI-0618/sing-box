@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"errors"
 	"unsafe"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -59,7 +60,15 @@ func (b *CgroupBackend) loadCgroupObjectPrograms() ([]*CiliumEBPF.Program, error
 		})
 		slots = append(slots, slot)
 	}
-	loaded, err := loadObjectPrograms(loadCgroup, b.runtime.maps, selections)
+	loadSpec := loadCgroup
+	if b.runtime.coarse_time_supported {
+		loadSpec = loadCgroupCoarse
+	}
+	loaded, err := loadObjectPrograms(loadSpec, b.runtime.maps, selections)
+	if err != nil && b.runtime.coarse_time_supported && coarseTimeUnavailable(err) {
+		b.runtime.coarse_time_supported = false
+		loaded, err = loadObjectPrograms(loadCgroup, b.runtime.maps, selections)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +81,12 @@ func (b *CgroupBackend) loadCgroupObjectPrograms() ([]*CiliumEBPF.Program, error
 		return nil, err
 	}
 	return programs, nil
+}
+
+func coarseTimeUnavailable(err error) bool {
+	return errors.Is(err, CiliumEBPF.ErrNotSupported) ||
+		errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOSYS) ||
+		errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP)
 }
 
 func (b *CgroupBackend) validateCgroupProgramSet(programs []*CiliumEBPF.Program) error {

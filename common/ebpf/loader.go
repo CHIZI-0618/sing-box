@@ -20,6 +20,8 @@ var loadTC = BPFGen.LoadTC
 
 var loadCgroup = BPFGen.LoadCgroup
 
+var loadCgroupCoarse = BPFGen.LoadCgroupCoarse
+
 var loadSharedNetwork = BPFGen.LoadSharedNetwork
 
 func attachProgramRaw(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {
