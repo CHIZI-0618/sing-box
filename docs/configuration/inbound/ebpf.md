@@ -175,8 +175,13 @@ be distinguished.
 
 #### local.bypass_port
 
-Destination ports to bypass local interception. TCP and UDP are covered when
-enabled by `network`. FakeIP and DNS interception take precedence.
+Destination ports to bypass local interception. This option is supported by
+both local data planes (`tc` and `cgroup`) and applies independently to TCP and
+UDP when those protocols are enabled by `network`. It matches the destination
+port only. FakeIP always forces interception. DNS handling also has precedence:
+`hijack` always intercepts port 53, `respect_policy` applies UID policy before
+DNS interception, and `off` already bypasses DNS. sing-box emits a startup
+warning when port 53 is listed.
 
 #### local.bypass_port_range
 
@@ -251,8 +256,12 @@ This option is available only on Ethernet-framed shared interfaces.
 
 #### shared.bypass_port
 
-Destination ports to bypass shared interception. TCP and UDP are covered when
-enabled by `network`. FakeIP and DNS interception take precedence.
+Destination ports to bypass shared interception. This option is supported by
+both shared data planes (`socket_assign` and `packet_rewrite`) and applies
+independently to TCP and UDP when those protocols are enabled by `network`. It
+matches the destination port only. FakeIP and DNS handling have the same
+precedence described for `local.bypass_port`; listing port 53 in this mode is
+therefore warned about at startup.
 
 #### shared.bypass_port_range
 
