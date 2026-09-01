@@ -4,12 +4,13 @@ icon: material/linux
 
 # eBPF kernel requirements
 
-The eBPF inbound uses TC classifiers, transparent sockets, socket lookup and
-`bpf_sk_assign`. Support is determined by runtime capability probes rather than
-by a Linux version number. Vendor kernels may backport, disable, or restrict
-individual facilities. The LPM-trie safety exception described below uses a
-conservative release check because affected kernels can fault while that
-capability is being probed. When TCX link creation is available it is
+The eBPF inbound uses TC by default. Local interception may explicitly select a
+cgroup v2 socket-address backend; shared interception always uses TC. Support
+is determined by runtime map, program-load, helper, and attachment results
+rather than a minimum Linux version. Vendor kernels may backport, disable, or
+restrict individual facilities. The LPM-trie safety exception described below
+uses a conservative release check because affected kernels can fault while
+that capability is being probed. When TCX link creation is available it is
 preferred; otherwise sing-box uses the compatible `clsact` attachment.
 
 ## Kernel configuration
@@ -29,6 +30,12 @@ The following options, or their vendor equivalents, are required:
 
 `CONFIG_BPF_JIT` is strongly recommended for packet-path performance.
 
+`CONFIG_CGROUP_BPF` and a cgroup v2 mount are required when local
+`data_plane` is `cgroup`, and `cgroup_path` must be explicit. `CONFIG_VETH`,
+TC qdiscs, TC socket lookup, and
+`bpf_sk_assign` are not required by a cgroup-only local inbound. Hybrid mode
+still requires the TC shared facilities.
+
 ## Required BPF facilities
 
 The selected kernel must support:
@@ -42,6 +49,14 @@ The selected kernel must support:
 - `bpf_skc_lookup_tcp`, `bpf_sk_lookup_udp`, `bpf_sk_assign`, and
   `bpf_sk_release` in `SCHED_CLS`.
 
+These are the TC backend requirements. Local cgroup mode instead loads
+`CGROUP_SOCK_ADDR` connect4/connect6 and UDP sendmsg/recvmsg programs and uses
+`bpf_get_socket_cookie`, map lookup/update/delete, and current-UID helpers.
+When UDP socket-release attachment is unavailable, sing-box loads a bounded
+LRU cleanup variant that does not reference that hook. The selected object is
+loaded before interception is attached, so a missing helper or program type
+fails startup without relying on the kernel release.
+
 TCP listener SOCKMAP support is optional. When `BPF_MAP_TYPE_SOCKMAP` can be
 created and the modern TC sections load successfully, it is used for wildcard
 listener fallback. Otherwise sing-box loads a legacy TC section that does not
@@ -49,7 +64,7 @@ reference the map and performs direct `bpf_skc_lookup_tcp` lookup. The selected
 path is decided by map creation and program loading, not by the kernel release
 string. Older kernels commonly gate SOCKMAP behind `CONFIG_BPF_STREAM_PARSER`.
 
-For local mode, `bpf_get_socket_cookie` in `SCHED_CLS` is required for the
+For the local TC data plane, `bpf_get_socket_cookie` in `SCHED_CLS` is required for the
 self-bypass cookie map. `CGROUP_SOCK` with `inet_sock_create` and
 `inet_sock_release`, together with `bpf_get_socket_cookie`, is an optional
 optimization that populates and removes that map in kernel hooks. If the
@@ -93,12 +108,12 @@ same guard.
 
 ## Privileges
 
-Startup needs enough privilege to:
+Startup needs enough privilege for the selected data plane to:
 
 - load BPF maps and programs;
-- create and remove a veth pair in local or hybrid mode;
+- create and remove a veth pair for local TC mode;
 - add and remove `clsact` qdiscs and BPF filters;
-- add and remove policy-routing rules and local routes;
+- add and remove TC policy routing or cgroup redirect routes;
 - change `rp_filter` and `accept_local` on the internal delivery peer;
 - enable `IP_TRANSPARENT` or `IPV6_TRANSPARENT`;
 - attach the process cgroup socket hooks when the local self-bypass fast path is
@@ -115,7 +130,7 @@ syscalls and netlink directly.
 
 ## Interface requirements
 
-Local mode attaches to the network manager's current default interface. Shared
+Local TC mode attaches to the network manager's current default interface. Shared
 mode attaches to each configured downstream interface. Ethernet/IPoE and
 L3-only raw-IP or PPP links are supported. Source MAC policy requires Ethernet
 framing. Loopback and unrecognized link encapsulations are not supported.
@@ -129,7 +144,7 @@ One sing-box eBPF inbound may manage an interface at a time. Existing unrelated
 `clsact` filters are preserved, but a conflicting sing-box filter handle or
 interface lock prevents startup.
 
-The local delivery veth requires writable per-interface IPv4 sysctls under
+The local TC delivery veth requires writable per-interface IPv4 sysctls under
 `/proc/sys/net/ipv4/conf`. Original values are restored during cleanup.
 
 ## Probe

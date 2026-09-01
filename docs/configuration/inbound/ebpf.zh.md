@@ -26,6 +26,7 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
   "tc_priority": 1,
   "bypass_rule_set": [],
   "local": {
+    "data_plane": "tc",
     "dns_mode": "respect_policy",
     "ipv6": true,
     "bypass_private_address": true,
@@ -88,8 +89,20 @@ filter 协调顺序时修改。
 
 ### local
 
-local 接管跟随系统当前默认网络接口。默认网络变化时会自动切换；没有可用默认接口时
-会在切换期间保留旧 attachment，待新接口准备好后切换。
+默认 TC 数据面的 local 接管跟随系统当前默认网络接口。默认网络变化时会自动切换；
+没有可用默认接口时会保留旧 attachment，待新接口准备好后切换。cgroup 数据面跟随
+配置的进程组，不依赖网络接口。
+
+#### local.data_plane
+
+选择本机接管的数据面。默认值 `tc` 保持现有行为；`cgroup` 使用配置的 cgroup v2
+路径接管本机 socket。为兼容旧配置，未设置 `data_plane` 时，填写 `cgroup_path` 会
+自动选择 `cgroup`。
+
+#### local.cgroup_path
+
+`data_plane: cgroup` 使用的绝对 cgroup v2 路径，必须明确指定需要接管 socket 的
+进程组。
 
 #### local.dns_mode
 
