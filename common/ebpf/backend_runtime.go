@@ -8,6 +8,8 @@ import (
 
 	E "github.com/sagernet/sing/common/exceptions"
 
+	CiliumEBPF "github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/features"
 	"golang.org/x/sys/unix"
 )
 
@@ -47,4 +49,25 @@ func eBPFOperationError(operation string, err error) error {
 		}
 	}
 	return E.Cause(err, operation)
+}
+
+func eBPFBackendOperationError(operation string, stage string, err error) error {
+	if stage != "" {
+		operation += ": " + stage
+	}
+	return eBPFOperationError(operation, err)
+}
+
+func checkKernelCapabilities(scope string, cgroupPath string) error {
+	var fileSystem unix.Statfs_t
+	if err := unix.Statfs(cgroupPath, &fileSystem); err != nil {
+		return E.Cause(err, "check ", scope, " eBPF cgroup2 mount")
+	}
+	if fileSystem.Type != unix.CGROUP2_SUPER_MAGIC {
+		return E.New("eBPF inbound is not supported: ", cgroupPath, " is not a cgroup2 mount")
+	}
+	if err := features.HaveMapType(CiliumEBPF.Array); err != nil {
+		return eBPFOperationError("probe "+scope+" BPF_MAP_TYPE_ARRAY", err)
+	}
+	return nil
 }
