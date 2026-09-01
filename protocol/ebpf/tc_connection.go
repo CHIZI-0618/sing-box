@@ -123,6 +123,25 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	destinationAddress := destination.AddrPort()
 	_, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
+		if w.clientState.isCgroupDataPlane() {
+			backend := w.inbound.cgroupBackendInstance()
+			if backend == nil {
+				return E.New("cgroup eBPF backend is closed")
+			}
+			redirectAddress, err := backend.ReserveUDPReplyRedirect(destinationAddress, w.inbound.listeners.selectedPort())
+			if err != nil {
+				return err
+			}
+			if !w.inbound.udpClientTable.setCgroupReplyBinding(w.client, w.clientState, destinationAddress, redirectAddress) {
+				return E.New("cgroup eBPF UDP reply binding was rejected")
+			}
+			_, loaded = w.clientState.redirectBinding(destinationAddress)
+			if !loaded {
+				return E.New("cgroup eBPF UDP reply binding is unavailable")
+			}
+		}
+	}
+	if !loaded {
 		if !w.clientState.hasAddressFamily(destinationAddress.Addr().Is4()) {
 			return E.New("TC eBPF UDP reply alias limit reached or address family unavailable")
 		}

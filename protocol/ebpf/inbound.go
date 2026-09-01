@@ -33,6 +33,17 @@ const (
 	defaultTCPriority    = 1
 )
 
+var (
+	redirectIPv4Candidates = []netip.Prefix{
+		netip.MustParsePrefix("127.128.0.0/9"),
+		netip.MustParsePrefix("127.64.0.0/10"),
+	}
+	redirectIPv6Candidates = []netip.Prefix{
+		netip.MustParsePrefix("fd53:696e:672d:626f::/64"),
+		netip.MustParsePrefix("fd53:696e:672d:6270::/64"),
+	}
+)
+
 type fakeIPRangeProvider interface {
 	FakeIPRanges() (netip.Prefix, netip.Prefix)
 }
@@ -49,6 +60,12 @@ type Inbound struct {
 	networkManager           adapter.NetworkManager
 	mode                     string
 	localEnabled             bool
+	localDataPlane           string
+	cgroupPath               string
+	cgroupBackend            *commonEBPF.CgroupBackend
+	localRoutes              []*localRoute
+	redirectIPv4Prefix       netip.Prefix
+	redirectIPv6Prefix       netip.Prefix
 	selfBypass               *commonEBPF.SelfBypass
 	selfBypassCgroup         bool
 	processTracker           *commonEBPF.ProcessTracker
@@ -76,6 +93,7 @@ type Inbound struct {
 	sharedIncludeMAC         []commonEBPF.MACAddress
 	sharedExcludeMAC         []commonEBPF.MACAddress
 	tcDataPlaneAccess        sync.RWMutex
+	cgroupBackendAccess      sync.RWMutex
 	lifecycleAccess          sync.Mutex
 	interfaceMonitor         tcInterfaceMonitor
 
@@ -106,6 +124,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, err
 	}
 	if err = validateAndroidUIDOptions(runtime.GOOS, options.Local); err != nil {
+		return nil, err
+	}
+	localDataPlane, cgroupPath, err := normalizeLocalDataPlane(options.Local)
+	if err != nil {
 		return nil, err
 	}
 	localDNSMode, err := normalizeDNSMode(options.Local.DNSMode)
@@ -184,6 +206,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}(),
 		mode:                mode,
 		localEnabled:        localEnabled,
+		localDataPlane:      localDataPlane,
+		cgroupPath:          cgroupPath,
 		selfBypass:          selfBypass,
 		enableTCP:           enableTCP,
 		enableUDP:           enableUDP,

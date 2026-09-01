@@ -85,13 +85,15 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 	if err != nil {
 		return err
 	}
-	backend := i.tcBackend()
-	if backend == nil {
-		return nil
+	if backend := i.tcBackend(); backend != nil {
+		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
+			return err
+		}
 	}
-	_, err = backend.UpdateCompiledBypassCIDR(policy)
-	if err != nil {
-		return err
+	if backend := i.cgroupBackendInstance(); backend != nil {
+		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
+			return err
+		}
 	}
 	return nil
 }

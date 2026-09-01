@@ -5,12 +5,14 @@ package ebpf
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"net"
 	"net/netip"
 	"strings"
 	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -30,6 +32,28 @@ func (i *Inbound) NewConnection(
 	metadata adapter.InboundContext,
 	onClose N.CloseHandlerFunc,
 ) {
+	if i.localDataPlane == localDataPlaneCgroup && i.localEnabled && i.isCgroupRedirectAddress(M.SocksaddrFromNet(conn.LocalAddr()).AddrPort().Addr()) {
+		backend := i.cgroupBackendInstance()
+		if backend == nil {
+			_ = conn.Close()
+			return
+		}
+		listenerDestination := M.SocksaddrFromNet(conn.LocalAddr()).AddrPort()
+		original, err := backend.TakeOriginal(commonEBPF.ProtocolTCP, listenerDestination)
+		if err != nil {
+			if !errors.Is(err, unix.ENOENT) {
+				i.tcpWarnings.errorContext(i.logger, ctx, "lookup cgroup eBPF TCP original destination: ", err)
+			}
+			_ = conn.Close()
+			return
+		}
+		metadata.Inbound = i.Tag()
+		metadata.InboundType = i.Type()
+		metadata.Source = M.SocksaddrFromNet(conn.RemoteAddr())
+		metadata.Destination = M.SocksaddrFromNetIP(original.Destination)
+		i.router.RouteConnectionEx(ctx, conn, metadata, onClose)
+		return
+	}
 	backend := i.tcBackend()
 	if backend == nil {
 		_ = conn.Close()
@@ -39,11 +63,48 @@ func (i *Inbound) NewConnection(
 }
 
 func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
+	if i.localDataPlane == localDataPlaneCgroup && i.localEnabled {
+		if redirectAddress, err := redirectAddressFromOOB(oob); err == nil && i.isCgroupRedirectAddress(redirectAddress) {
+			i.newCgroupPacket(buffer, oob, source)
+			return
+		}
+	}
 	backend := i.tcBackend()
 	if backend == nil {
 		return
 	}
 	i.newTCPacket(backend, buffer, oob, source)
+}
+
+func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
+	redirectAddress, _, _, err := packetDestinationsFromOOB(oob)
+	if err != nil {
+		i.udpWarnings.packetInfo.warn(i.logger, "read cgroup eBPF UDP redirect address: ", err)
+		return
+	}
+	backend := i.cgroupBackendInstance()
+	if backend == nil || !i.isCgroupRedirectAddress(redirectAddress) {
+		i.udpWarnings.originalDestination.warn(i.logger, "cgroup eBPF UDP redirect address is not owned: ", redirectAddress)
+		return
+	}
+	client := source.AddrPort()
+	redirectDestination := netip.AddrPortFrom(redirectAddress, i.listeners.selectedPort())
+	original, loaded := i.udpClientTable.cachedCgroupOriginal(client, redirectAddress)
+	if !loaded {
+		original, err = backend.LookupOriginal(commonEBPF.ProtocolUDP, redirectDestination)
+		if errors.Is(err, unix.ENOENT) {
+			original, err = backend.RecoverUDPOriginal(redirectDestination)
+		}
+		if errors.Is(err, unix.ENOENT) {
+			original, err = backend.RecoverConnectedUDPOriginal(redirectDestination)
+		}
+		if err != nil {
+			i.udpWarnings.originalDestination.warn(i.logger, "lookup cgroup eBPF UDP original destination: ", err)
+			return
+		}
+		i.udpClientTable.setCgroupBinding(client, original, redirectAddress)
+	}
+	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination), nil)
 }
 
 func (i *Inbound) NewPacketConnectionEx(

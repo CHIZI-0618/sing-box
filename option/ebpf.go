@@ -19,6 +19,8 @@ type EBPFInboundOptions struct {
 
 type EBPFLocalOptions struct {
 	DNSMode              string                     `json:"dns_mode,omitempty" enum:"hijack,respect_policy,off"`
+	DataPlane            string                     `json:"data_plane,omitempty" enum:"tc,cgroup"`
+	CgroupPath           string                     `json:"cgroup_path,omitempty"`
 	IPv6                 *bool                      `json:"ipv6,omitempty"`
 	BypassPrivateAddress *bool                      `json:"bypass_private_address,omitempty"`
 	IncludeUID           badoption.Listable[uint32] `json:"include_uid,omitempty"`

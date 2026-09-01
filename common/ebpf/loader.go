@@ -3,17 +3,45 @@
 package ebpf
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 
 	BPFGen "github.com/sagernet/sing-box/common/ebpf/internal/bpfgen"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	CiliumEBPF "github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
 )
 
 const bpfFlagNoPrealloc = 1
 
 var loadTC = BPFGen.LoadTC
+
+var loadCgroup = BPFGen.LoadCgroup
+
+func attachProgramRaw(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {
+	if err := link.RawAttachProgram(link.RawAttachProgramOptions{Target: target, Program: program, Attach: attachType, Flags: 2}); err == nil {
+		return nil
+	}
+	return link.RawAttachProgram(link.RawAttachProgramOptions{Target: target, Program: program, Attach: attachType})
+}
+
+func rawDetachProgram(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {
+	return link.RawDetachProgram(link.RawDetachProgramOptions{Target: target, Program: program, Attach: attachType})
+}
+
+func sameProgramIDs(left, right []CiliumEBPF.ProgramID) bool {
+	return slices.Equal(left, right)
+}
+
+func verifierErrorStage(err error) string {
+	var verifierErr *CiliumEBPF.VerifierError
+	if errors.As(err, &verifierErr) {
+		return fmt.Sprintf("verifier rejected program: %v", verifierErr)
+	}
+	return ""
+}
 
 type programSelection struct {
 	section string
