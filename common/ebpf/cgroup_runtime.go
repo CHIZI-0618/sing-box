@@ -33,6 +33,21 @@ func (b *CgroupBackend) UDPTimeMode() string {
 	return "precise"
 }
 
+func (b *CgroupBackend) UDPStorageMode() string {
+	if b == nil {
+		return "disabled"
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil || !b.runtime.enable_udp {
+		return "disabled"
+	}
+	if b.runtime.socket_storage_supported {
+		return "socket_storage"
+	}
+	return "lru"
+}
+
 func cgroupUDPCleanupModeLocked(runtimeState *cgroupRuntime) string {
 	if runtimeState == nil || !runtimeState.enable_udp {
 		return cgroupUDPCleanupDisabled

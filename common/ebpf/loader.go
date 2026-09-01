@@ -22,6 +22,8 @@ var loadCgroup = BPFGen.LoadCgroup
 
 var loadCgroupCoarse = BPFGen.LoadCgroupCoarse
 
+var loadCgroupStorage = BPFGen.LoadCgroupStorage
+
 var loadSharedNetwork = BPFGen.LoadSharedNetwork
 
 func attachProgramRaw(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {
@@ -74,7 +76,8 @@ func loadObjectMaps(
 			delete(spec.Maps, name)
 			continue
 		}
-		if override.name == "" || override.mapType == CiliumEBPF.UnspecifiedMap || override.maxEntries == 0 {
+		if override.name == "" || override.mapType == CiliumEBPF.UnspecifiedMap ||
+			(override.maxEntries == 0 && override.mapType != CiliumEBPF.SkStorage) {
 			return nil, E.New("invalid eBPF map override for ", name)
 		}
 		mapSpec.Name = override.name

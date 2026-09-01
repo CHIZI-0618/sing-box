@@ -45,6 +45,24 @@ MAP(cgroup_bypass_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM
 MAP(cgroup_bypass_ipv6, struct sb_ebpf_ipv6_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_host_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_HASH);
 MAP(cgroup_host_ipv6, struct sb_ebpf_ipv6_cidr_lpm_key, __u8, BPF_MAP_TYPE_HASH);
+#ifdef SB_EBPF_USE_SK_STORAGE
+struct sb_ebpf_udp_socket_flow {
+    __u8 family;
+    __u8 protocol;
+    __u16 port;
+    __u8 addr[16];
+    __u8 action;
+    __u8 reserved[3];
+    __u32 last_seen_seconds;
+    struct sb_ebpf_listener_key listener;
+};
+struct bpf_map_def SEC("maps") cgroup_udp_socket_storage = {
+    .type = BPF_MAP_TYPE_SK_STORAGE,
+    .key_size = 0U,
+    .value_size = sizeof(struct sb_ebpf_udp_socket_flow),
+    .max_entries = 0U,
+};
+#endif
 static void *(*map_lookup)(void *map, const void *key) = (void *)BPF_FUNC_map_lookup_elem;
 static long (*map_update)(void *map, const void *key, const void *value, __u64 flags) =
     (void *)BPF_FUNC_map_update_elem;
@@ -52,6 +70,12 @@ static long (*map_delete)(void *map, const void *key) = (void *)BPF_FUNC_map_del
 static __u64 (*get_socket_cookie)(void *ctx) = (void *)BPF_FUNC_get_socket_cookie;
 static __u64 (*get_current_uid_gid)(void) = (void *)BPF_FUNC_get_current_uid_gid;
 static __u64 (*ktime_get_ns)(void) = (void *)BPF_FUNC_ktime_get_ns;
+#ifdef SB_EBPF_USE_SK_STORAGE
+static void *(*sk_storage_get)(void *map, void *socket, void *value, __u64 flags) =
+    (void *)BPF_FUNC_sk_storage_get;
+static long (*sk_storage_delete)(void *map, void *socket) =
+    (void *)BPF_FUNC_sk_storage_delete;
+#endif
 #ifdef SB_EBPF_USE_COARSE_TIME
 static __u64 (*ktime_get_coarse_ns)(void) = (void *)BPF_FUNC_ktime_get_coarse_ns;
 #endif
@@ -152,6 +176,54 @@ INLINE bool base_bypass(void *ctx, const struct sb_ebpf_cgroup_control *config, 
     if (port_bypassed(config, protocol, port)) return true;
     return false;
 }
+
+#ifdef SB_EBPF_USE_SK_STORAGE
+INLINE struct sb_ebpf_udp_socket_flow *socket_flow_lookup(struct bpf_sock_addr *ctx) {
+    if (ctx->sk == 0) return 0;
+    return sk_storage_get(&cgroup_udp_socket_storage, ctx->sk, 0, 0U);
+}
+
+INLINE bool socket_flow_matches(
+    const struct sb_ebpf_udp_socket_flow *flow,
+    __u8 family,
+    __u8 protocol,
+    __u16 port,
+    const __u8 address[16]) {
+    if (flow == 0 || flow->family != family || flow->protocol != protocol || flow->port != port) return false;
+#pragma clang loop unroll(full)
+    for (__u32 index = 0U; index < 16U; ++index) {
+        if (flow->addr[index] != address[index]) return false;
+    }
+    return true;
+}
+
+INLINE void socket_flow_store(
+    struct bpf_sock_addr *ctx,
+    __u8 family,
+    __u8 protocol,
+    __u16 port,
+    const __u8 address[16],
+    __u8 action,
+    const struct sb_ebpf_listener_key *listener) {
+    if (ctx->sk == 0) return;
+    struct sb_ebpf_udp_socket_flow initial = {
+        .family = family,
+        .protocol = protocol,
+        .port = port,
+        .action = action,
+        .last_seen_seconds = (__u32)(ktime_get_ns() / 1000000000ULL),
+    };
+    __builtin_memcpy(initial.addr, address, sizeof(initial.addr));
+    if (listener != 0) __builtin_memcpy(&initial.listener, listener, sizeof(initial.listener));
+    struct sb_ebpf_udp_socket_flow *stored = sk_storage_get(
+        &cgroup_udp_socket_storage, ctx->sk, &initial, BPF_LOCAL_STORAGE_GET_F_CREATE);
+    if (stored != 0) __builtin_memcpy(stored, &initial, sizeof(initial));
+}
+
+INLINE void socket_flow_delete(struct bpf_sock_addr *ctx) {
+    if (ctx->sk != 0) (void)sk_storage_delete(&cgroup_udp_socket_storage, ctx->sk);
+}
+#endif
 
 INLINE void original_v4(
     struct sb_ebpf_original_dst *value,
@@ -309,6 +381,26 @@ INLINE int flow_action(
     if ((config->flags & SB_EBPF_CGROUP_FLAG_UDP_FLOW) == 0U || cookie == 0U) {
         return FLOW_CACHE_MISS;
     }
+#ifdef SB_EBPF_USE_SK_STORAGE
+    if (protocol == UDP_VALUE) {
+        struct sb_ebpf_udp_socket_flow *stored = socket_flow_lookup(ctx);
+        if (socket_flow_matches(stored, family, protocol, port, address)) {
+            __u32 now = (__u32)(flow_time_ns() / 1000000000ULL);
+            if (now - stored->last_seen_seconds <= config->udp_timeout_seconds) {
+                stored->last_seen_seconds = now;
+                if (stored->action == SB_EBPF_UDP_FLOW_ACTION_BYPASS) return FLOW_CACHE_BYPASS;
+                if (stored->action == SB_EBPF_UDP_FLOW_ACTION_PROXY) {
+                    if (mapped_context) rewrite_v4_mapped(ctx, &stored->listener);
+                    else if (family == AF_INET_VALUE) rewrite_v4(ctx, &stored->listener);
+                    else rewrite_v6(ctx, &stored->listener);
+                    return FLOW_CACHE_PROXY;
+                }
+            } else {
+                (void)sk_storage_delete(&cgroup_udp_socket_storage, ctx->sk);
+            }
+        }
+    }
+#endif
     struct sb_ebpf_udp_flow_key flow_key = {
         .cookie = cookie,
         .family = family,
@@ -480,6 +572,9 @@ INLINE int handle_v4(
     if (port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_OFF) return 1;
     if (connected_udp) {
         reset_connected_udp(cookie);
+#ifdef SB_EBPF_USE_SK_STORAGE
+        socket_flow_delete(ctx);
+#endif
         store_udp_peer_v4(cookie, destination, port);
     }
     __u8 flow_address[16] = {0};
@@ -522,6 +617,10 @@ INLINE int handle_v4(
         flow_store(config, AF_INET_VALUE, protocol, port, flow_address,
             cookie, SB_EBPF_UDP_FLOW_ACTION_PROXY, &listener);
     }
+#ifdef SB_EBPF_USE_SK_STORAGE
+    if (connected_udp) socket_flow_store(ctx, AF_INET_VALUE, protocol, port, flow_address,
+        SB_EBPF_UDP_FLOW_ACTION_PROXY, &listener);
+#endif
     return rewrite_v4(ctx, &listener) ? 1 : 0;
 }
 
@@ -565,6 +664,9 @@ INLINE int handle_v6(
         if (port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_OFF) return 1;
         if (connected_udp) {
             reset_connected_udp(cookie);
+#ifdef SB_EBPF_USE_SK_STORAGE
+            socket_flow_delete(ctx);
+#endif
             store_udp_peer_v4(cookie, destination, port);
         }
         __u8 flow_address[16] = {0};
@@ -590,6 +692,10 @@ INLINE int handle_v6(
                     flow_store(config, AF_INET_VALUE, protocol, port, flow_address, cookie,
                         SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);
                 }
+#ifdef SB_EBPF_USE_SK_STORAGE
+                if (connected_udp) socket_flow_store(ctx, AF_INET_VALUE, protocol, port, flow_address,
+                    SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);
+#endif
                 return 1;
             }
         }
@@ -606,6 +712,10 @@ INLINE int handle_v6(
             flow_store(config, AF_INET_VALUE, protocol, port, flow_address, cookie,
                 SB_EBPF_UDP_FLOW_ACTION_PROXY, &listener);
         }
+#ifdef SB_EBPF_USE_SK_STORAGE
+        if (connected_udp) socket_flow_store(ctx, AF_INET_VALUE, protocol, port, flow_address,
+            SB_EBPF_UDP_FLOW_ACTION_PROXY, &listener);
+#endif
         return rewrite_v4_mapped(ctx, &listener) ? 1 : 0;
     }
     if (!enable_native_ipv6) return 1;
@@ -618,6 +728,9 @@ INLINE int handle_v6(
     if (port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_OFF) return 1;
     if (connected_udp) {
         reset_connected_udp(cookie);
+#ifdef SB_EBPF_USE_SK_STORAGE
+        socket_flow_delete(ctx);
+#endif
         store_udp_peer_v6(cookie, address, port);
     }
     __u8 flow_address[16];
@@ -641,6 +754,10 @@ INLINE int handle_v6(
                 flow_store(config, AF_INET6_VALUE, protocol, port, flow_address, cookie,
                     SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);
             }
+#ifdef SB_EBPF_USE_SK_STORAGE
+            if (connected_udp) socket_flow_store(ctx, AF_INET6_VALUE, protocol, port, flow_address,
+                SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);
+#endif
             return 1;
         }
     }
@@ -657,6 +774,10 @@ INLINE int handle_v6(
         flow_store(config, AF_INET6_VALUE, protocol, port, flow_address, cookie,
             SB_EBPF_UDP_FLOW_ACTION_PROXY, &listener);
     }
+#ifdef SB_EBPF_USE_SK_STORAGE
+    if (connected_udp) socket_flow_store(ctx, AF_INET6_VALUE, protocol, port, flow_address,
+        SB_EBPF_UDP_FLOW_ACTION_PROXY, &listener);
+#endif
     return rewrite_v6(ctx, &listener) ? 1 : 0;
 }
 

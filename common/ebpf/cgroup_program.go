@@ -60,27 +60,79 @@ func (b *CgroupBackend) loadCgroupObjectPrograms() ([]*CiliumEBPF.Program, error
 		})
 		slots = append(slots, slot)
 	}
+	normalSelections := selections
+	normalSlots := slots
+	storageSelections := make([]programSelection, 0, 2)
+	storageSlots := make([]int, 0, 2)
+	if b.runtime.socket_storage_supported {
+		normalSelections = make([]programSelection, 0, len(selections))
+		normalSlots = make([]int, 0, len(slots))
+		for index, slot := range slots {
+			if slot == cgroupProgramUDP4Sendmsg || slot == cgroupProgramUDP6Sendmsg {
+				storageSelections = append(storageSelections, selections[index])
+				storageSlots = append(storageSlots, slot)
+			} else {
+				normalSelections = append(normalSelections, selections[index])
+				normalSlots = append(normalSlots, slot)
+			}
+		}
+	}
 	loadSpec := loadCgroup
 	if b.runtime.coarse_time_supported {
 		loadSpec = loadCgroupCoarse
 	}
-	loaded, err := loadObjectPrograms(loadSpec, b.runtime.maps, selections)
+	normalMaps := b.runtime.maps
+	if b.runtime.socket_storage_supported {
+		normalMaps = make(map[string]*CiliumEBPF.Map, len(b.runtime.maps)-1)
+		for name, mapInstance := range b.runtime.maps {
+			if name != "cgroup_udp_socket_storage" {
+				normalMaps[name] = mapInstance
+			}
+		}
+	}
+	loaded, err := loadObjectPrograms(loadSpec, normalMaps, normalSelections)
 	if err != nil && b.runtime.coarse_time_supported && coarseTimeUnavailable(err) {
 		b.runtime.coarse_time_supported = false
-		loaded, err = loadObjectPrograms(loadCgroup, b.runtime.maps, selections)
+		loadSpec = loadCgroup
+		loaded, err = loadObjectPrograms(loadSpec, normalMaps, normalSelections)
 	}
 	if err != nil {
 		return nil, err
 	}
 	programs := make([]*CiliumEBPF.Program, cgroupProgramCount)
-	for index, slot := range slots {
+	for index, slot := range normalSlots {
 		programs[slot] = loaded[index]
+	}
+	if b.runtime.socket_storage_supported {
+		storagePrograms, storageErr := loadObjectPrograms(loadCgroupStorage, b.runtime.maps, storageSelections)
+		if storageErr != nil {
+			_ = closePrograms(programs)
+			// SK_STORAGE is an optional fast path. A vendor verifier may reject
+			// the object even after the helper and map probes succeed, so fall
+			// back to the regular cgroup object for any load failure.
+			b.disableSocketStorage()
+			return b.loadCgroupObjectPrograms()
+		}
+		for index, slot := range storageSlots {
+			programs[slot] = storagePrograms[index]
+		}
 	}
 	if err = b.validateCgroupProgramSet(programs); err != nil {
 		_ = closePrograms(programs)
 		return nil, err
 	}
 	return programs, nil
+}
+
+func (b *CgroupBackend) disableSocketStorage() {
+	if b.runtime == nil {
+		return
+	}
+	if storageMap := b.runtime.maps["cgroup_udp_socket_storage"]; storageMap != nil {
+		_ = storageMap.Close()
+		delete(b.runtime.maps, "cgroup_udp_socket_storage")
+	}
+	b.runtime.socket_storage_supported = false
 }
 
 func coarseTimeUnavailable(err error) bool {
