@@ -135,10 +135,21 @@ local attachment 会跟随默认接口变化。配置的 shared 接口存在时�
 
 ## 探测
 
-使用与计划配置相同的模式和协议运行内置内核探测。shared 模式应传入一个当前
-存在的下游接口，以检查链路类型。
+使用与计划配置相同的数据面、协议和 IPv6 设置运行内置内核探测。通过
+`--local-data-plane=tc|cgroup` 和
+`--shared-data-plane=socket_assign|packet_rewrite` 选择具体路径；未指定对应参数表示
+禁用该路径。shared 模式应传入一个当前存在的下游接口，以检查链路类型。
 
-探测会针对所选协议、地址族和 shared 接口。local 模式会报告必需的 TC socket-cookie
+```sh
+sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
+sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan --json
+sing-box tools ebpf status --local-data-plane tc --shared-data-plane socket_assign --interface wlan1 --json
+```
+
+旧的 `--mode local|shared|all` 仍然可用，分别等价于 local TC、shared
+`socket_assign` 以及两者同时启用。
+
+探测会针对所选协议、地址族、数据面和 shared 接口。local TC 模式会报告必需的 TC socket-cookie
 helper 以及可选的 cgroup socket-cookie hook，同时报告可选的 socket-address 进程
 追踪能力。启动时会判断进程 cgroup 是否独占，能挂载时使用内核登记，否则启用用户态
 cookie 登记路径。明确缺少

@@ -17,14 +17,14 @@
 6. 与预期路径一致的能力探测结果：
 
 ```sh
-sing-box tools ebpf status --mode local --network tcp,udp --json
-sing-box tools ebpf status --mode shared --interface br-lan --json
+sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
+sing-box tools ebpf status --shared-data-plane socket_assign --interface br-lan --json
 ```
 
 如果入站配置禁用了 IPv6，请添加 `--ipv6=false`。必需能力缺失或无法验证时，命令会以非零状态退出。
 
-hybrid 模式请分别运行两种探测，或使用带下游接口的 `--mode all`。探测权限应与
-服务实际运行权限一致。
+hybrid 配置可在同一条命令中同时传入两个 data-plane 参数。旧的
+`--mode local|shared|all` 写法仍然可用。探测权限应与服务实际运行权限一致。
 
 常用系统信息：
 
