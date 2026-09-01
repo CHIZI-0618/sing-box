@@ -319,7 +319,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			return
 		case <-pressureTimerChannel:
 			pressurePoll = true
-		case <-backend.TCPFlowReleaseWake():
+		case <-backend.TCPFlowWake():
 			resetReleaseTimer(backend)
 			resetPressureTimer(backend)
 			continue

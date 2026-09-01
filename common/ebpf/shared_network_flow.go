@@ -264,17 +264,21 @@ func (b *SharedNetworkBackend) deferTCPFlowReleaseLocked(flow SharedNetworkFlowH
 		b.flowReleases = make(map[SharedNetworkFlowHandle]time.Time)
 	}
 	b.flowReleases[flow] = now.Add(sharedNetworkTCPReleaseGrace)
+	b.signalFlowWake()
+}
+
+func (b *SharedNetworkBackend) signalFlowWake() {
 	select {
-	case b.flowReleaseWake <- struct{}{}:
+	case b.flowWake <- struct{}{}:
 	default:
 	}
 }
 
-func (b *SharedNetworkBackend) TCPFlowReleaseWake() <-chan struct{} {
+func (b *SharedNetworkBackend) TCPFlowWake() <-chan struct{} {
 	if b == nil {
 		return nil
 	}
-	return b.flowReleaseWake
+	return b.flowWake
 }
 
 // HasTrackedFlows reports whether userspace currently owns any flow reference.
@@ -373,6 +377,7 @@ func (b *SharedNetworkBackend) retainFlowLocked(flow SharedNetworkFlowHandle) {
 		b.flowReferences = make(map[SharedNetworkFlowHandle]uint32)
 	}
 	b.flowReferences[flow]++
+	b.signalFlowWake()
 }
 
 func (b *SharedNetworkBackend) FlushReleasedTCPFlows(now time.Time, budget uint32) (uint32, error) {
