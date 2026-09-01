@@ -377,12 +377,13 @@ INLINE int flow_action(
     __u16 port,
     const __u8 address[16],
     __u64 cookie,
-    bool mapped_context) {
+    bool mapped_context,
+    bool socket_storage_context) {
     if ((config->flags & SB_EBPF_CGROUP_FLAG_UDP_FLOW) == 0U || cookie == 0U) {
         return FLOW_CACHE_MISS;
     }
 #ifdef SB_EBPF_USE_SK_STORAGE
-    if (protocol == UDP_VALUE) {
+    if (protocol == UDP_VALUE && socket_storage_context) {
         struct sb_ebpf_udp_socket_flow *stored = socket_flow_lookup(ctx);
         if (socket_flow_matches(stored, family, protocol, port, address)) {
             __u32 now = (__u32)(flow_time_ns() / 1000000000ULL);
@@ -564,8 +565,9 @@ INLINE int handle_v4(
         return 1;
     }
     bool connected_udp = connect_hook && protocol == UDP_VALUE;
-    if (!connect_hook) {
-        (void)restore_udp_peer_v4(cookie, &destination, &port);
+    bool socket_storage_context = false;
+    if (!connect_hook && (destination == 0U || port == 0U)) {
+        socket_storage_context = restore_udp_peer_v4(cookie, &destination, &port);
     }
     bool force_dns = port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_HIJACK;
     bool intercept_dns = port == 53U && config->dns_mode != SB_EBPF_DNS_MODE_OFF;
@@ -581,7 +583,8 @@ INLINE int handle_v4(
     __builtin_memcpy(flow_address, &destination, sizeof(destination));
     if (!connect_hook) {
         int cached = flow_action(
-            ctx, config, AF_INET_VALUE, protocol, port, flow_address, cookie, false);
+            ctx, config, AF_INET_VALUE, protocol, port, flow_address, cookie, false,
+            socket_storage_context);
         if (cached == FLOW_CACHE_PROXY || (!intercept_dns && cached == FLOW_CACHE_BYPASS)) return 1;
     }
     if (!force_dns && uid_bypassed(config)) return 1;
@@ -649,15 +652,16 @@ INLINE int handle_v6(
     bool missing_destination =
         (address[0] | address[1] | address[2] | address[3]) == 0U || port == 0U;
     if (!connect_hook && restore_connected_token(ctx, cookie, true, missing_destination)) return 1;
-    if (!connect_hook) (void)restore_udp_peer_for_empty_v6(cookie, address, &port);
+    bool socket_storage_context = false;
+    if (!connect_hook) socket_storage_context = restore_udp_peer_for_empty_v6(cookie, address, &port);
     bool connected_udp = connect_hook && protocol == UDP_VALUE;
     bool mapped = ipv4_mapped(address);
     if (mapped) {
         if ((config->flags & SB_EBPF_CGROUP_FLAG_IPV4) == 0U) return 1;
         __u32 destination;
         __builtin_memcpy(&destination, ((__u8 *)address) + 12U, sizeof(destination));
-        if (!connect_hook) {
-            (void)restore_udp_peer_v4(cookie, &destination, &port);
+        if (!connect_hook && (destination == 0U || port == 0U)) {
+            socket_storage_context = restore_udp_peer_v4(cookie, &destination, &port);
         }
         bool force_dns = port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_HIJACK;
         bool intercept_dns = port == 53U && config->dns_mode != SB_EBPF_DNS_MODE_OFF;
@@ -673,7 +677,8 @@ INLINE int handle_v6(
         __builtin_memcpy(flow_address, &destination, sizeof(destination));
         if (!connect_hook) {
             int cached = flow_action(
-                ctx, config, AF_INET_VALUE, protocol, port, flow_address, cookie, true);
+                ctx, config, AF_INET_VALUE, protocol, port, flow_address, cookie, true,
+                socket_storage_context);
             if (cached == FLOW_CACHE_PROXY || (!intercept_dns && cached == FLOW_CACHE_BYPASS)) return 1;
         }
         if (!force_dns && uid_bypassed(config)) return 1;
@@ -721,7 +726,9 @@ INLINE int handle_v6(
     if (!enable_native_ipv6) return 1;
     if ((config->flags & SB_EBPF_CGROUP_FLAG_IPV6) == 0U) return 1;
     if (!connect_hook) {
-        (void)restore_udp_peer_v6(cookie, address, &port);
+        if (!socket_storage_context) {
+            socket_storage_context = restore_udp_peer_v6(cookie, address, &port);
+        }
     }
     bool force_dns = port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_HIJACK;
     bool intercept_dns = port == 53U && config->dns_mode != SB_EBPF_DNS_MODE_OFF;
@@ -737,7 +744,8 @@ INLINE int handle_v6(
     __builtin_memcpy(flow_address, address, sizeof(flow_address));
     if (!connect_hook) {
         int cached = flow_action(
-            ctx, config, AF_INET6_VALUE, protocol, port, flow_address, cookie, false);
+            ctx, config, AF_INET6_VALUE, protocol, port, flow_address, cookie, false,
+            socket_storage_context);
         if (cached == FLOW_CACHE_PROXY || (!intercept_dns && cached == FLOW_CACHE_BYPASS)) return 1;
     }
     if (!force_dns && uid_bypassed(config)) return 1;
