@@ -21,12 +21,12 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
 {
   "type": "ebpf",
   "tag": "ebpf-in",
-  "mode": "hybrid",
   "network": ["tcp", "udp"],
   "udp_timeout": "5m",
   "tc_priority": 1,
   "bypass_rule_set": [],
   "local": {
+    "enabled": true,
     "data_plane": "tc",
     "dns_mode": "respect_policy",
     "ipv6": true,
@@ -42,6 +42,8 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
     "bypass_port_range": []
   },
   "shared": {
+    "enabled": true,
+    "data_plane": "socket_assign",
     "dns_mode": "respect_policy",
     "interface": ["wlan1"],
     "ipv6": true,
@@ -60,14 +62,18 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
 
 #### mode
 
+Legacy path selector. New configurations should use `local.enabled` and
+`shared.enabled` instead. `mode` cannot be combined with either `enabled`
+field.
+
 | Value | Behavior |
 | --- | --- |
 | `local` | Intercept traffic generated on this host. |
 | `shared` | Intercept traffic arriving on configured downstream interfaces. |
 | `hybrid` | Enable both paths. |
 
-Default is `local`. `local` fields require local or hybrid mode; `shared` fields
-require shared or hybrid mode.
+When neither `enabled` field nor `mode` is present, local interception remains
+enabled by default for compatibility.
 
 #### network
 
@@ -90,6 +96,12 @@ Traffic to destination IP CIDRs contained in these rule sets bypasses this
 inbound. Non-IP rules are ignored.
 
 ### local
+
+#### local.enabled
+
+Enable interception of traffic generated on this host. When either path uses
+the new `enabled` field, an omitted `enabled` field on the other path means
+`false`. At least one path must be enabled.
 
 With the default TC data plane, local interception follows the current system
 default network interface and moves when it changes. During a short handoff,
@@ -173,6 +185,22 @@ inclusive.
 
 ### shared
 
+#### shared.enabled
+
+Enable interception of traffic arriving from the configured downstream
+interfaces.
+
+#### shared.data_plane
+
+| Value | Behavior |
+| --- | --- |
+| `socket_assign` | Assign selected traffic directly to the internal transparent listener. This is the default and preserves the existing behavior. |
+| `packet_rewrite` | Rewrite selected traffic to an internal token address and restore reply packets on the downstream interface. |
+
+`packet_rewrite` requires Ethernet-framed downstream interfaces. It does not
+use the delivery veth or policy routing used by `socket_assign`. Local and
+shared data planes are selected independently.
+
 #### shared.dns_mode
 
 Uses the same values as `local.dns_mode`. In `respect_policy` mode, source CIDR
@@ -180,10 +208,11 @@ and MAC selection is applied before destination port 53 is intercepted.
 
 #### shared.interface
 
-==Required in shared or hybrid mode==
+==Required when shared interception is enabled==
 
-Downstream interfaces where client traffic enters the host. Ethernet/IPoE,
-raw-IP (including Android rmnet), and PPP/PPPoE interfaces are supported.
+Downstream interfaces where client traffic enters the host. The default
+`socket_assign` data plane supports Ethernet/IPoE, raw-IP (including Android
+rmnet), and PPP/PPPoE interfaces. `packet_rewrite` requires Ethernet framing.
 Multiple interfaces may be specified; interfaces that are temporarily absent
 are retried after network updates. An interface is temporarily excluded from
 shared interception while it is the current default upstream, then restored

@@ -15,7 +15,8 @@ import (
 func (i *Inbound) Start(stage adapter.StartStage) error {
 	switch stage {
 	case adapter.StartStateInitialize:
-		if i.localEnabled && i.localDataPlane == localDataPlaneCgroup {
+		if i.localEnabled && i.localDataPlane == localDataPlaneCgroup ||
+			i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite {
 			if err := i.selectRedirectPrefixes(); err != nil {
 				return err
 			}
@@ -47,8 +48,11 @@ func (i *Inbound) startInbound() error {
 	}
 	i.startProcessTracker()
 	defaultInterface := i.currentDefaultInterfaceName()
+	hostAddresses := i.hostAddresses()
 	localInterface := ""
 	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
+	sharedSocketAssignEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlaneSocketAssign
+	sharedRewriteEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlanePacketRewrite
 	if localTCEnabled {
 		localInterface = defaultInterface
 		if localInterface == "" {
@@ -56,28 +60,36 @@ func (i *Inbound) startInbound() error {
 		}
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
-	if err := i.startTCListeners(); err != nil {
-		return err
+	tcSharedInterfaces := []string(nil)
+	if sharedSocketAssignEnabled {
+		tcSharedInterfaces = sharedInterfaces
+	}
+	if i.localEnabled || sharedSocketAssignEnabled {
+		if err := i.startTCListeners(); err != nil {
+			return err
+		}
 	}
 	if i.localEnabled && i.localDataPlane == localDataPlaneCgroup {
 		if err := i.prepareCgroupBackend(); err != nil {
 			return err
 		}
-		if err := i.setupLocalRoutes(); err != nil {
-			return E.Cause(err, "configure eBPF redirect routes")
-		}
 		cgroupBackend := i.cgroupBackendInstance()
-		if err := cgroupBackend.UpdateHostAddresses(i.hostAddresses()); err != nil {
+		if err := cgroupBackend.UpdateHostAddresses(hostAddresses); err != nil {
 			return E.Cause(err, "initialize cgroup eBPF host address policy")
 		}
 		if err := cgroupBackend.LoadPrograms(i.listeners.selectedPort()); err != nil {
 			return err
 		}
 	}
+	if i.localEnabled && i.localDataPlane == localDataPlaneCgroup || sharedRewriteEnabled {
+		if err := i.setupLocalRoutes(); err != nil {
+			return E.Cause(err, "configure eBPF redirect routes")
+		}
+	}
 	backendConfig := commonEBPF.TCConfig{
 		ListenerPort:        i.listeners.selectedPort(),
 		EnableLocal:         localTCEnabled,
-		EnableShared:        i.sharedEnabled,
+		EnableShared:        sharedSocketAssignEnabled,
 		EnableIPv4:          true,
 		EnableLocalIPv6:     i.localIPv6,
 		EnableSharedIPv6:    i.sharedIPv6,
@@ -99,7 +111,7 @@ func (i *Inbound) startInbound() error {
 	}
 	var backend *commonEBPF.TCBackend
 	var err error
-	if localTCEnabled || i.sharedEnabled {
+	if localTCEnabled || sharedSocketAssignEnabled {
 		backend, err = commonEBPF.PrepareTC(backendConfig)
 	}
 	if err != nil && i.processTracker != nil {
@@ -122,14 +134,14 @@ func (i *Inbound) startInbound() error {
 	}
 	var dataPlane *tcDataPlane
 	if backend != nil {
-		tcIPv6Enabled := localTCEnabled && i.localIPv6 || i.sharedEnabled && i.sharedIPv6
+		tcIPv6Enabled := localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6
 		dataPlane, err = startTCDataPlane(
 			backend,
 			localTCEnabled,
 			tcIPv6Enabled,
 			localInterface,
-			sharedInterfaces,
-			i.hostAddresses(),
+			tcSharedInterfaces,
+			hostAddresses,
 			len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
 			i.tcPriority,
 		)
@@ -141,6 +153,12 @@ func (i *Inbound) startInbound() error {
 	if err = i.startBypassRuleSets(); err != nil {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")
 	}
+	if sharedRewriteEnabled {
+		i.sharedRewrite = newSharedRewrite(i, i.sharedOptions)
+		if err = i.sharedRewrite.Start(sharedInterfaces, hostAddresses); err != nil {
+			return err
+		}
+	}
 	if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
 		if err = cgroupBackend.Attach(); err != nil {
 			return err
@@ -151,7 +169,7 @@ func (i *Inbound) startInbound() error {
 			return err
 		}
 	}
-	if backend != nil || i.cgroupBackendInstance() != nil {
+	if backend != nil || i.cgroupBackendInstance() != nil || i.sharedRewrite != nil {
 		if err = i.startTCInterfaceMonitor(); err != nil {
 			return err
 		}
@@ -162,7 +180,7 @@ func (i *Inbound) startInbound() error {
 	} else if i.enableUDP {
 		network = "udp"
 	}
-	if dataPlane == nil {
+	if dataPlane == nil && i.sharedRewrite == nil {
 		cgroupBackend := i.cgroupBackendInstance()
 		i.logger.Debug(
 			"eBPF cgroup active: mode=", i.mode,
@@ -188,6 +206,12 @@ func (i *Inbound) startInbound() error {
 			}
 			return ""
 		}(),
+		", shared_data_plane=", func() string {
+			if !i.sharedEnabled {
+				return "off"
+			}
+			return i.sharedDataPlane
+		}(),
 		", network=", network,
 		", local_ipv6=", i.localIPv6,
 		", shared_ipv6=", i.sharedIPv6,
@@ -195,12 +219,22 @@ func (i *Inbound) startInbound() error {
 		", local_interface=", localInterface,
 		", shared_interfaces=[", strings.Join(i.sharedOptions.Interface, ", "), "]",
 		", attachments=[", func() string {
-			if dataPlane == nil {
-				return ""
+			var attachments []string
+			if dataPlane != nil {
+				attachments = append(attachments, dataPlane.attachmentDescriptions()...)
 			}
-			return strings.Join(dataPlane.attachmentDescriptions(), ", ")
+			if i.sharedRewrite != nil && i.sharedRewrite.dataPlane != nil {
+				attachments = append(attachments, i.sharedRewrite.dataPlane.attachmentDescriptions()...)
+			}
+			return strings.Join(attachments, ", ")
 		}(), "]",
 		", listeners=[", i.listeners.String(), "]",
+		", shared_rewrite_listeners=[", func() string {
+			if i.sharedRewrite == nil {
+				return ""
+			}
+			return i.sharedRewrite.listeners.String()
+		}(), "]",
 		", tcp_listener_lookup=", func() string {
 			if backend == nil {
 				return "none"
@@ -294,11 +328,12 @@ func (i *Inbound) startSelfBypass() error {
 
 func (i *Inbound) checkKernelCapabilities() error {
 	localTCEnabled := i.localEnabled && i.localDataPlane == localDataPlaneTC
-	if !localTCEnabled && !i.sharedEnabled {
+	sharedSocketAssignEnabled := i.sharedEnabled && i.sharedDataPlane == sharedDataPlaneSocketAssign
+	if !localTCEnabled && !sharedSocketAssignEnabled {
 		return nil
 	}
 	mode := commonEBPF.KernelProbeModeShared
-	if localTCEnabled && i.sharedEnabled {
+	if localTCEnabled && sharedSocketAssignEnabled {
 		mode = commonEBPF.KernelProbeModeAll
 	} else if localTCEnabled {
 		mode = commonEBPF.KernelProbeModeLocal
@@ -318,9 +353,9 @@ func (i *Inbound) checkKernelCapabilities() error {
 		Mode:          mode,
 		Network:       network,
 		InterfaceName: interfaceName,
-		EnableIPv6:    localTCEnabled && i.localIPv6 || i.sharedEnabled && i.sharedIPv6,
+		EnableIPv6:    localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6,
 		NeedLPMPolicy: localTCEnabled && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) ||
-			len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0,
+			sharedSocketAssignEnabled && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0),
 		NeedProcessTracking: localTCEnabled && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})
 	if err != nil {
@@ -352,6 +387,11 @@ func (i *Inbound) cleanupStartFailure() error {
 func (i *Inbound) closeResources() error {
 	monitorErr := i.stopTCInterfaceMonitor()
 	i.stopBypassRuleSets()
+	sharedRewriteErr := error(nil)
+	if i.sharedRewrite != nil {
+		sharedRewriteErr = i.sharedRewrite.Close()
+		i.sharedRewrite = nil
+	}
 	dataPlane := i.takeTCDataPlane()
 	disableErr := dataPlane.disable()
 	cgroupBackend := i.takeCgroupBackend()
@@ -379,7 +419,7 @@ func (i *Inbound) closeResources() error {
 		processTrackerErr = i.processTracker.Close()
 		i.processTracker = nil
 	}
-	return E.Errors(monitorErr, disableErr, listenerErr, udpReplySocketErr, dataPlaneErr, cgroupErr, routeErr, processTrackerErr, selfBypassErr)
+	return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpReplySocketErr, dataPlaneErr, cgroupErr, routeErr, processTrackerErr, selfBypassErr)
 }
 
 func (i *Inbound) prepareCgroupBackend() error {

@@ -229,17 +229,29 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		i.interfaceWarnings.defaultInterface.warn(i.logger, "default interface unavailable; retaining previous local TC attachment")
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
+	tcSharedInterfaces := sharedInterfaces
+	if i.sharedDataPlane == sharedDataPlanePacketRewrite {
+		tcSharedInterfaces = nil
+	}
+	hostAddresses := i.hostAddresses()
+	if i.sharedRewrite != nil && i.sharedRewrite.dataPlane != nil {
+		previous := i.sharedRewrite.dataPlane.attachmentDescriptions()
+		if err = i.sharedRewrite.dataPlane.reconcile(sharedInterfaces, hostAddresses); err != nil {
+			i.interfaceWarnings.reconcile.warn(i.logger, "refresh shared packet-rewrite interfaces: ", err)
+		} else if attachments := i.sharedRewrite.dataPlane.attachmentDescriptions(); !slices.Equal(previous, attachments) {
+			i.logger.Debug("eBPF shared packet-rewrite attachments updated: attachments=[", strings.Join(attachments, ", "), "]")
+		}
+	}
 	infrastructureChanged, err := i.repairTCInfrastructure()
 	infrastructureHealthy := err == nil
 	if err != nil {
 		i.interfaceWarnings.infrastructure.warn(i.logger, "repair TC eBPF network state: ", err)
 	}
-	changed, err := i.tcAttachmentStateChanged(localInterface, sharedInterfaces)
+	changed, err := i.tcAttachmentStateChanged(localInterface, tcSharedInterfaces)
 	if err != nil {
 		i.interfaceWarnings.topology.warn(i.logger, "inspect TC eBPF interfaces: ", err)
 		return
 	}
-	hostAddresses := i.hostAddresses()
 	if !changed {
 		if err = i.updateTCHostAddresses(hostAddresses); err != nil {
 			i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh TC eBPF host addresses: ", err)
@@ -257,7 +269,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 	if err = i.udpReplySockets.reset(); err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "reset TC eBPF UDP reply sockets: ", err)
 	}
-	if err = i.reconcileTCDataPlane(localInterface, sharedInterfaces, hostAddresses); err != nil {
+	if err = i.reconcileTCDataPlane(localInterface, tcSharedInterfaces, hostAddresses); err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "refresh TC eBPF interfaces: ", err)
 		return
 	}

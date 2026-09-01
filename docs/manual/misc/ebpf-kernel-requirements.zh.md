@@ -5,7 +5,8 @@ icon: material/linux
 # eBPF 内核要求
 
 eBPF 入站默认使用 TC；local 接管可以显式选择 cgroup v2 socket-address 数据面，
-shared 接管始终使用 TC。是否支持由实际 map、程序加载、helper 与挂载结果决定，
+shared 接管使用 TC，并可选择保留 tuple 的 `socket_assign` 或改写以太网报文的
+`packet_rewrite`。是否支持由实际 map、程序加载、helper 与挂载结果决定，
 不使用最低 Linux 版本号判断。供应商内核可能回移、禁用或限制单项能力。下述 LPM
 trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，因此需要保守地检查
 版本范围。若 TCX link 能力可用则优先使用，否则回退兼容的 `clsact` 挂载。
@@ -21,7 +22,7 @@ trie 安全检查是例外：受影响内核可能在探测动作本身执行时
 | `CONFIG_NET_CLS_BPF` | 在 TC hook 运行 BPF 分类器。 |
 | `CONFIG_NET_SCH_INGRESS` | 提供 `clsact` ingress/egress hook。 |
 | `CONFIG_NET_CLS_ACT` | 支持 direct-action 分类结果。 |
-| `CONFIG_VETH` | local 和 hybrid 模式的内部 delivery 链路。 |
+| `CONFIG_VETH` | local TC 和 shared `socket_assign` 的 delivery 链路。 |
 | `CONFIG_INET` | IPv4 TCP/UDP 和透明 socket。 |
 | `CONFIG_IPV6` | 启用 local 或 shared IPv6 接管时必需。 |
 
@@ -30,22 +31,28 @@ trie 安全检查是例外：受影响内核可能在探测动作本身执行时
 local 的 `data_plane` 设为 `cgroup` 时，需要 `CONFIG_CGROUP_BPF` 和 cgroup v2
 挂载。sing-box 默认挂载到当前可见的 cgroup v2 根层级；可使用 `cgroup_path` 将
 接管范围限制到指定子树。仅使用 cgroup local 的入站不要求 `CONFIG_VETH`、TC
-qdisc、TC socket lookup 或 `bpf_sk_assign`；hybrid 模式仍需要 TC shared 的相关能力。
+qdisc、TC socket lookup 或 `bpf_sk_assign`；shared `packet_rewrite` 也不要求这些
+delivery 能力，只使用配置接口和 token local route。
 
 ## 必需的 BPF 能力
 
-目标内核必须支持：
+任一 TC 数据面都必须支持：
 
 - TC ingress 和 egress 上的 `SCHED_CLS` 程序；
 - `ARRAY`、`HASH`、`LRU_HASH` 和 `LPM_TRIE`；
 - `bpf_map_lookup_elem`、`bpf_map_update_elem` 和 `bpf_map_delete_elem`；
-- `SCHED_CLS` 中的 `bpf_get_socket_uid`；
-- `SCHED_CLS` 中的 `bpf_redirect`；
-- `SCHED_CLS` 中的 `bpf_skb_store_bytes` 和 `bpf_skb_change_head`；
-- `SCHED_CLS` 中的 `bpf_skc_lookup_tcp`、`bpf_sk_lookup_udp`、
-  `bpf_sk_assign` 和 `bpf_sk_release`。
+- `SCHED_CLS` 中的 `bpf_ktime_get_ns`、`bpf_csum_diff`、
+  `bpf_skb_store_bytes`、`bpf_l3_csum_replace`、`bpf_l4_csum_replace` 和
+  `bpf_skb_pull_data`。
 
-以上是 TC 数据面的要求。local cgroup 数据面改为加载 `CGROUP_SOCK_ADDR` 的
+`packet_rewrite` 到此为止。`socket_assign` 和 local TC 还需要：
+
+- `SCHED_CLS` 中的 `bpf_get_socket_uid`、`bpf_redirect`，以及 raw-IP 链路所需的
+  `bpf_skb_change_head`；
+- `SCHED_CLS` 中的 `bpf_skc_lookup_tcp`、`bpf_sk_lookup_udp`、`bpf_sk_assign` 和
+  `bpf_sk_release`。
+
+local cgroup 数据面改为加载 `CGROUP_SOCK_ADDR` 的
 connect4/connect6 和 UDP sendmsg/recvmsg 程序，并使用 `bpf_get_socket_cookie`、
 map lookup/update/delete 与 current-UID helper。若 UDP socket-release hook 不可用，
 sing-box 会加载不引用该 hook 的有界 LRU 清理变体。所选对象会在开始接管前实际加载，
@@ -111,9 +118,10 @@ netlink。
 
 ## 接口要求
 
-local 模式挂载到网络管理器当前的默认接口；shared 模式挂载到配置的下游接口。
-支持 Ethernet/IPoE，以及仅含 L3 的 raw-IP 或 PPP 链路；来源 MAC 策略要求接口使用
-以太网帧。不支持 loopback 和无法识别的链路封装。
+local TC 模式挂载到网络管理器当前的默认接口；shared 模式挂载到配置的下游接口。
+`socket_assign` 支持 Ethernet/IPoE 以及仅含 L3 的 raw-IP 或 PPP 链路；
+`packet_rewrite` 要求接口使用以太网帧。来源 MAC 策略同样要求以太网帧。不支持
+loopback 和无法识别的链路封装。
 
 local attachment 会跟随默认接口变化。配置的 shared 接口存在时会自动挂载，但该接口
 作为当前默认上游期间会停止 shared 接管。链路和路由事件会触发受管 attachment 与网络
