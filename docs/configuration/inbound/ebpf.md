@@ -27,6 +27,7 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
   "tc_priority": 1,
   "bypass_rule_set": [],
   "local": {
+    "data_plane": "tc",
     "dns_mode": "respect_policy",
     "ipv6": true,
     "bypass_private_address": true,
@@ -90,9 +91,22 @@ inbound. Non-IP rules are ignored.
 
 ### local
 
-Local interception follows the current system default network interface. It
-automatically moves when the default network changes. During a short handoff,
-the previous attachment remains active until the replacement is ready.
+With the default TC data plane, local interception follows the current system
+default network interface and moves when it changes. During a short handoff,
+the previous attachment remains active until the replacement is ready. The
+cgroup data plane follows the configured process group instead of an interface.
+
+#### local.data_plane
+
+Selects the local interception backend. `tc` is the default and preserves the
+existing behavior. `cgroup` attaches local sockets to the configured cgroup v2
+path. The legacy `cgroup_path` option implies `cgroup` when `data_plane` is
+omitted.
+
+#### local.cgroup_path
+
+Absolute cgroup v2 path used by `data_plane: cgroup`. It must identify the
+process group whose sockets should be intercepted.
 
 #### local.dns_mode
 

@@ -1,8 +1,10 @@
-# eBPF TC backend
+# eBPF inbound backends
 
-The eBPF inbound uses one TC object for local, shared, and hybrid operation.
-Selected TCP and UDP packets retain their original address and port tuple and
-enter the normal sing-box routing pipeline after socket assignment.
+The eBPF inbound uses TC by default for local, shared, and hybrid operation.
+Local mode can instead use an explicit cgroup v2 socket-address backend.
+Shared interception always remains on TC. Both backends feed the same internal
+listeners, routing pipeline, policy compiler, UDP session service, and
+self-bypass owner.
 
 ## Packet paths
 
@@ -27,6 +29,25 @@ Both flags are static for the lifetime of the inbound.
 
 Fragmented IPv4 datagrams and non-atomic IPv6 fragments bypass before policy
 selection. IPv6 atomic fragments continue through extension-header parsing.
+
+### Optional local cgroup path
+
+The cgroup backend attaches connect and UDP sendmsg/recvmsg programs to the
+selected cgroup v2 directory. A selected destination is replaced with a token
+address from a private redirect prefix and the original destination is stored
+by token. TCP consumes that entry after accept. UDP retains bounded state for
+the session and uses the token as the listener reply source so recvmsg can
+restore the original peer.
+
+Userspace rejects redirect address and route conflicts before attachment and
+owns only the local routes it created. The TCP token map is an LRU map so
+abandoned connect attempts cannot permanently exhaust it. UDP uses
+socket-release cleanup when supported and bounded LRU recovery otherwise.
+
+The interception cgroup is independent of sing-box's optional exclusive
+process cgroup used for self-bypass. A broad interception cgroup still excludes
+sing-box-owned sockets through the shared cookie map. Userspace socket controls
+remain the fallback when process cgroup hooks cannot maintain that map.
 
 ## Socket assignment
 
@@ -150,6 +171,13 @@ Shutdown stops network and rule-set callbacks, disables interception, closes
 listeners and UDP sessions, detaches filters or BPF links,
 removes policy routing, restores delivery sysctls, removes the veth, and closes
 programs and maps. Startup failures use the same cleanup path.
+
+For local cgroup mode, startup selects redirect prefixes, creates the shared
+listeners and local routes, prepares maps, loads the enabled program set, and
+attaches it last. Hybrid mode then starts only the shared half of TC. Shutdown
+detaches cgroup programs before closing listeners and removes only routes owned
+by this instance. Default TC configurations never load the cgroup object or
+create token routes.
 
 ## Generation and tests
 

@@ -4,11 +4,11 @@ icon: material/linux
 
 # eBPF 内核要求
 
-eBPF 入站使用 TC 分类器、透明 socket、socket lookup 和 `bpf_sk_assign`。是否支持
-由运行时能力探测决定，不使用 Linux 版本号判断。供应商内核可能回移、禁用或限制
-单项能力。下述 LPM trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，
-因此需要保守地检查版本范围。若 TCX link 能力可用则优先使用，否则回退兼容的
-`clsact` 挂载。
+eBPF 入站默认使用 TC；local 接管可以显式选择 cgroup v2 socket-address 数据面，
+shared 接管始终使用 TC。是否支持由实际 map、程序加载、helper 与挂载结果决定，
+不使用最低 Linux 版本号判断。供应商内核可能回移、禁用或限制单项能力。下述 LPM
+trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，因此需要保守地检查
+版本范围。若 TCX link 能力可用则优先使用，否则回退兼容的 `clsact` 挂载。
 
 ## 内核配置
 
@@ -27,6 +27,11 @@ eBPF 入站使用 TC 分类器、透明 socket、socket lookup 和 `bpf_sk_assig
 
 强烈建议启用 `CONFIG_BPF_JIT`，否则报文路径性能可能明显下降。
 
+local 的 `data_plane` 设为 `cgroup` 时，需要 `CONFIG_CGROUP_BPF` 和 cgroup v2
+挂载，且必须明确指定 `cgroup_path`。仅使用 cgroup local 的入站不要求
+`CONFIG_VETH`、TC qdisc、TC socket
+lookup 或 `bpf_sk_assign`；hybrid 模式仍需要 TC shared 的相关能力。
+
 ## 必需的 BPF 能力
 
 目标内核必须支持：
@@ -40,13 +45,19 @@ eBPF 入站使用 TC 分类器、透明 socket、socket lookup 和 `bpf_sk_assig
 - `SCHED_CLS` 中的 `bpf_skc_lookup_tcp`、`bpf_sk_lookup_udp`、
   `bpf_sk_assign` 和 `bpf_sk_release`。
 
+以上是 TC 数据面的要求。local cgroup 数据面改为加载 `CGROUP_SOCK_ADDR` 的
+connect4/connect6 和 UDP sendmsg/recvmsg 程序，并使用 `bpf_get_socket_cookie`、
+map lookup/update/delete 与 current-UID helper。若 UDP socket-release hook 不可用，
+sing-box 会加载不引用该 hook 的有界 LRU 清理变体。所选对象会在开始接管前实际加载，
+因此缺少 helper 或程序类型会直接导致启动失败，而不依赖内核版本字符串。
+
 TCP listener 的 SOCKMAP 是可选能力。内核能够创建 `BPF_MAP_TYPE_SOCKMAP`
 且现代 TC section 能通过 verifier 时，优先使用它处理 wildcard listener；
 否则加载不引用 SOCKMAP 的 legacy TC section，直接调用
 `bpf_skc_lookup_tcp`。路径选择依据实际 map 创建和程序加载结果，不依据内核
 版本字符串。旧内核通常需要 `CONFIG_BPF_STREAM_PARSER` 才能提供 SOCKMAP。
 
-local 模式还要求 `SCHED_CLS` 中的 `bpf_get_socket_cookie`，用于自身绕过的
+local TC 数据面还要求 `SCHED_CLS` 中的 `bpf_get_socket_cookie`，用于自身绕过的
 socket-cookie map。`CGROUP_SOCK` 的 `inet_sock_create` 和 `inet_sock_release` hook
 以及同一 helper 是可选优化：在进程 cgroup 独占时由内核自动写入和删除 cookie。
 如果 cgroup 共享或 hook 无法挂载，sing-box 会在自己创建的 socket 上通过 control

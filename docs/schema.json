@@ -3560,6 +3560,16 @@
             "off"
           ]
         },
+        "data_plane": {
+          "type": "string",
+          "enum": [
+            "tc",
+            "cgroup"
+          ]
+        },
+        "cgroup_path": {
+          "type": "string"
+        },
         "ipv6": {
           "type": "boolean"
         },
@@ -3664,6 +3674,36 @@
               }
             }
           ]
+        },
+        "bypass_port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            }
+          ]
+        },
+        "bypass_port_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -3738,6 +3778,36 @@
           ]
         },
         "exclude_mac_address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "bypass_port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            }
+          ]
+        },
+        "bypass_port_range": {
           "anyOf": [
             {
               "type": "string"
