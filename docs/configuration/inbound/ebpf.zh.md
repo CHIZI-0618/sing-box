@@ -163,8 +163,10 @@ DoT 流量。
 
 #### local.bypass_port
 
-绕过本机接管的目标端口。启用的 `network` 协议（TCP 和/或 UDP）均适用；FakeIP
-和 DNS 接管优先于此设置。
+绕过本机接管的目标端口。local `tc` 和 `cgroup` 两种数据面均支持；启用的
+`network` 协议（TCP 和/或 UDP）分别适用。该选项只匹配目标端口。FakeIP 始终强制
+接管。DNS 处理也优先于此设置：`hijack` 始终接管 53 端口，`respect_policy` 先应用
+UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 会在启动时告警。
 
 #### local.bypass_port_range
 
@@ -231,8 +233,9 @@ Ethernet/IPoE、raw-IP（包括 Android rmnet）和 PPP/PPPoE 接口；`packet_r
 
 #### shared.bypass_port
 
-绕过 shared 接管的目标端口。启用的 `network` 协议（TCP 和/或 UDP）均适用；FakeIP
-和 DNS 接管优先于此设置。
+绕过 shared 接管的目标端口。`socket_assign` 和 `packet_rewrite` 两种 shared 数据面
+均支持；启用的 `network` 协议（TCP 和/或 UDP）分别适用。该选项只匹配目标端口；
+FakeIP 和 DNS 的优先级与 `local.bypass_port` 相同，配置 53 端口时会在启动时告警。
 
 #### shared.bypass_port_range
 
