@@ -32,7 +32,7 @@ func (i *Inbound) NewConnection(
 	metadata adapter.InboundContext,
 	onClose N.CloseHandlerFunc,
 ) {
-	if i.localDataPlane == localDataPlaneCgroup && i.localEnabled && i.isCgroupRedirectAddress(M.SocksaddrFromNet(conn.LocalAddr()).AddrPort().Addr()) {
+	if i.localCgroupEnabled() && i.isCgroupRedirectAddress(M.SocksaddrFromNet(conn.LocalAddr()).AddrPort().Addr()) {
 		backend := i.cgroupBackendInstance()
 		if backend == nil {
 			_ = conn.Close()
@@ -64,7 +64,7 @@ func (i *Inbound) NewConnection(
 }
 
 func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
-	if i.localDataPlane == localDataPlaneCgroup && i.localEnabled {
+	if i.localCgroupEnabled() {
 		if redirectAddress, err := redirectAddressFromOOB(oob); err == nil && i.isCgroupRedirectAddress(redirectAddress) {
 			i.newCgroupPacket(buffer, oob, source)
 			return
