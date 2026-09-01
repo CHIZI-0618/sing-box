@@ -179,7 +179,7 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16) error {
 		flags |= cgroupFlagBypassPort
 	}
 	flags |= b.hostAddressFlags()
-	if b.runtime.enable_udp && b.runtime.socket_release_supported {
+	if b.runtime.enable_udp {
 		flags |= cgroupFlagUDPFlow
 	}
 	if b.fakeIPIPv4.IsValid() {

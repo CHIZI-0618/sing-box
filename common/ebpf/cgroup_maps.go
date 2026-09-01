@@ -108,8 +108,8 @@ func cgroupUDPMapConfiguration(
 		return layout
 	}
 	layout.peerCapacity = capacity.UDPPeer
+	layout.flowCapacity = capacity.UDPFlow
 	if socketReleaseSupported {
-		layout.flowCapacity = capacity.UDPFlow
 		return layout
 	}
 	layout.cleanupType = CiliumEBPF.LRUHash
