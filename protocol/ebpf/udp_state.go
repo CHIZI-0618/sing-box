@@ -8,6 +8,11 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
+
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 const (
@@ -31,10 +36,15 @@ type udpClientState struct {
 	bindings        map[netip.AddrPort]udpRedirectBinding
 	replyAliasCount uint16
 	closed          bool
+	cgroupDataPlane bool
+	cgroupOriginals map[netip.Addr]commonEBPF.OriginalDestination
 }
 
 type udpRedirectBinding struct {
-	replyAlias bool
+	replyAlias      bool
+	redirectAddress netip.Addr
+	packetInfo      []byte
+	connected       bool
 }
 
 func (t *udpClientTable) load(client netip.AddrPort) (*udpClientState, bool) {
@@ -58,9 +68,60 @@ func (t *udpClientTable) loadOrCreate(client netip.AddrPort) *udpClientState {
 	if shard.clients == nil {
 		shard.clients = make(map[netip.AddrPort]*udpClientState)
 	}
-	state := &udpClientState{bindings: make(map[netip.AddrPort]udpRedirectBinding)}
+	state := &udpClientState{
+		bindings:        make(map[netip.AddrPort]udpRedirectBinding),
+		cgroupOriginals: make(map[netip.Addr]commonEBPF.OriginalDestination),
+	}
 	shard.clients[client] = state
 	return state
+}
+
+func (t *udpClientTable) cachedCgroupOriginal(client netip.AddrPort, redirectAddress netip.Addr) (commonEBPF.OriginalDestination, bool) {
+	state, loaded := t.load(client)
+	if !loaded {
+		return commonEBPF.OriginalDestination{}, false
+	}
+	state.access.RLock()
+	original, loaded := state.cgroupOriginals[redirectAddress]
+	state.access.RUnlock()
+	return original, loaded
+}
+
+func (t *udpClientTable) setCgroupBinding(client netip.AddrPort, original commonEBPF.OriginalDestination, redirectAddress netip.Addr) {
+	state := t.loadOrCreate(client)
+	state.access.Lock()
+	state.cgroupOriginals[redirectAddress] = original
+	state.socketCookie = original.SocketCookie
+	state.cgroupDataPlane = true
+	state.bindings[original.Destination] = udpRedirectBinding{
+		redirectAddress: redirectAddress,
+		packetInfo:      sourcePacketInfo(redirectAddress),
+		connected:       original.ConnectedUDP,
+	}
+	state.access.Unlock()
+}
+
+func (t *udpClientTable) setCgroupReplyBinding(client netip.AddrPort, expected *udpClientState, destination netip.AddrPort, redirectAddress netip.Addr) bool {
+	shard := t.clientShard(client)
+	shard.access.RLock()
+	defer shard.access.RUnlock()
+	if shard.clients[client] != expected {
+		return false
+	}
+	expected.access.Lock()
+	defer expected.access.Unlock()
+	if expected.closed || expected.replyAliasCount >= udpReplyAliasLimit {
+		return false
+	}
+	expected.cgroupOriginals[redirectAddress] = commonEBPF.OriginalDestination{Destination: destination}
+	expected.cgroupDataPlane = true
+	expected.bindings[destination] = udpRedirectBinding{
+		replyAlias:      true,
+		redirectAddress: redirectAddress,
+		packetInfo:      sourcePacketInfo(redirectAddress),
+	}
+	expected.replyAliasCount++
+	return true
 }
 
 func (t *udpClientTable) clientShard(client netip.AddrPort) *udpClientShard {
@@ -122,8 +183,23 @@ func (t *udpClientTable) delete(client netip.AddrPort, expected *udpClientState)
 	expected.access.Lock()
 	expected.closed = true
 	clear(expected.bindings)
+	clear(expected.cgroupOriginals)
+	expected.cgroupDataPlane = false
 	expected.replyAliasCount = 0
 	expected.access.Unlock()
+}
+
+func (s *udpClientState) isCgroupDataPlane() bool {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.cgroupDataPlane
+}
+
+func sourcePacketInfo(address netip.Addr) []byte {
+	if address.Is4() {
+		return (&ipv4.ControlMessage{Src: net.IP(address.AsSlice())}).Marshal()
+	}
+	return (&ipv6.ControlMessage{Src: net.IP(address.AsSlice())}).Marshal()
 }
 
 // udpReplySocketPool shares transparent reply sockets between all clients of

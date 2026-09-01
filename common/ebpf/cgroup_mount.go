@@ -34,6 +34,16 @@ func DetectProcessCgroup2Path() (string, error) {
 	return "", E.New("process is not attached to a cgroup v2 hierarchy")
 }
 
+// DetectCgroup2Mount returns the visible cgroup2 mount root. It is used only
+// when a cgroup local data plane explicitly requests the hierarchy root.
+func DetectCgroup2Mount() (string, error) {
+	mount, err := detectCgroup2MountFromFile("/proc/self/mountinfo")
+	if err != nil {
+		return "", err
+	}
+	return mount.path, nil
+}
+
 // DetectCgroup2Root returns the root of the cgroup v2 hierarchy visible to the
 // current process. Programs attached here observe sockets from all descendant
 // cgroups, not only sockets created by sing-box.

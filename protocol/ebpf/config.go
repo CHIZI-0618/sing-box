@@ -5,6 +5,7 @@ package ebpf
 import (
 	"net"
 	"net/netip"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,9 +29,46 @@ func normalizeMode(mode string) (string, bool, bool, error) {
 	}
 }
 
+const (
+	localDataPlaneTC     = "tc"
+	localDataPlaneCgroup = "cgroup"
+)
+
+func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, error) {
+	dataPlane := options.DataPlane
+	if dataPlane == "" {
+		// cgroup_path was accepted by the earlier cgroup backend. Preserve that
+		// configuration while keeping all existing TC configurations unchanged.
+		if options.CgroupPath != "" {
+			dataPlane = localDataPlaneCgroup
+		} else {
+			dataPlane = localDataPlaneTC
+		}
+	}
+	if dataPlane != localDataPlaneTC && dataPlane != localDataPlaneCgroup {
+		return "", "", E.New("unknown local.data_plane: ", dataPlane)
+	}
+	if dataPlane != localDataPlaneCgroup && options.CgroupPath != "" {
+		return "", "", E.New("local.cgroup_path requires local.data_plane=cgroup")
+	}
+	if options.CgroupPath == "" {
+		return dataPlane, "", nil
+	}
+	if !filepath.IsAbs(options.CgroupPath) {
+		return "", "", E.New("local.cgroup_path must be absolute")
+	}
+	return dataPlane, filepath.Clean(options.CgroupPath), nil
+}
+
 func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 	if enabled {
 		return nil
+	}
+	if options.DataPlane != "" {
+		return E.New("local.data_plane requires local or hybrid mode")
+	}
+	if options.CgroupPath != "" {
+		return E.New("local.cgroup_path requires local or hybrid mode")
 	}
 	if options.DNSMode != "" {
 		return E.New("local.dns_mode requires local or hybrid mode")
