@@ -369,8 +369,9 @@ func (i *Inbound) checkKernelCapabilities() error {
 		Network:         network,
 		InterfaceName:   interfaceName,
 		EnableIPv6:      localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6,
-		NeedLPMPolicy: (localTCEnabled || localCgroupEnabled) && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) ||
-			(sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0),
+		NeedLPMPolicy: ((localTCEnabled || localCgroupEnabled) && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0)) ||
+			((sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0)) ||
+			len(i.bypassRuleSet) > 0,
 		NeedProcessTracking: localTCEnabled && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})
 	if err != nil {
