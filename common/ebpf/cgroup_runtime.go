@@ -18,6 +18,21 @@ func (b *CgroupBackend) UDPCleanupMode() string {
 	return cgroupUDPCleanupModeLocked(b.runtime)
 }
 
+func (b *CgroupBackend) UDPTimeMode() string {
+	if b == nil {
+		return "disabled"
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil || !b.runtime.enable_udp {
+		return "disabled"
+	}
+	if b.runtime.coarse_time_supported {
+		return "coarse"
+	}
+	return "precise"
+}
+
 func cgroupUDPCleanupModeLocked(runtimeState *cgroupRuntime) string {
 	if runtimeState == nil || !runtimeState.enable_udp {
 		return cgroupUDPCleanupDisabled

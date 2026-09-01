@@ -188,6 +188,7 @@ func (i *Inbound) startInbound() error {
 			", ipv6=", i.cgroupIPv6Enabled(),
 			", listeners=[", i.listeners.String(), "]",
 			", udp_cleanup=", cgroupBackend.UDPCleanupMode(),
+			", udp_time=", cgroupBackend.UDPTimeMode(),
 		)
 		return nil
 	}
@@ -204,6 +205,12 @@ func (i *Inbound) startInbound() error {
 				return cgroupBackend.CgroupPath()
 			}
 			return ""
+		}(),
+		", local_cgroup_udp_time=", func() string {
+			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+				return cgroupBackend.UDPTimeMode()
+			}
+			return "disabled"
 		}(),
 		", shared_data_plane=", func() string {
 			if !i.sharedEnabled {
