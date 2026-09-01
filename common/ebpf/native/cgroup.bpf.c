@@ -52,6 +52,17 @@ static long (*map_delete)(void *map, const void *key) = (void *)BPF_FUNC_map_del
 static __u64 (*get_socket_cookie)(void *ctx) = (void *)BPF_FUNC_get_socket_cookie;
 static __u64 (*get_current_uid_gid)(void) = (void *)BPF_FUNC_get_current_uid_gid;
 static __u64 (*ktime_get_ns)(void) = (void *)BPF_FUNC_ktime_get_ns;
+#ifdef SB_EBPF_USE_COARSE_TIME
+static __u64 (*ktime_get_coarse_ns)(void) = (void *)BPF_FUNC_ktime_get_coarse_ns;
+#endif
+
+INLINE __u64 flow_time_ns(void) {
+#ifdef SB_EBPF_USE_COARSE_TIME
+    return ktime_get_coarse_ns();
+#else
+    return ktime_get_ns();
+#endif
+}
 
 INLINE __u16 swap16(__u16 value) { return __builtin_bswap16(value); }
 INLINE __u32 swap32(__u32 value) { return __builtin_bswap32(value); }
@@ -307,7 +318,7 @@ INLINE int flow_action(
     __builtin_memcpy(flow_key.addr, address, sizeof(flow_key.addr));
     struct sb_ebpf_udp_flow_value *flow = map_lookup(&cgroup_udp_flow, &flow_key);
     if (flow == 0) return FLOW_CACHE_MISS;
-    __u32 now = (__u32)(ktime_get_ns() / 1000000000ULL);
+    __u32 now = (__u32)(flow_time_ns() / 1000000000ULL);
     if (now - flow->last_seen_seconds > config->udp_timeout_seconds) {
         map_delete(&cgroup_udp_flow, &flow_key);
         return FLOW_CACHE_MISS;
@@ -335,7 +346,7 @@ INLINE void flow_store(
     if ((config->flags & SB_EBPF_CGROUP_FLAG_UDP_FLOW) == 0U || cookie == 0U) return;
     struct sb_ebpf_udp_flow_key key = {.cookie = cookie, .family = family, .protocol = protocol, .port = port};
     struct sb_ebpf_udp_flow_value value = {.action = action,
-        .last_seen_seconds = (__u32)(ktime_get_ns() / 1000000000ULL)};
+        .last_seen_seconds = (__u32)(flow_time_ns() / 1000000000ULL)};
     __builtin_memcpy(key.addr, address, sizeof(key.addr));
     if (listener != 0) __builtin_memcpy(&value.listener, listener, sizeof(value.listener));
     map_update(&cgroup_udp_flow, &key, &value, 0U);
