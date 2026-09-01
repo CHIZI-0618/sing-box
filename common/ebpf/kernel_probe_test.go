@@ -167,3 +167,30 @@ func TestParseKernelProbeNetwork(t *testing.T) {
 		t.Fatal("expected invalid network error")
 	}
 }
+
+func TestNormalizeProbeDataPlanes(t *testing.T) {
+	tests := []struct {
+		name    string
+		options KernelProbeOptions
+		local   KernelProbeDataPlane
+		shared  KernelProbeDataPlane
+	}{
+		{name: "legacy all", options: KernelProbeOptions{Mode: KernelProbeModeAll}, local: KernelProbeDataPlaneTC, shared: KernelProbeDataPlaneSocketAssign},
+		{name: "explicit cgroup and rewrite", options: KernelProbeOptions{LocalDataPlane: KernelProbeDataPlaneCgroup, SharedDataPlane: KernelProbeDataPlanePacketRewrite}, local: KernelProbeDataPlaneCgroup, shared: KernelProbeDataPlanePacketRewrite},
+		{name: "local only", options: KernelProbeOptions{LocalDataPlane: KernelProbeDataPlaneTC}, local: KernelProbeDataPlaneTC},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			local, shared, err := normalizeProbeDataPlanes(test.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if local != test.local || shared != test.shared {
+				t.Fatalf("got local=%q shared=%q", local, shared)
+			}
+		})
+	}
+	if _, _, err := normalizeProbeDataPlanes(KernelProbeOptions{LocalDataPlane: "invalid"}); err == nil {
+		t.Fatal("expected invalid local data plane")
+	}
+}
