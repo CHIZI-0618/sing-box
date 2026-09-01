@@ -51,7 +51,7 @@ type SharedNetworkBackend struct {
 	replyTokenSequence  atomic.Uint64
 	flowReferences      map[SharedNetworkFlowHandle]uint32
 	flowReleases        map[SharedNetworkFlowHandle]time.Time
-	flowReleaseWake     chan struct{}
+	flowWake            chan struct{}
 	flowSweepAccess     sync.Mutex
 	flowSweepScratch    mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
 	flowSweepCandidates []sharedNetworkFlowEntry
@@ -195,7 +195,7 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv6Map:   bypassIPv6Map,
 		bypassIPv4MapFD: bypassIPv4MapFD,
 		bypassIPv6MapFD: bypassIPv6MapFD,
-		flowReleaseWake: make(chan struct{}, 1),
+		flowWake:        make(chan struct{}, 1),
 	}
 	backend.control.ListenerPort = config.ListenerPort
 	backend.control.DNSMode = config.DNSMode
