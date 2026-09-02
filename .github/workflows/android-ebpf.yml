@@ -49,6 +49,7 @@ jobs:
           CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.compiler }}
         run: |
           export TAGS="$BASE_TAGS"
+          make ebpf_generate
           make build
 
       - name: Upload

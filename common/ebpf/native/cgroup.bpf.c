@@ -38,7 +38,7 @@ MAP(cgroup_udp_recovery, struct sb_ebpf_listener_key, struct sb_ebpf_original_ds
 MAP(cgroup_udp_token, __u64, struct sb_ebpf_listener_key, BPF_MAP_TYPE_HASH);
 MAP(cgroup_udp_peer, struct sb_ebpf_udp_peer_key, struct sb_ebpf_udp_peer_value, BPF_MAP_TYPE_HASH);
 MAP(cgroup_udp_flow, struct sb_ebpf_udp_flow_key, struct sb_ebpf_udp_flow_value, BPF_MAP_TYPE_LRU_HASH);
-MAP(cgroup_socket_bypass, __u64, __u8, BPF_MAP_TYPE_LRU_HASH);
+MAP(cgroup_socket_bypass, __u64, __u32, BPF_MAP_TYPE_LRU_HASH);
 MAP(cgroup_uid_policy, struct sb_ebpf_uid_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_bypass_port, struct sb_ebpf_port_key, __u8, BPF_MAP_TYPE_HASH);
 MAP(cgroup_bypass_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
@@ -98,7 +98,8 @@ INLINE const struct sb_ebpf_cgroup_control *control(void) {
 INLINE bool is_cookie_bypassed(void *ctx) {
     __u64 cookie = get_socket_cookie(ctx);
     if (cookie == 0U) return false;
-    return map_lookup(&cgroup_socket_bypass, &cookie) != 0;
+    __u32 *flags = map_lookup(&cgroup_socket_bypass, &cookie);
+    return flags != 0 && (*flags & 1U) != 0;
 }
 
 INLINE bool uid_bypassed(const struct sb_ebpf_cgroup_control *config) {
@@ -170,8 +171,8 @@ INLINE bool fakeip_ipv6(const struct sb_ebpf_cgroup_control *config, const __u8 
 }
 
 INLINE bool base_bypass(void *ctx, const struct sb_ebpf_cgroup_control *config, __u8 protocol, __u16 port) {
-    if (!protocol_selected(config, protocol)) return true;
     if (is_cookie_bypassed(ctx)) return true;
+    if (!protocol_selected(config, protocol)) return true;
     if (service_port(protocol, port)) return true;
     if (port_bypassed(config, protocol, port)) return true;
     return false;
@@ -566,12 +567,13 @@ INLINE int handle_v4(
     }
     bool connected_udp = connect_hook && protocol == UDP_VALUE;
     bool socket_storage_context = false;
-    if (!connect_hook && (destination == 0U || port == 0U)) {
+    if (!connect_hook) {
         socket_storage_context = restore_udp_peer_v4(cookie, &destination, &port);
     }
     bool force_dns = port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_HIJACK;
     bool intercept_dns = port == 53U && config->dns_mode != SB_EBPF_DNS_MODE_OFF;
     if (port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_OFF) return 1;
+    if (!force_dns && uid_bypassed(config)) return 1;
     if (connected_udp) {
         reset_connected_udp(cookie);
 #ifdef SB_EBPF_USE_SK_STORAGE
@@ -587,7 +589,6 @@ INLINE int handle_v4(
             socket_storage_context);
         if (cached == FLOW_CACHE_PROXY || (!intercept_dns && cached == FLOW_CACHE_BYPASS)) return 1;
     }
-    if (!force_dns && uid_bypassed(config)) return 1;
     __u8 destination_bytes[4];
     __builtin_memcpy(destination_bytes, &destination, sizeof(destination_bytes));
     if (!intercept_dns) {
@@ -660,12 +661,13 @@ INLINE int handle_v6(
         if ((config->flags & SB_EBPF_CGROUP_FLAG_IPV4) == 0U) return 1;
         __u32 destination;
         __builtin_memcpy(&destination, ((__u8 *)address) + 12U, sizeof(destination));
-        if (!connect_hook && (destination == 0U || port == 0U)) {
+        if (!connect_hook) {
             socket_storage_context = restore_udp_peer_v4(cookie, &destination, &port);
         }
         bool force_dns = port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_HIJACK;
         bool intercept_dns = port == 53U && config->dns_mode != SB_EBPF_DNS_MODE_OFF;
         if (port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_OFF) return 1;
+        if (!force_dns && uid_bypassed(config)) return 1;
         if (connected_udp) {
             reset_connected_udp(cookie);
 #ifdef SB_EBPF_USE_SK_STORAGE
@@ -681,7 +683,6 @@ INLINE int handle_v6(
                 socket_storage_context);
             if (cached == FLOW_CACHE_PROXY || (!intercept_dns && cached == FLOW_CACHE_BYPASS)) return 1;
         }
-        if (!force_dns && uid_bypassed(config)) return 1;
         __u8 destination_bytes[4];
         __builtin_memcpy(destination_bytes, &destination, sizeof(destination_bytes));
         if (!intercept_dns) {
@@ -733,6 +734,7 @@ INLINE int handle_v6(
     bool force_dns = port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_HIJACK;
     bool intercept_dns = port == 53U && config->dns_mode != SB_EBPF_DNS_MODE_OFF;
     if (port == 53U && config->dns_mode == SB_EBPF_DNS_MODE_OFF) return 1;
+    if (!force_dns && uid_bypassed(config)) return 1;
     if (connected_udp) {
         reset_connected_udp(cookie);
 #ifdef SB_EBPF_USE_SK_STORAGE
@@ -748,7 +750,6 @@ INLINE int handle_v6(
             socket_storage_context);
         if (cached == FLOW_CACHE_PROXY || (!intercept_dns && cached == FLOW_CACHE_BYPASS)) return 1;
     }
-    if (!force_dns && uid_bypassed(config)) return 1;
     if (!intercept_dns) {
         if (sb_ebpf_ipv6_safety_bypass((const __u8 *)address)) return 1;
         if ((config->flags & SB_EBPF_CGROUP_FLAG_HOST_IPV6) != 0U && host_ipv6(address)) return 1;
