@@ -468,6 +468,30 @@ func (b *SharedNetworkBackend) MapCapacity() SharedNetworkMapCapacities {
 	return b.mapCapacity
 }
 
+// KnownFlowUsage reports flow handles currently retained by userspace. Kernel
+// entries created before userspace observes them are intentionally excluded;
+// the periodic watchdog remains responsible for those invisible orphans.
+func (b *SharedNetworkBackend) KnownFlowUsage() MapUsage {
+	if b == nil {
+		return MapUsage{}
+	}
+	b.flowAccess.Lock()
+	defer b.flowAccess.Unlock()
+	return MapUsage{
+		Entries:  uint32(len(b.flowReferences) + len(b.flowReleases)),
+		Capacity: b.mapCapacity.Proxy,
+	}
+}
+
+// RequestMaintenance wakes the shared flow janitor without introducing a
+// polling interval. It is used to continue bounded scans after a partial map
+// traversal.
+func (b *SharedNetworkBackend) RequestMaintenance() {
+	if b != nil {
+		b.signalFlowWake()
+	}
+}
+
 func (b *SharedNetworkBackend) Close() error {
 	if b == nil {
 		return nil
