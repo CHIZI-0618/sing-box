@@ -184,8 +184,9 @@ UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 
 | `socket_assign` | 将选中的流量直接分配给内部透明监听器。 |
 | `packet_rewrite` | 将选中的流量改写到内部 token 地址，并在下游接口恢复回复报文。默认值。 |
 
-`packet_rewrite` 要求下游接口使用以太网帧，不使用 `socket_assign` 所需的 delivery
-veth 和策略路由。local 与 shared 数据面可以独立选择。
+`packet_rewrite` 要求下游接口使用以太网帧，不使用 `socket_assign` 所需的策略路由。
+两种 shared 数据面均不会创建 local TC 使用的 delivery veth。local 与 shared 数据面
+可以独立选择。
 
 #### shared.dns_mode
 

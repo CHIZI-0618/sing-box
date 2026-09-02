@@ -201,9 +201,10 @@ interfaces.
 | `socket_assign` | Assign selected traffic directly to the internal transparent listener. |
 | `packet_rewrite` | Rewrite selected traffic to an internal token address and restore reply packets on the downstream interface. This is the default. |
 
-`packet_rewrite` requires Ethernet-framed downstream interfaces. It does not
-use the delivery veth or policy routing used by `socket_assign`. Local and
-shared data planes are selected independently.
+`packet_rewrite` requires Ethernet-framed downstream interfaces and does not
+use the policy routing required by `socket_assign`. Neither shared data plane
+creates the delivery veth used by local TC. Local and shared data planes are
+selected independently.
 
 #### shared.dns_mode
 
