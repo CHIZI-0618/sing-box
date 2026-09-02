@@ -17,8 +17,8 @@
 6. 与预期路径一致的能力探测结果：
 
 ```sh
-sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
-sing-box tools ebpf status --shared-data-plane socket_assign --interface br-lan --json
+sing-box tools ebpf status --local-data-plane cgroup --network tcp,udp --json
+sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan --json
 ```
 
 如果入站配置禁用了 IPv6，请添加 `--ipv6=false`。必需能力缺失或无法验证时，命令会以非零状态退出。
@@ -56,9 +56,10 @@ dmesg -T > dmesg-after-reboot.txt
 
 ## 日志与运行状态
 
-Debug 日志级别下，启动成功后会输出一条 `eBPF TC active` 摘要，其中包括 mode、
-network、local/shared IPv6 设置、默认接口、内部监听器、delivery 接口，以及每个
-attachment 的 local/shared 角色和 `l2`/`l3` 帧格式。网络事件仅在 attachment 或受管
+Debug 日志级别下，启动成功后会输出一条 `eBPF cgroup active` 或 `eBPF TC active`
+摘要，其中包括选中的数据面及实际运行路径。TC 摘要还会按需列出默认接口、
+attachment、内部监听器、路由状态和 delivery 接口，每个 attachment 会标明
+local/shared 角色和帧格式。网络事件仅在 attachment 或受管
 网络状态发生变化时输出 Debug 日志，修复失败会输出限频的 Warn 日志。用户态 handoff
 异常会输出限频后的 Warn 或 Error 日志；BPF 报文返回路径不输出逐包日志，实现也不会
 周期扫描 map 或定期输出状态。
@@ -95,8 +96,9 @@ TC 状态、`dmesg` 和目标系统可用的 BPF 检查工具判断。
 
 ## attachment 和接口检查
 
-local 模式跟随当前默认接口。shared 模式跟随配置的下游接口，并会重试启动时不存在
-的接口。配置的 shared 接口成为当前默认上游时会停止接管，重新成为下游后恢复。网络
+local `cgroup` 模式跟随选中的 cgroup v2 层级，不挂载网络接口；local `tc` 才跟随
+当前默认接口。shared 模式跟随配置的下游接口，并会重试启动时不存在的接口。配置的
+shared 接口成为当前默认上游时会停止接管，重新成为下游后恢复。网络
 事件也会检查受管 TC filter、策略路由和 delivery 链路。如果接口事件前后接管行为发生
 变化，请分别保存以下输出：
 
@@ -111,8 +113,8 @@ tc -statistics -details filter show
 同时保留启动时的 `eBPF TC active` 摘要。sing-box 运行期间不要手动删除内部 veth
 或其管理的 TC filter。
 
-排查 local 接管时，可对比默认接口 egress filter 和日志所示 delivery 接口 ingress
-filter 的报文计数：
+排查 local `tc` 接管时，可对比默认接口 egress filter 和日志所示 delivery 接口
+ingress filter 的报文计数：
 
 ```sh
 tc -statistics filter show dev wlan0 egress
