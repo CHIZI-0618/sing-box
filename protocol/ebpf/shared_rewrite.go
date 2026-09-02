@@ -293,9 +293,9 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 	var lastReservationFailures uint64
 	scanInProgress := false
 	attachmentActive := s.dataPlane != nil && s.dataPlane.isEnabled()
-	resetPressureTimer := func(backend *ECommon.SharedNetworkBackend) {
+	resetPressureTimer := func() {
 		delay := sharedFlowSweepInterval
-		if pressure || backend.HasTrackedFlows() {
+		if pressure || scanInProgress {
 			delay = sharedFlowPressureInterval
 		}
 		if !pressureTimer.Stop() {
@@ -321,7 +321,6 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			pressurePoll = true
 		case <-backend.TCPFlowWake():
 			resetReleaseTimer(backend)
-			resetPressureTimer(backend)
 			continue
 		case <-releaseTimerChannel:
 		}
@@ -332,7 +331,6 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 				s.janitorWarnings.warn(s.inbound.logger, "flush released shared-network TCP flows: ", flushErr)
 			}
 			resetReleaseTimer(backend)
-			resetPressureTimer(backend)
 			continue
 		}
 		if s.dataPlane == nil || !s.dataPlane.isEnabled() {
@@ -340,7 +338,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			pressure = false
 			belowExitRounds = 0
 			scanInProgress = false
-			resetPressureTimer(backend)
+			resetPressureTimer()
 			continue
 		}
 		if !attachmentActive {
@@ -356,7 +354,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			lastReservationFailures = reservationFailures
 		}
 		if !sharedFlowSweepRequired(now.Sub(lastSweep), pressure, reservationPressure, scanInProgress) {
-			resetPressureTimer(backend)
+			resetPressureTimer()
 			continue
 		}
 		maxIdle := sharedFlowMaxIdle
@@ -375,7 +373,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 				lastSweep = now
 			}
 			if !result.Complete {
-				resetPressureTimer(backend)
+				resetPressureTimer()
 				continue
 			}
 			entered, exited := false, false
@@ -399,7 +397,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 				)
 			}
 		}
-		resetPressureTimer(backend)
+		resetPressureTimer()
 	}
 }
 
