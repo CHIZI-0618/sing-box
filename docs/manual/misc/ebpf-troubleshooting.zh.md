@@ -61,8 +61,9 @@ Debug 日志级别下，启动成功后会输出一条 `eBPF cgroup active` 或 
 attachment、内部监听器、路由状态和 delivery 接口，每个 attachment 会标明
 local/shared 角色和帧格式。网络事件仅在 attachment 或受管
 网络状态发生变化时输出 Debug 日志，修复失败会输出限频的 Warn 日志。用户态 handoff
-异常会输出限频后的 Warn 或 Error 日志；BPF 报文返回路径不输出逐包日志，实现也不会
-周期扫描 map 或定期输出状态。
+异常会输出限频后的 Warn 或 Error 日志；BPF 报文返回路径不输出逐包日志，接口生命周期
+也不使用周期轮询。shared `packet_rewrite` 会执行有界的自适应清理来回收孤立 flow
+状态，但该维护任务不会定期输出状态日志。
 
 如果日志报告 assignment 或 UDP 原目标读取失败，请保留首次错误前后的完整日志，
 并同时采集下文的 TC attachment 信息。
