@@ -44,9 +44,19 @@ func TestSharedNetworkTCPReleaseGrace(t *testing.T) {
 	if !backend.releaseFlowReferenceLocked(flow) {
 		t.Fatal("last release did not select TCP flow for grace period")
 	}
-	backend.deferTCPFlowReleaseLocked(flow, time.Now())
+	now := time.Now()
+	backend.deferTCPFlowReleaseLocked(flow, now)
+	delay, available := backend.NextTCPFlowReleaseDelay(now)
+	if !available || delay != sharedNetworkTCPReleaseGrace {
+		t.Fatalf("unexpected cached release deadline: available=%v delay=%v", available, delay)
+	}
 	backend.retainFlowLocked(flow)
 	if _, loaded := backend.flowReleases[flow]; loaded {
 		t.Fatal("retained TCP flow remained pending for release")
+	}
+	// The cached deadline may be stale after a retain, but it never wakes later
+	// than required and is recomputed by the resulting flush.
+	if delay, available = backend.NextTCPFlowReleaseDelay(now); !available || delay != sharedNetworkTCPReleaseGrace {
+		t.Fatalf("unexpected conservative release deadline: available=%v delay=%v", available, delay)
 	}
 }

@@ -51,6 +51,7 @@ type SharedNetworkBackend struct {
 	replyTokenSequence  atomic.Uint64
 	flowReferences      map[SharedNetworkFlowHandle]uint32
 	flowReleases        map[SharedNetworkFlowHandle]time.Time
+	flowReleaseDeadline time.Time
 	flowWake            chan struct{}
 	flowSweepAccess     sync.Mutex
 	flowSweepScratch    mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
