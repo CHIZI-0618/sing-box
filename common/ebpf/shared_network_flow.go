@@ -263,7 +263,11 @@ func (b *SharedNetworkBackend) deferTCPFlowReleaseLocked(flow SharedNetworkFlowH
 	if b.flowReleases == nil {
 		b.flowReleases = make(map[SharedNetworkFlowHandle]time.Time)
 	}
-	b.flowReleases[flow] = now.Add(sharedNetworkTCPReleaseGrace)
+	deadline := now.Add(sharedNetworkTCPReleaseGrace)
+	b.flowReleases[flow] = deadline
+	if b.flowReleaseDeadline.IsZero() || deadline.Before(b.flowReleaseDeadline) {
+		b.flowReleaseDeadline = deadline
+	}
 	b.signalFlowWake()
 }
 
@@ -281,34 +285,16 @@ func (b *SharedNetworkBackend) TCPFlowWake() <-chan struct{} {
 	return b.flowWake
 }
 
-// HasTrackedFlows reports whether userspace currently owns any flow reference.
-// It is used only to select the janitor wake-up cadence; orphan cleanup still
-// runs on the regular sweep deadline when no references are tracked.
-func (b *SharedNetworkBackend) HasTrackedFlows() bool {
-	if b == nil {
-		return false
-	}
-	b.flowAccess.Lock()
-	defer b.flowAccess.Unlock()
-	return len(b.flowReferences) != 0
-}
-
 func (b *SharedNetworkBackend) NextTCPFlowReleaseDelay(now time.Time) (time.Duration, bool) {
 	if b == nil {
 		return 0, false
 	}
 	b.flowAccess.Lock()
 	defer b.flowAccess.Unlock()
-	var earliest time.Time
-	for _, deadline := range b.flowReleases {
-		if earliest.IsZero() || deadline.Before(earliest) {
-			earliest = deadline
-		}
-	}
-	if earliest.IsZero() {
+	if b.flowReleaseDeadline.IsZero() {
 		return 0, false
 	}
-	return max(earliest.Sub(now), 0), true
+	return max(b.flowReleaseDeadline.Sub(now), 0), true
 }
 
 func (b *SharedNetworkBackend) validateFlowGenerationLocked(flow SharedNetworkFlowHandle) error {
@@ -397,8 +383,17 @@ func (b *SharedNetworkBackend) FlushReleasedTCPFlows(now time.Time, budget uint3
 	var processed uint32
 	var removed uint32
 	var flushErr error
+	var earliest time.Time
+	budgetExhausted := false
 	for flow, deadline := range b.flowReleases {
-		if processed >= budget || now.Before(deadline) {
+		if processed >= budget {
+			budgetExhausted = true
+			break
+		}
+		if now.Before(deadline) {
+			if earliest.IsZero() || deadline.Before(earliest) {
+				earliest = deadline
+			}
 			continue
 		}
 		processed++
@@ -415,6 +410,11 @@ func (b *SharedNetworkBackend) FlushReleasedTCPFlows(now time.Time, budget uint3
 		if flowRemoved {
 			removed++
 		}
+	}
+	if budgetExhausted {
+		b.flowReleaseDeadline = now
+	} else {
+		b.flowReleaseDeadline = earliest
 	}
 	return removed, flushErr
 }
