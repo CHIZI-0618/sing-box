@@ -144,7 +144,8 @@ syscalls and netlink directly.
 Local TC mode attaches to the network manager's current default interface.
 Shared mode attaches to each configured downstream interface. The default
 `packet_rewrite` data plane requires Ethernet framing. `socket_assign` supports
-Ethernet/IPoE and L3-only raw-IP or PPP links. Source MAC policy also requires Ethernet framing.
+Ethernet/IPoE and L3-only raw-IP, PPP, SLIP, and IPIP/SIT/GRE tunnel links.
+Source MAC policy also requires Ethernet framing.
 Loopback and unrecognized link encapsulations are not supported.
 
 Local attachments follow default-interface changes. Configured shared

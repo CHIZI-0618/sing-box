@@ -28,6 +28,11 @@ func TestTCLinkFraming(t *testing.T) {
 			wantFraming: commonEBPF.TCLinkFramingEthernet,
 		},
 		{
+			name:        "Ethernet without address",
+			attributes:  netlink.LinkAttrs{Name: "veth0", EncapType: "ether"},
+			wantFraming: commonEBPF.TCLinkFramingEthernet,
+		},
+		{
 			name:        "Android raw IP",
 			attributes:  netlink.LinkAttrs{Name: "rmnet_data1", EncapType: "unknown519"},
 			wantFraming: commonEBPF.TCLinkFramingRawIP,
@@ -35,6 +40,21 @@ func TestTCLinkFraming(t *testing.T) {
 		{
 			name:        "PPP",
 			attributes:  netlink.LinkAttrs{Name: "ppp0", EncapType: "ppp"},
+			wantFraming: commonEBPF.TCLinkFramingRawIP,
+		},
+		{
+			name:        "IPv6 tunnel",
+			attributes:  netlink.LinkAttrs{Name: "ip6tnl0", EncapType: "tunnel6"},
+			wantFraming: commonEBPF.TCLinkFramingRawIP,
+		},
+		{
+			name:        "GRE",
+			attributes:  netlink.LinkAttrs{Name: "gre0", EncapType: "gre"},
+			wantFraming: commonEBPF.TCLinkFramingRawIP,
+		},
+		{
+			name:        "IPv6 GRE numeric type",
+			attributes:  netlink.LinkAttrs{Name: "ip6gre0", EncapType: "unknown823"},
 			wantFraming: commonEBPF.TCLinkFramingRawIP,
 		},
 		{
