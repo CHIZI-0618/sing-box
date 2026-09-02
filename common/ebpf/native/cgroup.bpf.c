@@ -295,13 +295,16 @@ INLINE bool token_v4(
         __u32 network_candidate = swap32(candidate);
         __builtin_memset(key->token_addr, 0, sizeof(key->token_addr));
         __builtin_memcpy(key->token_addr, &network_candidate, sizeof(network_candidate));
-        struct sb_ebpf_original_dst *existing = map_lookup(&cgroup_udp_redirect, key);
-        if (protocol == TCP_VALUE) existing = map_lookup(&cgroup_tcp_redirect, key);
+        struct sb_ebpf_original_dst *existing = protocol == TCP_VALUE
+            ? map_lookup(&cgroup_tcp_redirect, key)
+            : map_lookup(&cgroup_udp_redirect, key);
         if (existing != 0 && equal_original(existing, value)) return true;
-        if (existing == 0 &&
-            (protocol == TCP_VALUE
+        if (existing == 0) {
+            long update_result = protocol == TCP_VALUE
                 ? map_update(&cgroup_tcp_redirect, key, value, BPF_NOEXIST)
-                : map_update(&cgroup_udp_redirect, key, value, BPF_NOEXIST)) == 0) return true;
+                : map_update(&cgroup_udp_redirect, key, value, BPF_NOEXIST);
+            if (update_result == 0) return true;
+        }
         seed += 0x9e3779b9U;
     }
     return false;
@@ -325,13 +328,16 @@ INLINE bool token_v6(
         __builtin_memcpy(key->token_addr, config->redirect_ipv6_prefix, 8U);
         __builtin_memcpy(key->token_addr + 8U, &seed0, 4U);
         __builtin_memcpy(key->token_addr + 12U, &seed1, 4U);
-        struct sb_ebpf_original_dst *existing = map_lookup(&cgroup_udp_redirect, key);
-        if (protocol == TCP_VALUE) existing = map_lookup(&cgroup_tcp_redirect, key);
+        struct sb_ebpf_original_dst *existing = protocol == TCP_VALUE
+            ? map_lookup(&cgroup_tcp_redirect, key)
+            : map_lookup(&cgroup_udp_redirect, key);
         if (existing != 0 && equal_original(existing, value)) return true;
-        if (existing == 0 &&
-            (protocol == TCP_VALUE
+        if (existing == 0) {
+            long update_result = protocol == TCP_VALUE
                 ? map_update(&cgroup_tcp_redirect, key, value, BPF_NOEXIST)
-                : map_update(&cgroup_udp_redirect, key, value, BPF_NOEXIST)) == 0) return true;
+                : map_update(&cgroup_udp_redirect, key, value, BPF_NOEXIST);
+            if (update_result == 0) return true;
+        }
         seed0 += 0x9e3779b9U;
         seed1 += 0x7f4a7c15U;
     }
