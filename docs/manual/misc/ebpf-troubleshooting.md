@@ -73,7 +73,9 @@ failures produce rate-limited warnings. Userspace handoff failures produce
 rate-limited Warn or Error entries. BPF packet return paths do not emit
 per-packet logs, and interface lifecycle handling does not use periodic polling.
 Shared `packet_rewrite` runs a bounded adaptive sweep to reclaim orphaned flow
-state; that maintenance does not emit periodic status records.
+state. Normal pressure scans are requested by flow-state events; a low-frequency
+watchdog also checks for kernel-only orphans that userspace cannot observe. This
+maintenance does not emit periodic status records.
 
 If the log reports an assignment or UDP original-destination failure, retain
 the complete log around the first error and collect the TC attachment state
