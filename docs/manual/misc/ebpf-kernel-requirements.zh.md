@@ -40,17 +40,19 @@ delivery 能力，只使用配置接口和 token local route。
 
 - TC ingress 和 egress 上的 `SCHED_CLS` 程序；
 - `ARRAY`、`HASH`、`LRU_HASH` 和 `LPM_TRIE`；
-- `bpf_map_lookup_elem`、`bpf_map_update_elem` 和 `bpf_map_delete_elem`；
-- `SCHED_CLS` 中的 `bpf_ktime_get_ns`、`bpf_csum_diff`、
+- `bpf_map_lookup_elem`、`bpf_map_update_elem` 和 `bpf_map_delete_elem`。
+
+shared `packet_rewrite` 另外使用 `SCHED_CLS` 中的 `bpf_ktime_get_ns`、`bpf_csum_diff`、
   `bpf_skb_store_bytes`、`bpf_l3_csum_replace`、`bpf_l4_csum_replace` 和
   `bpf_skb_pull_data`。
 
-`packet_rewrite` 到此为止。`socket_assign` 和 local TC 还需要：
+shared `socket_assign` 和 local TC 则需要 `SCHED_CLS` 中的
+`bpf_skc_lookup_tcp`、`bpf_sk_lookup_udp`、`bpf_sk_assign` 和 `bpf_sk_release`。
+实际要求会随启用协议收敛，例如 UDP-only 不要求 TCP lookup helper。
 
-- `SCHED_CLS` 中的 `bpf_get_socket_uid`、`bpf_redirect`，以及 raw-IP 链路所需的
-  `bpf_skb_change_head`；
-- `SCHED_CLS` 中的 `bpf_skc_lookup_tcp`、`bpf_sk_lookup_udp`、`bpf_sk_assign` 和
-  `bpf_sk_release`。
+只有 local TC 还使用 `bpf_get_socket_uid`、`bpf_get_socket_cookie`、
+`bpf_redirect`、`bpf_skb_store_bytes`，以及 raw-IP 链路所需的
+`bpf_skb_change_head`。shared-only `socket_assign` 不要求这些本机选择和 delivery helper。
 
 local cgroup 数据面改为加载 `CGROUP_SOCK_ADDR` 的
 connect4/connect6 和 UDP sendmsg/recvmsg 程序，并使用 `bpf_get_socket_cookie`、

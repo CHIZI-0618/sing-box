@@ -43,22 +43,26 @@ token routes.
 ## Required BPF facilities
 
 The selected kernel must support the following facilities for any TC data
-plane. `packet_rewrite` uses the same TC program type but does not require the
-socket-lookup helpers listed below.
+plane:
 
 - `SCHED_CLS` programs on TC ingress and egress;
 - `ARRAY`, `HASH`, `LRU_HASH`, and `LPM_TRIE` maps;
-- `bpf_map_lookup_elem`, `bpf_map_update_elem`, and `bpf_map_delete_elem`;
-- `bpf_ktime_get_ns`, `bpf_csum_diff`, `bpf_skb_store_bytes`,
+- `bpf_map_lookup_elem`, `bpf_map_update_elem`, and `bpf_map_delete_elem`.
+
+Shared `packet_rewrite` additionally uses `bpf_ktime_get_ns`, `bpf_csum_diff`,
+`bpf_skb_store_bytes`,
   `bpf_l3_csum_replace`, `bpf_l4_csum_replace`, and `bpf_skb_pull_data` in
   `SCHED_CLS`.
 
-Shared `packet_rewrite` stops at those facilities. Shared `socket_assign` and
-local TC additionally require:
+Shared `socket_assign` and local TC instead require
+`bpf_skc_lookup_tcp`, `bpf_sk_lookup_udp`, `bpf_sk_assign`, and
+`bpf_sk_release` in `SCHED_CLS`. The requirement follows the enabled protocol;
+for example, UDP-only operation does not require the TCP lookup helper.
 
-- `bpf_get_socket_uid`, `bpf_redirect`, and (for raw-IP links) `bpf_skb_change_head`;
-- `bpf_skc_lookup_tcp`, `bpf_sk_lookup_udp`, `bpf_sk_assign`, and
-  `bpf_sk_release` in `SCHED_CLS`.
+Local TC alone additionally uses `bpf_get_socket_uid`,
+`bpf_get_socket_cookie`, `bpf_redirect`, `bpf_skb_store_bytes`, and, for raw-IP
+links, `bpf_skb_change_head`. These local selection and delivery helpers are
+not requirements of shared-only `socket_assign`.
 
 Local cgroup mode instead loads
 `CGROUP_SOCK_ADDR` connect4/connect6 and UDP sendmsg/recvmsg programs and uses
