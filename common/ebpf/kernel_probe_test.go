@@ -244,3 +244,17 @@ func probeHelpersContain(helpers []cgroupProbeHelper, name string) bool {
 	}
 	return false
 }
+
+func TestProbeSharedCapabilitiesChecksEveryInterface(t *testing.T) {
+	report := &KernelProbeReport{}
+	probeSharedCapabilities(report, KernelProbeDataPlanePacketRewrite, []string{"sb-probe-a", "sb-probe-b"})
+	checked := 0
+	for _, finding := range report.Findings {
+		if strings.HasPrefix(finding.Feature, "interface sb-probe-") {
+			checked++
+		}
+	}
+	if checked != 2 {
+		t.Fatalf("checked %d shared interfaces, want 2: %+v", checked, report.Findings)
+	}
+}
