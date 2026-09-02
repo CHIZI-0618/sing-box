@@ -738,7 +738,7 @@ func probeActivePrograms() ([]KernelProbeProgram, error) {
 		if infoErr != nil {
 			return programs, infoErr
 		}
-		if !strings.HasPrefix(info.Name, "sb_tc_") && !strings.HasPrefix(info.Name, "sb_self_") {
+		if !isSingBoxEBPFProgramName(info.Name) {
 			continue
 		}
 		mapIDs, _ := info.MapIDs()
@@ -749,6 +749,15 @@ func probeActivePrograms() ([]KernelProbeProgram, error) {
 			MapCount: len(mapIDs),
 		})
 	}
+}
+
+func isSingBoxEBPFProgramName(name string) bool {
+	for _, prefix := range []string{"sb_tc_", "sb_ebpf_", "sb_share_", "sb_self_", "sb_proc_"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseKernelProbeNetwork(configured []string) (bool, bool, []string, error) {

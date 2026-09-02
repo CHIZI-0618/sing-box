@@ -285,3 +285,14 @@ func TestValidateProbeSharedFraming(t *testing.T) {
 		t.Fatal("socket_assign accepted unsupported framing")
 	}
 }
+
+func TestSingBoxEBPFProgramNames(t *testing.T) {
+	for _, name := range []string{"sb_tc_local_l2", "sb_ebpf_conn4", "sb_share_in", "sb_self_create", "sb_proc_connect4"} {
+		if !isSingBoxEBPFProgramName(name) {
+			t.Fatalf("sing-box eBPF program was not recognized: %s", name)
+		}
+	}
+	if isSingBoxEBPFProgramName("unrelated_bpf") {
+		t.Fatal("unrelated BPF program was recognized")
+	}
+}
