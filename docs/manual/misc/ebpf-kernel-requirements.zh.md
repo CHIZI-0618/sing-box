@@ -22,7 +22,7 @@ trie 安全检查是例外：受影响内核可能在探测动作本身执行时
 | `CONFIG_NET_CLS_BPF` | 在 TC hook 运行 BPF 分类器。 |
 | `CONFIG_NET_SCH_INGRESS` | 提供 `clsact` ingress/egress hook。 |
 | `CONFIG_NET_CLS_ACT` | 支持 direct-action 分类结果。 |
-| `CONFIG_VETH` | local TC 和 shared `socket_assign` 的 delivery 链路。 |
+| `CONFIG_VETH` | local TC 的 delivery 链路。 |
 | `CONFIG_INET` | IPv4 TCP/UDP 和透明 socket。 |
 | `CONFIG_IPV6` | 启用 local 或 shared IPv6 接管时必需。 |
 
