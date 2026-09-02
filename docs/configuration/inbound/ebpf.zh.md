@@ -249,6 +249,8 @@ FakeIP 和 DNS 的优先级与 `local.bypass_port` 相同，配置 53 端口时�
 
 ### 限制
 
+- 一个 sing-box 实例中只能有一个启用 local 接管的 eBPF 入站；其他 eBPF 入站必须
+  仅启用 shared 接管。
 - 已分片的 IPv4 和 IPv6 数据报绕过接管；IPv6 atomic fragment 作为普通 IPv6
   报文处理。
 - 网络变化后会自动恢复接管状态。
