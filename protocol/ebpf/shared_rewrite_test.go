@@ -4,7 +4,6 @@ package ebpf
 
 import (
 	"testing"
-	"time"
 
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
@@ -33,20 +32,21 @@ func TestUpdateSharedRewriteFlowPressure(t *testing.T) {
 	}
 }
 
-func TestSharedRewriteFlowSweepRequired(t *testing.T) {
-	if sharedFlowSweepRequired(sharedFlowSweepInterval-time.Second, false, false, false) {
-		t.Fatal("normal shared flow sweep ran early")
+func TestFlowUsagePressure(t *testing.T) {
+	usage := commonEBPF.MapUsage{Capacity: 100}
+	if flowUsagePressure(false, usage) {
+		t.Fatal("empty flow usage unexpectedly entered pressure mode")
 	}
-	if !sharedFlowSweepRequired(sharedFlowSweepInterval, false, false, false) {
-		t.Fatal("normal shared flow sweep did not run on schedule")
+	usage.Entries = 70
+	if !flowUsagePressure(false, usage) {
+		t.Fatal("70% flow usage did not enter pressure mode")
 	}
-	if !sharedFlowSweepRequired(time.Second, true, false, false) {
-		t.Fatal("map pressure did not request an early sweep")
+	usage.Entries = 50
+	if flowUsagePressure(true, usage) {
+		t.Fatal("50% flow usage did not reach the pressure exit threshold")
 	}
-	if !sharedFlowSweepRequired(time.Second, false, true, false) {
-		t.Fatal("token reservation failure did not request an early sweep")
-	}
-	if !sharedFlowSweepRequired(time.Second, false, false, true) {
-		t.Fatal("incremental scan did not request continuation")
+	usage.Entries = 49
+	if flowUsagePressure(true, usage) {
+		t.Fatal("flow usage pressure did not clear below exit threshold")
 	}
 }
