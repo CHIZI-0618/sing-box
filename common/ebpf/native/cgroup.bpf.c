@@ -38,7 +38,7 @@ MAP(cgroup_udp_recovery, struct sb_ebpf_listener_key, struct sb_ebpf_original_ds
 MAP(cgroup_udp_token, __u64, struct sb_ebpf_listener_key, BPF_MAP_TYPE_HASH);
 MAP(cgroup_udp_peer, struct sb_ebpf_udp_peer_key, struct sb_ebpf_udp_peer_value, BPF_MAP_TYPE_HASH);
 MAP(cgroup_udp_flow, struct sb_ebpf_udp_flow_key, struct sb_ebpf_udp_flow_value, BPF_MAP_TYPE_LRU_HASH);
-MAP(cgroup_socket_bypass, __u64, __u8, BPF_MAP_TYPE_LRU_HASH);
+MAP(cgroup_socket_bypass, __u64, __u32, BPF_MAP_TYPE_LRU_HASH);
 MAP(cgroup_uid_policy, struct sb_ebpf_uid_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
 MAP(cgroup_bypass_port, struct sb_ebpf_port_key, __u8, BPF_MAP_TYPE_HASH);
 MAP(cgroup_bypass_ipv4, struct sb_ebpf_ipv4_cidr_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE);
