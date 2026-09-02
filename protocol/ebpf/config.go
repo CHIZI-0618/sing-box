@@ -74,10 +74,10 @@ func normalizeDataPlanes(options option.EBPFInboundOptions) (normalizedDataPlane
 
 func normalizeSharedDataPlane(options option.EBPFSharedOptions) (string, error) {
 	switch options.DataPlane {
-	case "", sharedDataPlaneSocketAssign:
-		return sharedDataPlaneSocketAssign, nil
-	case sharedDataPlanePacketRewrite:
+	case "", sharedDataPlanePacketRewrite:
 		return sharedDataPlanePacketRewrite, nil
+	case sharedDataPlaneSocketAssign:
+		return sharedDataPlaneSocketAssign, nil
 	default:
 		return "", E.New("unknown shared.data_plane: ", options.DataPlane)
 	}
@@ -91,13 +91,7 @@ const (
 func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, error) {
 	dataPlane := options.DataPlane
 	if dataPlane == "" {
-		// cgroup_path was accepted by the earlier cgroup backend. Preserve that
-		// configuration while keeping all existing TC configurations unchanged.
-		if options.CgroupPath != "" {
-			dataPlane = localDataPlaneCgroup
-		} else {
-			dataPlane = localDataPlaneTC
-		}
+		dataPlane = localDataPlaneCgroup
 	}
 	if dataPlane != localDataPlaneTC && dataPlane != localDataPlaneCgroup {
 		return "", "", E.New("unknown local.data_plane: ", dataPlane)

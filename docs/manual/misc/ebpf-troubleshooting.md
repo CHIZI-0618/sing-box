@@ -20,8 +20,8 @@ Include:
 6. A capability report matching the intended path:
 
 ```sh
-sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
-sing-box tools ebpf status --shared-data-plane socket_assign --interface br-lan --json
+sing-box tools ebpf status --local-data-plane cgroup --network tcp,udp --json
+sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan --json
 ```
 
 Add `--ipv6=false` when the inbound configuration disables IPv6. The command
@@ -63,10 +63,11 @@ log that stops before the fault.
 
 ## Logs and runtime state
 
-At Debug log level, a successful startup emits one `eBPF TC active` summary
-containing the mode, network, local/shared IPv6 settings, default interface,
-attachments, internal listeners, and delivery interface. Each attachment
-includes its local/shared role and `l2` or `l3` framing. A network event emits a
+At Debug log level, a successful startup emits an `eBPF cgroup active` or
+`eBPF TC active` summary containing the selected data planes and their effective
+runtime paths. TC summaries also include the default interface, attachments,
+internal listeners, routing state, and delivery interface when applicable. Each
+attachment includes its local/shared role and framing. A network event emits a
 Debug entry only when attachments or managed network state are changed; repair
 failures produce rate-limited warnings. Userspace handoff failures produce
 rate-limited Warn or Error entries. BPF packet return paths do not emit
@@ -107,10 +108,11 @@ system for the kernel side.
 
 ## Attachment and interface checks
 
-Local mode follows the current default interface. Shared mode follows the
-configured downstream interfaces and retries interfaces that were absent at
-startup. A configured shared interface is detached while it is the current default
-upstream and restored when it becomes downstream again. Network events also
+Local `cgroup` mode follows the selected cgroup v2 hierarchy and has no network
+interface attachment. Local `tc` follows the current default interface. Shared
+mode follows the configured downstream interfaces and retries interfaces that
+were absent at startup. A configured shared interface is detached while it is
+the current default upstream and restored when it becomes downstream again. Network events also
 validate the managed TC filters, policy routing, and delivery link. When
 interception changes after an interface event, capture before and after output
 from:
@@ -126,7 +128,7 @@ tc -statistics -details filter show
 Also retain the startup `eBPF TC active` summary. Do not manually remove the
 internal veth or managed TC filters while sing-box is running.
 
-For local interception, compare the packet counts on the default-interface
+For local `tc` interception, compare the packet counts on the default-interface
 egress filter and the logged delivery-interface ingress filter:
 
 ```sh
