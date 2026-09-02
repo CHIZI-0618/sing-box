@@ -120,7 +120,7 @@ netlink。
 
 local TC 模式挂载到网络管理器当前的默认接口；shared 模式挂载到配置的下游接口。
 默认的 `packet_rewrite` 要求接口使用以太网帧；`socket_assign` 支持 Ethernet/IPoE
-以及仅含 L3 的 raw-IP 或 PPP 链路。来源 MAC 策略同样要求以太网帧。不支持
+以及仅含 L3 的 raw-IP、PPP、SLIP 和 IPIP/SIT/GRE 隧道链路。来源 MAC 策略同样要求以太网帧。不支持
 loopback 和无法识别的链路封装。
 
 local attachment 会跟随默认接口变化。配置的 shared 接口存在时会自动挂载，但该接口
