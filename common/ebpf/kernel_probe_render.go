@@ -38,6 +38,8 @@ type kernelProbeJSONReport struct {
 	Findings         []KernelProbeFinding     `json:"findings"`
 	ActivePrograms   []kernelProbeJSONProgram `json:"active_programs"`
 	ActiveStateError string                   `json:"active_state_error,omitempty"`
+	Preflight        bool                     `json:"preflight"`
+	ExactObjectLoad  bool                     `json:"exact_object_load"`
 	Summary          kernelProbeJSONSummary   `json:"summary"`
 	Result           string                   `json:"result"`
 }
@@ -55,6 +57,8 @@ func WriteKernelProbeReportJSON(writer io.Writer, report *KernelProbeReport) err
 		IPv6:            report.IPv6,
 		Findings:        report.Findings,
 		ActivePrograms:  make([]kernelProbeJSONProgram, 0, len(report.ActivePrograms)),
+		Preflight:       true,
+		ExactObjectLoad: false,
 		Summary: kernelProbeJSONSummary{
 			Pass:             counts[KernelProbePass],
 			Warn:             counts[KernelProbeWarn],
@@ -89,11 +93,11 @@ func kernelProbeResult(report *KernelProbeReport) string {
 	if report.RequiredUnknowns() > 0 || report.ActiveStateErr != nil {
 		return "inconclusive"
 	}
-	return "supported"
+	return "preflight_passed"
 }
 
 func WriteKernelProbeReport(writer io.Writer, report *KernelProbeReport) error {
-	if _, err := fmt.Fprintln(writer, "sing-box eBPF inbound kernel capability probe"); err != nil {
+	if _, err := fmt.Fprintln(writer, "sing-box eBPF inbound kernel capability preflight"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(writer, "Platform: %s; kernel: %s; architecture: %s; mode: %s; local_data_plane: %s; shared_data_plane: %s; network: %s; ipv6: %t\n",
@@ -104,6 +108,9 @@ func WriteKernelProbeReport(writer io.Writer, report *KernelProbeReport) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(writer, "The probe does not attach programs or change qdiscs, routes, sysctls, or traffic."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(writer, "It checks individual facilities but does not load the exact selected eBPF objects; a real startup remains required."); err != nil {
 		return err
 	}
 
@@ -155,7 +162,7 @@ func WriteKernelProbeReport(writer io.Writer, report *KernelProbeReport) error {
 		_, err := fmt.Fprintln(writer, "Result: required checks are inconclusive; repeat with the service privileges or run a real sing-box startup test.")
 		return err
 	}
-	_, err := fmt.Fprintln(writer, "Result: all selected checks passed.")
+	_, err := fmt.Fprintln(writer, "Preflight result: all selected individual checks passed; exact object loading and attachment still require a real startup.")
 	return err
 }
 

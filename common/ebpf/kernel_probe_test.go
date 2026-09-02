@@ -59,6 +59,14 @@ func TestKernelProbeReportCounts(t *testing.T) {
 	}
 }
 
+func TestKernelProbeSuccessfulResultIsPreflight(t *testing.T) {
+	report := &KernelProbeReport{}
+	report.Add(KernelProbePass, "common", KernelProbeRequired, "map", "available")
+	if result := kernelProbeResult(report); result != "preflight_passed" {
+		t.Fatalf("unexpected successful preflight result: %s", result)
+	}
+}
+
 func TestMemlockProbeResult(t *testing.T) {
 	status, detail := memlockProbeResult(
 		unix.Rlimit{Cur: 8 << 20, Max: 8 << 20},
@@ -101,6 +109,7 @@ func TestWriteKernelProbeReport(t *testing.T) {
 		"kernel: 5.7.0-test",
 		"ipv6: true",
 		"cilium/ebpf direct bpf(2) probes",
+		"does not load the exact selected eBPF objects",
 		"PASS",
 		"UNKNOWN",
 		"Summary: PASS=1 WARN=0 FAIL=0 UNKNOWN=1 REQUIRED_FAILURES=0 REQUIRED_UNKNOWNS=1",
@@ -135,9 +144,11 @@ func TestWriteKernelProbeReportJSON(t *testing.T) {
 		t.Fatalf("unexpected finding field names: %s", output.String())
 	}
 	var decoded struct {
-		KernelRelease  string `json:"kernel_release"`
-		Result         string `json:"result"`
-		ActivePrograms []struct {
+		KernelRelease   string `json:"kernel_release"`
+		Result          string `json:"result"`
+		Preflight       bool   `json:"preflight"`
+		ExactObjectLoad bool   `json:"exact_object_load"`
+		ActivePrograms  []struct {
 			ID   uint32 `json:"id"`
 			Type string `json:"type"`
 		} `json:"active_programs"`
@@ -149,6 +160,7 @@ func TestWriteKernelProbeReportJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decoded.KernelRelease != report.KernelRelease || decoded.Result != "unsupported" ||
+		!decoded.Preflight || decoded.ExactObjectLoad ||
 		decoded.Summary.RequiredFailures != 1 || len(decoded.ActivePrograms) != 1 ||
 		decoded.ActivePrograms[0].ID != 42 || decoded.ActivePrograms[0].Type != CiliumEBPF.SchedCLS.String() {
 		t.Fatalf("unexpected JSON report: %+v", decoded)
