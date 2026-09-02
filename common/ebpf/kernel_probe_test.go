@@ -216,3 +216,31 @@ func TestKernelProbePlanSeparatesTCDataPlanes(t *testing.T) {
 		t.Fatalf("unexpected shared packet-rewrite plan: %+v", rewrite)
 	}
 }
+
+func TestCgroupRequiredHelpers(t *testing.T) {
+	tcpHelpers := cgroupRequiredHelpers(false)
+	for _, expected := range []string{
+		"bpf_map_lookup_elem",
+		"bpf_map_update_elem",
+		"bpf_map_delete_elem",
+	} {
+		if !probeHelpersContain(tcpHelpers, expected) {
+			t.Fatalf("TCP cgroup helper set is missing %s", expected)
+		}
+	}
+	if probeHelpersContain(tcpHelpers, "bpf_ktime_get_ns") {
+		t.Fatal("TCP-only cgroup helper set requires UDP time helper")
+	}
+	if !probeHelpersContain(cgroupRequiredHelpers(true), "bpf_ktime_get_ns") {
+		t.Fatal("UDP cgroup helper set is missing time helper")
+	}
+}
+
+func probeHelpersContain(helpers []cgroupProbeHelper, name string) bool {
+	for _, helper := range helpers {
+		if helper.name == name {
+			return true
+		}
+	}
+	return false
+}

@@ -359,15 +359,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 		if localPlane == KernelProbeDataPlaneCgroup {
 			probeProgramType(report, "local", KernelProbeRequired, CiliumEBPF.CGroupSockAddr,
 				"Applies local TCP connect and UDP sendmsg interception in the selected cgroup.")
-			for _, helper := range []struct {
-				fn     asm.BuiltinFunc
-				name   string
-				detail string
-			}{
-				{asm.FnGetCurrentUidGid, "bpf_get_current_uid_gid", "Applies UID and Android package policy."},
-				{asm.FnGetSocketCookie, "bpf_get_socket_cookie", "Correlates redirect and recovery state by socket."},
-				{asm.FnKtimeGetNs, "bpf_ktime_get_ns", "Tracks UDP state expiry."},
-			} {
+			for _, helper := range cgroupRequiredHelpers(enableUDP) {
 				probeProgramHelper(report, "local", KernelProbeRequired, CiliumEBPF.CGroupSockAddr,
 					helper.fn, helper.name, helper.detail)
 			}
@@ -440,6 +432,30 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 
 	probeMemlockLimit(report, memlockErr)
 	probeBPFJIT(report)
+}
+
+type cgroupProbeHelper struct {
+	fn     asm.BuiltinFunc
+	name   string
+	detail string
+}
+
+func cgroupRequiredHelpers(enableUDP bool) []cgroupProbeHelper {
+	helpers := []cgroupProbeHelper{
+		{asm.FnGetCurrentUidGid, "bpf_get_current_uid_gid", "Applies UID and Android package policy."},
+		{asm.FnGetSocketCookie, "bpf_get_socket_cookie", "Correlates redirect and recovery state by socket."},
+		{asm.FnMapLookupElem, "bpf_map_lookup_elem", "Reads cgroup controls, policy, and redirect state."},
+		{asm.FnMapUpdateElem, "bpf_map_update_elem", "Publishes cgroup redirect and recovery state."},
+		{asm.FnMapDeleteElem, "bpf_map_delete_elem", "Consumes and expires cgroup redirect state."},
+	}
+	if enableUDP {
+		helpers = append(helpers, cgroupProbeHelper{
+			asm.FnKtimeGetNs,
+			"bpf_ktime_get_ns",
+			"Tracks UDP state expiry.",
+		})
+	}
+	return helpers
 }
 
 func probeNetlinkAccess(report *KernelProbeReport) {
