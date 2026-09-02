@@ -57,7 +57,7 @@ type KernelProbeOptions struct {
 	LocalDataPlane      KernelProbeDataPlane
 	SharedDataPlane     KernelProbeDataPlane
 	Network             []string
-	InterfaceName       string
+	InterfaceNames      []string
 	EnableIPv6          bool
 	NeedLPMPolicy       bool
 	NeedProcessTracking bool
@@ -220,7 +220,7 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 		probeLocalCapabilities(report, localPlane, enableTCP, enableUDP)
 	}
 	if needShared {
-		probeSharedCapabilities(report, sharedPlane, options.InterfaceName)
+		probeSharedCapabilities(report, sharedPlane, options.InterfaceNames)
 	}
 	report.ActivePrograms, report.ActiveStateErr = probeActivePrograms()
 	return report, nil
@@ -571,17 +571,22 @@ func probeLocalCapabilities(report *KernelProbeReport, plane KernelProbeDataPlan
 	report.Add(KernelProbePass, scope, KernelProbeRequired, "TC local program facilities", protocols+" use the default-interface egress classifier and internal delivery veth; TC attachment and veth creation are verified during startup.")
 }
 
-func probeSharedCapabilities(report *KernelProbeReport, plane KernelProbeDataPlane, interfaceName string) {
+func probeSharedCapabilities(report *KernelProbeReport, plane KernelProbeDataPlane, interfaceNames []string) {
 	const scope = "shared"
 	if plane == KernelProbeDataPlanePacketRewrite {
 		report.Add(KernelProbePass, scope, KernelProbeRequired, "TC shared packet-rewrite facilities",
 			"Configured downstream interfaces use ingress and egress classifiers with token tuple rewriting; TC attachment is verified during startup.")
-		probeSharedInterface(report, interfaceName)
+	} else {
+		report.Add(KernelProbePass, scope, KernelProbeRequired, "TC shared program facilities",
+			"Configured downstream interfaces use the ingress classifier and transparent socket assignment; TC attachment is verified during startup.")
+	}
+	if len(interfaceNames) == 0 {
+		probeSharedInterface(report, "")
 		return
 	}
-	report.Add(KernelProbePass, scope, KernelProbeRequired, "TC shared program facilities",
-		"Configured downstream interfaces use the ingress classifier and transparent socket assignment; TC attachment is verified during startup.")
-	probeSharedInterface(report, interfaceName)
+	for _, interfaceName := range interfaceNames {
+		probeSharedInterface(report, interfaceName)
+	}
 }
 
 func selectedProtocolDetail(enableTCP, enableUDP bool) string {

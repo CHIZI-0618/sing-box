@@ -369,10 +369,6 @@ func (i *Inbound) checkKernelCapabilities() error {
 	if i.enableUDP {
 		network = append(network, "udp")
 	}
-	interfaceName := ""
-	if len(i.sharedOptions.Interface) > 0 {
-		interfaceName = i.sharedOptions.Interface[0]
-	}
 	localPlane := commonEBPF.KernelProbeDataPlane("")
 	if localTCEnabled {
 		localPlane = commonEBPF.KernelProbeDataPlaneTC
@@ -390,7 +386,7 @@ func (i *Inbound) checkKernelCapabilities() error {
 		LocalDataPlane:  localPlane,
 		SharedDataPlane: sharedPlane,
 		Network:         network,
-		InterfaceName:   interfaceName,
+		InterfaceNames:  i.sharedOptions.Interface,
 		EnableIPv6:      (localSelected && i.localIPv6) || (sharedSelected && i.sharedIPv6),
 		NeedLPMPolicy: ((localTCEnabled || localCgroupEnabled) && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0)) ||
 			((sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0)) ||

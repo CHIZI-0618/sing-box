@@ -52,12 +52,16 @@ func init() {
 
 func runEBPFStatus() error {
 	mode := commonEBPF.KernelProbeMode(commandEBPFStatusMode)
+	var interfaceNames []string
+	if commandEBPFStatusInterface != "" {
+		interfaceNames = []string{commandEBPFStatusInterface}
+	}
 	report, err := commonEBPF.ProbeKernel(commonEBPF.KernelProbeOptions{
 		Mode:            mode,
 		LocalDataPlane:  commonEBPF.KernelProbeDataPlane(commandEBPFStatusLocal),
 		SharedDataPlane: commonEBPF.KernelProbeDataPlane(commandEBPFStatusShared),
 		Network:         commandEBPFStatusNetwork,
-		InterfaceName:   commandEBPFStatusInterface,
+		InterfaceNames:  interfaceNames,
 		EnableIPv6:      commandEBPFStatusIPv6,
 	})
 	if err != nil {
