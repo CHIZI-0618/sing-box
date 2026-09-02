@@ -63,6 +63,30 @@ type KernelProbeOptions struct {
 	NeedProcessTracking bool
 }
 
+type kernelProbePlan struct {
+	localTC             bool
+	localCgroup         bool
+	sharedSocketAssign  bool
+	sharedPacketRewrite bool
+}
+
+func newKernelProbePlan(localPlane, sharedPlane KernelProbeDataPlane) kernelProbePlan {
+	return kernelProbePlan{
+		localTC:             localPlane == KernelProbeDataPlaneTC,
+		localCgroup:         localPlane == KernelProbeDataPlaneCgroup,
+		sharedSocketAssign:  sharedPlane == KernelProbeDataPlaneSocketAssign,
+		sharedPacketRewrite: sharedPlane == KernelProbeDataPlanePacketRewrite,
+	}
+}
+
+func (p kernelProbePlan) needsSocketAssignment() bool {
+	return p.localTC || p.sharedSocketAssign
+}
+
+func (p kernelProbePlan) needsTCProgram() bool {
+	return p.needsSocketAssignment() || p.sharedPacketRewrite
+}
+
 type KernelProbeFinding struct {
 	Status     KernelProbeStatus     `json:"status"`
 	Scope      string                `json:"scope"`
@@ -232,17 +256,18 @@ func normalizeProbeDataPlanes(options KernelProbeOptions) (KernelProbeDataPlane,
 
 func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enableIPv6, enableTCP, enableUDP bool,
 	localPlane, sharedPlane KernelProbeDataPlane, needLPMPolicy, needProcessTracking bool) {
+	plan := newKernelProbePlan(localPlane, sharedPlane)
 	needLocal := localPlane != ""
-	needTC := localPlane == KernelProbeDataPlaneTC || sharedPlane == KernelProbeDataPlaneSocketAssign
-	needPacketRewrite := sharedPlane == KernelProbeDataPlanePacketRewrite
-	needCgroup := localPlane == KernelProbeDataPlaneCgroup
+	needSocketAssignment := plan.needsSocketAssignment()
+	needPacketRewrite := plan.sharedPacketRewrite
+	needCgroup := plan.localCgroup
 	needSelfBypass := needLocal
-	needTCProgram := needTC || needPacketRewrite
+	needTCProgram := plan.needsTCProgram()
 	probeLPMTrieUpdateSafety(report, needLPMPolicy)
 
 	probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.Array,
 		"Stores runtime controls.")
-	if needTC || needPacketRewrite || needCgroup {
+	if needSocketAssignment || needPacketRewrite || needCgroup {
 		probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.Hash,
 			"Stores source MAC, host-address, and port policies.")
 		probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.LRUHash,
@@ -254,7 +279,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 		probeMapType(report, "shared", KernelProbeRequired, CiliumEBPF.PerCPUArray,
 			"Provides per-CPU packet-rewrite scratch and counters.")
 	}
-	if enableTCP && needTC {
+	if enableTCP && needSocketAssignment {
 		probeMapType(report, "common", KernelProbePerformance, CiliumEBPF.SockMap,
 			"Enables the preferred TCP listener fallback; TC loading falls back to direct socket lookup when unavailable.")
 	}
@@ -271,7 +296,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 		{asm.FnMapUpdateElem, "bpf_map_update_elem", "Publishes original-flow assignment metadata."},
 		{asm.FnMapDeleteElem, "bpf_map_delete_elem", "Removes failed assignments."},
 	}
-	if needTC {
+	if plan.localTC {
 		helpers = append(helpers,
 			struct {
 				fn     asm.BuiltinFunc
@@ -365,21 +390,21 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 				helper.fn, helper.name, helper.detail)
 		}
 	}
-	if enableTCP && needTC {
+	if enableTCP && needSocketAssignment {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
 			detail string
 		}{asm.FnSkcLookupTcp, "bpf_skc_lookup_tcp", "Finds transparent TCP listeners and established sockets."})
 	}
-	if enableUDP && needTC {
+	if enableUDP && needSocketAssignment {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
 			detail string
 		}{asm.FnSkLookupUdp, "bpf_sk_lookup_udp", "Finds the transparent UDP listener."})
 	}
-	if (enableTCP || enableUDP) && needTC {
+	if (enableTCP || enableUDP) && needSocketAssignment {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
@@ -390,7 +415,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			detail string
 		}{asm.FnSkRelease, "bpf_sk_release", "Releases socket references returned by lookup helpers."})
 	}
-	if needTC {
+	if plan.localTC {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
@@ -404,7 +429,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 	if needTCProgram {
 		for _, helper := range helpers {
 			scope := "common"
-			if needPacketRewrite && !needTC {
+			if needPacketRewrite && !needSocketAssignment {
 				scope = "shared"
 			}
 			probeProgramHelper(report, scope, KernelProbeRequired, CiliumEBPF.SchedCLS, helper.fn, helper.name, helper.detail)
