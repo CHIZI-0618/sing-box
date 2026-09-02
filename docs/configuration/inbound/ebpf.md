@@ -278,6 +278,8 @@ inclusive.
 
 ### Limitations
 
+- A sing-box instance may contain only one eBPF inbound with local interception
+  enabled. Additional eBPF inbounds must be shared-only.
 - Fragmented IPv4 and IPv6 datagrams bypass interception. IPv6 atomic fragments
   are processed as ordinary IPv6 packets.
 - Interception state is restored automatically after network changes.
