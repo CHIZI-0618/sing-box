@@ -189,11 +189,11 @@ programs and maps. Startup failures use the same cleanup path.
 For local cgroup mode, startup selects redirect prefixes, creates the local
 listeners and routes, prepares maps, loads the enabled program set, and
 attaches it last. Shared `packet_rewrite` uses its own listeners and token
-routes, while shared `socket_assign` uses the local TC delivery path. Any
-combination of those local and shared choices is valid. Shutdown detaches
-each selected backend before closing listeners and removes only routes owned
-by this instance. A path that is disabled does not load its object or create
-its network state.
+routes. Shared `socket_assign` uses the common TC listeners and policy routing
+without creating a delivery veth. Any combination of those local and shared
+choices is valid. Shutdown detaches each selected backend before closing
+listeners and removes only routes owned by this instance. A path that is
+disabled does not load its object or create its network state.
 
 ## Generation and tests
 

@@ -26,7 +26,7 @@ The following options, or their vendor equivalents, are required:
 | `CONFIG_NET_CLS_BPF` | Runs BPF classifiers at TC hooks. |
 | `CONFIG_NET_SCH_INGRESS` | Provides the `clsact` ingress and egress hooks. |
 | `CONFIG_NET_CLS_ACT` | Enables direct-action classifier results. |
-| `CONFIG_VETH` | Provides the delivery link for local TC and shared `socket_assign`. |
+| `CONFIG_VETH` | Provides the delivery link for local TC. |
 | `CONFIG_INET` | IPv4 TCP/UDP and transparent sockets. |
 | `CONFIG_IPV6` | Required when local or shared IPv6 interception is enabled. |
 
@@ -122,7 +122,7 @@ same guard.
 Startup needs enough privilege for the selected data plane to:
 
 - load BPF maps and programs;
-- create and remove a veth pair for local TC and shared `socket_assign`;
+- create and remove a veth pair for local TC;
 - add and remove `clsact` qdiscs and BPF filters;
 - add and remove TC policy routing or token local routes;
 - change `rp_filter` and `accept_local` on the internal delivery peer;
