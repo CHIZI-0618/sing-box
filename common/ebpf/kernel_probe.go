@@ -581,11 +581,11 @@ func probeSharedCapabilities(report *KernelProbeReport, plane KernelProbeDataPla
 			"Configured downstream interfaces use the ingress classifier and transparent socket assignment; TC attachment is verified during startup.")
 	}
 	if len(interfaceNames) == 0 {
-		probeSharedInterface(report, "")
+		probeSharedInterface(report, plane, "")
 		return
 	}
 	for _, interfaceName := range interfaceNames {
-		probeSharedInterface(report, interfaceName)
+		probeSharedInterface(report, plane, interfaceName)
 	}
 }
 
@@ -663,7 +663,7 @@ func classifyKernelProbeError(err error) KernelProbeStatus {
 	}
 }
 
-func probeSharedInterface(report *KernelProbeReport, interfaceName string) {
+func probeSharedInterface(report *KernelProbeReport, plane KernelProbeDataPlane, interfaceName string) {
 	const scope = "shared"
 	if interfaceName == "" {
 		report.Add(KernelProbeWarn, scope, KernelProbePerformance, "downstream interface",
@@ -678,13 +678,23 @@ func probeSharedInterface(report *KernelProbeReport, interfaceName string) {
 	}
 	attributes := link.Attrs()
 	framing := ClassifyTCLinkFraming(attributes.EncapType, len(attributes.HardwareAddr))
-	if framing == TCLinkFramingUnsupported {
+	if err = validateProbeSharedFraming(plane, framing); err != nil {
 		report.Add(KernelProbeFail, scope, KernelProbeRequired, "TC interface framing "+interfaceName,
-			"The interface uses unsupported link encapsulation "+attributes.EncapType+".")
+			"The interface uses "+attributes.EncapType+" encapsulation: "+err.Error())
 		return
 	}
 	report.Add(KernelProbePass, scope, KernelProbeRequired, "TC interface framing "+interfaceName,
 		"The interface uses supported "+framing.String()+" framing ("+attributes.EncapType+").")
+}
+
+func validateProbeSharedFraming(plane KernelProbeDataPlane, framing TCLinkFraming) error {
+	if framing == TCLinkFramingUnsupported {
+		return fmt.Errorf("unsupported TC framing")
+	}
+	if plane == KernelProbeDataPlanePacketRewrite && framing != TCLinkFramingEthernet {
+		return fmt.Errorf("shared packet_rewrite requires Ethernet framing")
+	}
+	return nil
 }
 
 func probeBPFJIT(report *KernelProbeReport) {
