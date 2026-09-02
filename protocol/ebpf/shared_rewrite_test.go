@@ -50,3 +50,25 @@ func TestFlowUsagePressure(t *testing.T) {
 		t.Fatal("flow usage pressure did not clear below exit threshold")
 	}
 }
+
+func TestSharedFlowWakeMaintainsPressureSweeps(t *testing.T) {
+	usage := commonEBPF.MapUsage{Entries: 80, Capacity: 100}
+	knownPressure, sweepRequested := updateSharedFlowWakeState(true, true, false, usage)
+	if !knownPressure || !sweepRequested {
+		t.Fatalf("pressure wake did not request a maintenance sweep: known=%v requested=%v", knownPressure, sweepRequested)
+	}
+
+	usage.Entries = 40
+	knownPressure, sweepRequested = updateSharedFlowWakeState(true, true, false, usage)
+	if knownPressure || !sweepRequested {
+		t.Fatalf("pressure recovery wake stopped maintenance before exit rounds: known=%v requested=%v", knownPressure, sweepRequested)
+	}
+}
+
+func TestSharedFlowWakeContinuesIncompleteScan(t *testing.T) {
+	usage := commonEBPF.MapUsage{Entries: 0, Capacity: 100}
+	knownPressure, sweepRequested := updateSharedFlowWakeState(false, false, true, usage)
+	if knownPressure || !sweepRequested {
+		t.Fatalf("incomplete scan wake was not scheduled: known=%v requested=%v", knownPressure, sweepRequested)
+	}
+}
