@@ -196,3 +196,23 @@ func TestNormalizeProbeDataPlanes(t *testing.T) {
 		t.Fatal("expected invalid local data plane")
 	}
 }
+
+func TestKernelProbePlanSeparatesTCDataPlanes(t *testing.T) {
+	local := newKernelProbePlan(KernelProbeDataPlaneTC, "")
+	if !local.localTC || !local.needsSocketAssignment() || !local.needsTCProgram() ||
+		local.localCgroup || local.sharedSocketAssign || local.sharedPacketRewrite {
+		t.Fatalf("unexpected local TC plan: %+v", local)
+	}
+
+	shared := newKernelProbePlan("", KernelProbeDataPlaneSocketAssign)
+	if !shared.sharedSocketAssign || !shared.needsSocketAssignment() || !shared.needsTCProgram() ||
+		shared.localTC || shared.localCgroup || shared.sharedPacketRewrite {
+		t.Fatalf("unexpected shared socket-assign plan: %+v", shared)
+	}
+
+	rewrite := newKernelProbePlan("", KernelProbeDataPlanePacketRewrite)
+	if !rewrite.sharedPacketRewrite || rewrite.needsSocketAssignment() || !rewrite.needsTCProgram() ||
+		rewrite.localTC || rewrite.localCgroup || rewrite.sharedSocketAssign {
+		t.Fatalf("unexpected shared packet-rewrite plan: %+v", rewrite)
+	}
+}
