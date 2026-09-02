@@ -270,3 +270,18 @@ func TestProbeSharedCapabilitiesChecksEveryInterface(t *testing.T) {
 		t.Fatalf("checked %d shared interfaces, want 2: %+v", checked, report.Findings)
 	}
 }
+
+func TestValidateProbeSharedFraming(t *testing.T) {
+	if err := validateProbeSharedFraming(KernelProbeDataPlanePacketRewrite, TCLinkFramingEthernet); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProbeSharedFraming(KernelProbeDataPlanePacketRewrite, TCLinkFramingRawIP); err == nil {
+		t.Fatal("packet_rewrite accepted raw-IP framing")
+	}
+	if err := validateProbeSharedFraming(KernelProbeDataPlaneSocketAssign, TCLinkFramingRawIP); err != nil {
+		t.Fatalf("socket_assign rejected raw-IP framing: %v", err)
+	}
+	if err := validateProbeSharedFraming(KernelProbeDataPlaneSocketAssign, TCLinkFramingUnsupported); err == nil {
+		t.Fatal("socket_assign accepted unsupported framing")
+	}
+}
