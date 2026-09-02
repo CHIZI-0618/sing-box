@@ -207,11 +207,11 @@ func normalizeProbeDataPlanes(options KernelProbeOptions) (KernelProbeDataPlane,
 	if local == "" && shared == "" {
 		switch options.Mode {
 		case KernelProbeModeAll:
-			local, shared = KernelProbeDataPlaneTC, KernelProbeDataPlaneSocketAssign
+			local, shared = KernelProbeDataPlaneCgroup, KernelProbeDataPlanePacketRewrite
 		case KernelProbeModeLocal:
-			local = KernelProbeDataPlaneTC
+			local = KernelProbeDataPlaneCgroup
 		case KernelProbeModeShared:
-			shared = KernelProbeDataPlaneSocketAssign
+			shared = KernelProbeDataPlanePacketRewrite
 		}
 	}
 	switch local {

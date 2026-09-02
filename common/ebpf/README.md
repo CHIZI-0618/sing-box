@@ -1,20 +1,21 @@
 # eBPF inbound backends
 
-The eBPF inbound uses TC by default for local and shared operation. Local mode
-can instead use an explicit cgroup v2 socket-address backend. Shared TC has two
-data planes: `socket_assign` preserves the original tuple and assigns packets
-to the delivery listener; `packet_rewrite` uses an internal token address and
-restores replies on the downstream interface. Both backends feed the same
+The eBPF inbound defaults to the cgroup v2 socket-address backend for local
+operation and TC `packet_rewrite` for shared operation. Local mode can instead
+use TC, while shared `socket_assign` preserves the original tuple and assigns
+packets to the delivery listener. `packet_rewrite` uses an internal token
+address and restores replies on the downstream interface. All backends feed the same
 internal listeners, routing pipeline, policy compiler, UDP session service,
 and lifecycle owner.
 
 ## Packet paths
 
 The runtime has four concrete backend choices: local `tc` or `cgroup`, and
-shared `socket_assign` or `packet_rewrite`. The inbound may enable either path
-independently. `sing-box tools ebpf status` accepts the same choices through
-`--local-data-plane` and `--shared-data-plane`; its legacy `--mode` flags map to
-local TC and shared `socket_assign`.
+shared `socket_assign` or `packet_rewrite`. The defaults are local `cgroup` and
+shared `packet_rewrite`; the inbound may enable either path independently.
+`sing-box tools ebpf status` accepts the same choices through
+`--local-data-plane` and `--shared-data-plane`; its `--mode` flags select the
+default local `cgroup` and shared `packet_rewrite` paths.
 
 Local traffic is selected at TC egress on the current default interface.
 Forwarded packets are excluded through `ingress_ifindex`; sockets created by
