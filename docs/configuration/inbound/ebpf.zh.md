@@ -197,7 +197,7 @@ veth 和策略路由。local 与 shared 数据面可以独立选择。
 ==启用 shared 接管时必填==
 
 客户端流量进入本机的下游接口。默认的 `packet_rewrite` 数据面要求接口使用以太网
-帧；Ethernet/IPoE、raw-IP（包括 Android rmnet）或 PPP/PPPoE 接口应显式配置
+帧；Ethernet/IPoE、raw-IP（包括 Android rmnet）、PPP/PPPoE 或 IPIP/SIT/GRE 隧道接口应显式配置
 `socket_assign`。也可同时配置多个接口。暂时不存在的接口会在网络更新后重试，
 当某个接口成为当前默认上游时，会停止其 shared 接管；该接口重新作为下游后自动
 恢复。不接受 loopback。

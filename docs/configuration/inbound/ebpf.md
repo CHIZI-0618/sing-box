@@ -216,8 +216,8 @@ and MAC selection is applied before destination port 53 is intercepted.
 
 Downstream interfaces where client traffic enters the host. The default
 `packet_rewrite` data plane requires Ethernet framing. Set `socket_assign`
-explicitly for Ethernet/IPoE, raw-IP (including Android rmnet), or PPP/PPPoE
-interfaces.
+explicitly for Ethernet/IPoE, raw-IP (including Android rmnet), PPP/PPPoE, or
+IPIP/SIT/GRE tunnel interfaces.
 Multiple interfaces may be specified; interfaces that are temporarily absent
 are retried after network updates. An interface is temporarily excluded from
 shared interception while it is the current default upstream, then restored
