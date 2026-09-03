@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -588,6 +589,14 @@ func (d *tcDeliveryLink) repair(backend *commonEBPF.TCBackend, priority uint16) 
 			changed = true
 		}
 	}
+	aggregateStates, err := clearTCAggregateRPFilter(d.deliveryName)
+	if err != nil {
+		return changed, false, err
+	}
+	if len(aggregateStates) > 0 {
+		d.sysctls = append(d.sysctls, aggregateStates...)
+		changed = true
+	}
 	return changed, false, nil
 }
 
@@ -999,6 +1008,11 @@ func createTCDeliveryLink(backend *commonEBPF.TCBackend, priority uint16) (*tcDe
 			delivery.sysctls = append(delivery.sysctls, state)
 		}
 	}
+	aggregateStates, err := clearTCAggregateRPFilter(deliveryName)
+	if err != nil {
+		return cleanup(err)
+	}
+	delivery.sysctls = append(delivery.sysctls, aggregateStates...)
 	if err = ensureTCClsact(delivery.delivery); err != nil {
 		return cleanup(err)
 	}
@@ -1050,19 +1064,116 @@ func nextTCVethNames() (string, string, error) {
 }
 
 func setTCInterfaceSysctl(interfaceName, setting, value string) (tcSysctlState, bool, error) {
-	path := "/proc/sys/net/ipv4/conf/" + interfaceName + "/" + setting
+	state, changed, err := setTCSysctl(tcInterfaceSysctlPath(interfaceName, setting), value)
+	if err != nil {
+		return state, changed, E.Cause(err, setting, " for ", interfaceName)
+	}
+	return state, changed, nil
+}
+
+func tcInterfaceSysctlPath(interfaceName, setting string) string {
+	return "/proc/sys/net/ipv4/conf/" + interfaceName + "/" + setting
+}
+
+func setTCSysctl(path, value string) (tcSysctlState, bool, error) {
 	current, err := os.ReadFile(path)
 	if err != nil {
-		return tcSysctlState{}, false, E.Cause(err, "read ", setting, " for ", interfaceName)
+		return tcSysctlState{}, false, err
 	}
 	original := strings.TrimSpace(string(current))
 	if original == value {
 		return tcSysctlState{}, false, nil
 	}
 	if err = os.WriteFile(path, []byte(value), 0o644); err != nil {
-		return tcSysctlState{}, false, E.Cause(err, "set ", setting, " for ", interfaceName)
+		return tcSysctlState{}, false, err
 	}
 	return tcSysctlState{path: path, original: original}, true, nil
+}
+
+func restoreTCSysctlStates(states []tcSysctlState) error {
+	var restoreErr error
+	for _, state := range slices.Backward(states) {
+		if err := os.WriteFile(state.path, []byte(state.original), 0o644); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
+			restoreErr = E.Errors(restoreErr, err)
+		}
+	}
+	return restoreErr
+}
+
+// clearTCAggregateRPFilter makes the delivery interface's own rp_filter=0 take
+// effect.
+//
+// The kernel evaluates the reverse path filter as max(conf.all.rp_filter,
+// conf.<device>.rp_filter) (IN_DEV_MAXCONF), so clearing it on the delivery
+// interface alone is a no-op while the aggregate knob is set. Redirected packets
+// keep the source address of the interface they were about to leave on, which
+// never routes back through the delivery interface, so __fib_validate_source()
+// drops them as martian source for any non-zero value — loose mode included,
+// because an interface without an address takes the last_resort branch, which
+// rejects whenever the filter is enabled at all.
+//
+// Lower the aggregate knob, but first pin every other interface to the previous
+// aggregate value so their effective policy is unchanged.
+func clearTCAggregateRPFilter(deliveryName string) ([]tcSysctlState, error) {
+	aggregatePath := tcInterfaceSysctlPath("all", "rp_filter")
+	current, err := os.ReadFile(aggregatePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, E.Cause(err, "read aggregate rp_filter")
+	}
+	aggregate, err := strconv.Atoi(strings.TrimSpace(string(current)))
+	if err != nil || aggregate == 0 {
+		return nil, nil
+	}
+	entries, err := os.ReadDir("/proc/sys/net/ipv4/conf")
+	if err != nil {
+		return nil, E.Cause(err, "list rp_filter interfaces")
+	}
+	states := make([]tcSysctlState, 0, len(entries)+1)
+	failed := func(cause error) ([]tcSysctlState, error) {
+		return nil, E.Errors(cause, restoreTCSysctlStates(states))
+	}
+	for _, entry := range entries {
+		if entry.Name() == "all" || entry.Name() == deliveryName {
+			continue
+		}
+		state, changed, pinErr := pinTCInterfaceRPFilter(entry.Name(), aggregate)
+		if pinErr != nil {
+			if errors.Is(pinErr, os.ErrNotExist) {
+				continue
+			}
+			return failed(E.Cause(pinErr, "pin rp_filter for ", entry.Name()))
+		}
+		if changed {
+			states = append(states, state)
+		}
+	}
+	state, changed, err := setTCSysctl(aggregatePath, "0")
+	if err != nil {
+		return failed(E.Cause(err, "clear aggregate rp_filter"))
+	}
+	if changed {
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+// pinTCInterfaceRPFilter raises one interface to the aggregate value so that
+// clearing the aggregate knob leaves its effective filter untouched.
+func pinTCInterfaceRPFilter(interfaceName string, aggregate int) (tcSysctlState, bool, error) {
+	path := tcInterfaceSysctlPath(interfaceName, "rp_filter")
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return tcSysctlState{}, false, err
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(string(current)))
+	if err != nil || value >= aggregate {
+		return tcSysctlState{}, false, nil
+	}
+	return setTCSysctl(path, strconv.Itoa(aggregate))
 }
 
 func (d *tcDeliveryLink) Close() error {
@@ -1074,11 +1185,7 @@ func (d *tcDeliveryLink) Close() error {
 		closeErr = detachTCFilter(d.filter)
 		d.filter = nil
 	}
-	for _, state := range slices.Backward(d.sysctls) {
-		if err := os.WriteFile(state.path, []byte(state.original), 0o644); err != nil && !errors.Is(err, os.ErrNotExist) {
-			closeErr = E.Errors(closeErr, err)
-		}
-	}
+	closeErr = E.Errors(closeErr, restoreTCSysctlStates(d.sysctls))
 	d.sysctls = nil
 	if d.redirect != nil {
 		if err := netlink.LinkDel(d.redirect); err != nil &&
