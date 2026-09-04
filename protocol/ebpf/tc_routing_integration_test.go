@@ -50,13 +50,13 @@ func TestTCPolicyRoutingIntegration(t *testing.T) {
 				t.Fatalf("unexpected route for family %d: %+v", family, route)
 			}
 		}
-		rules, listErr := netlink.RuleList(family)
+		entries, listErr := listTCPolicyRules(family, *tcPolicyRule(family))
 		if listErr != nil {
 			t.Fatal(listErr)
 		}
 		matched := false
-		for _, rule := range rules {
-			if matchesTCPolicyRule(rule, *tcPolicyRule(family)) {
+		for _, entry := range entries {
+			if entry.owned {
 				matched = true
 				break
 			}
