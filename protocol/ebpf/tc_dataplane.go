@@ -199,6 +199,7 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 	attachments := make([]*tcInterfaceAttachment, 0, len(desired))
 	created := make([]*tcInterfaceAttachment, 0)
 	replaced := make(map[string]*tcInterfaceAttachment)
+	reusedLocks := make(map[string]bool)
 	previousRoles := make(map[string]tcInterfaceRole, len(d.attachments))
 	for _, attachment := range d.attachments {
 		previousRoles[attachment.interfaceName] = attachment.role
@@ -278,16 +279,17 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 		var lock io.Closer
 		lockOwned := false
 		if previous != nil {
-			lock = previous.lock
 			replaced[interfaceName] = previous
-			if lock == nil {
-				lock, err = acquireTCInterfaceLock(interfaceName, state.index)
-				if err != nil {
-					return rollback(E.Cause(err, "lock TC eBPF interface ", interfaceName))
-				}
-				lockOwned = true
+			// The lock is an abstract socket named after the interface index, so
+			// it only covers the index it was taken for. Reuse it when the index
+			// is unchanged; a renumbered interface needs its own lock, and the
+			// stale one is released with the attachment it belongs to.
+			if previous.interfaceIndex == state.index {
+				lock = previous.lock
+				reusedLocks[interfaceName] = lock != nil
 			}
-		} else {
+		}
+		if lock == nil {
 			lock, err = acquireTCInterfaceLock(interfaceName, state.index)
 			if err != nil {
 				return rollback(E.Cause(err, "lock TC eBPF interface ", interfaceName))
@@ -317,11 +319,14 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 	}
 	for interfaceName, previous := range replaced {
 		lock := previous.lock
-		if lock != nil {
+		if reusedLocks[interfaceName] && lock != nil {
 			previous.lock = nil
 			previous.lockOwned = false
 		}
 		closeErr = E.Errors(closeErr, previous.Close())
+		if !reusedLocks[interfaceName] {
+			continue
+		}
 		for _, attachment := range created {
 			if attachment.interfaceName == interfaceName {
 				if lock != nil {
@@ -333,7 +338,7 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 		}
 	}
 	for _, attachment := range created {
-		if _, wasReplaced := replaced[attachment.interfaceName]; !wasReplaced {
+		if !reusedLocks[attachment.interfaceName] {
 			attachment.lockOwned = true
 		}
 	}
@@ -588,7 +593,7 @@ func (d *tcDeliveryLink) repair(backend *commonEBPF.TCBackend, priority uint16) 
 			return changed, false, settingErr
 		}
 		if settingChanged {
-			d.sysctls = append(d.sysctls, state)
+			d.sysctls = appendTCSysctlStates(d.sysctls, []tcSysctlState{state})
 			changed = true
 		}
 	}
@@ -597,7 +602,7 @@ func (d *tcDeliveryLink) repair(backend *commonEBPF.TCBackend, priority uint16) 
 		return changed, false, err
 	}
 	if len(aggregateStates) > 0 {
-		d.globalSysctls = append(d.globalSysctls, aggregateStates...)
+		d.globalSysctls = appendTCSysctlStates(d.globalSysctls, aggregateStates)
 		changed = true
 	}
 	return changed, false, nil
@@ -1125,14 +1130,14 @@ func createTCDeliveryLink(backend *commonEBPF.TCBackend, priority uint16) (*tcDe
 			return cleanup(settingErr)
 		}
 		if changed {
-			delivery.sysctls = append(delivery.sysctls, state)
+			delivery.sysctls = appendTCSysctlStates(delivery.sysctls, []tcSysctlState{state})
 		}
 	}
 	aggregateStates, err := clearTCAggregateRPFilter(deliveryName)
 	if err != nil {
 		return cleanup(err)
 	}
-	delivery.globalSysctls = append(delivery.globalSysctls, aggregateStates...)
+	delivery.globalSysctls = appendTCSysctlStates(delivery.globalSysctls, aggregateStates)
 	if err = ensureTCClsact(delivery.delivery); err != nil {
 		return cleanup(err)
 	}
@@ -1191,8 +1196,12 @@ func setTCInterfaceSysctl(interfaceName, setting, value string) (tcSysctlState, 
 	return state, changed, nil
 }
 
+// tcSysctlRoot is a variable so the reverse-path-filter composition logic can be
+// exercised against a temporary directory in tests.
+var tcSysctlRoot = "/proc/sys/net/ipv4/conf"
+
 func tcInterfaceSysctlPath(interfaceName, setting string) string {
-	return "/proc/sys/net/ipv4/conf/" + interfaceName + "/" + setting
+	return tcSysctlRoot + "/" + interfaceName + "/" + setting
 }
 
 func setTCSysctl(path, value string) (tcSysctlState, bool, error) {
@@ -1210,15 +1219,54 @@ func setTCSysctl(path, value string) (tcSysctlState, bool, error) {
 	return tcSysctlState{path: path, original: original, applied: value}, true, nil
 }
 
-func restoreTCSysctlStates(states []tcSysctlState) error {
-	var restoreErr error
-	for _, state := range slices.Backward(states) {
-		current, err := os.ReadFile(state.path)
-		if errors.Is(err, os.ErrNotExist) {
+// appendTCSysctlStates merges states into the restore list, one entry per path.
+//
+// Repair reasserts these settings on every netlink event, so appending
+// unconditionally would grow the list without bound and shadow the value the
+// setting had before sing-box touched it. The first original is therefore the
+// one that is kept — but applied has to follow the most recent write, because a
+// later round can write a different value than the first one did. An aggregate
+// that goes from 1 to 2 between rounds makes repair pin an interface to 2 where
+// it first pinned it to 1; leaving applied at 1 would make restore read 2, take
+// it for someone else's change, and leave sing-box's own value behind.
+func appendTCSysctlStates(states []tcSysctlState, added []tcSysctlState) []tcSysctlState {
+	for _, state := range added {
+		index := slices.IndexFunc(states, func(existing tcSysctlState) bool {
+			return existing.path == state.path
+		})
+		if index < 0 {
+			states = append(states, state)
 			continue
 		}
+		states[index].applied = state.applied
+	}
+	return states
+}
+
+// restoreTCSysctlStates reverts the settings sing-box changed.
+//
+// A setting whose current value no longer matches what was written belongs to
+// whoever changed it afterwards — an administrator or a network manager — so it
+// is left alone rather than reverted to a value that is no longer theirs. This
+// mirrors restoreSharedRewriteLocalnet, which already guards route_localnet the
+// same way.
+//
+// Restores that raise a value run before restores that lower one, rather than
+// simply walking the list backwards. Clearing conf.all.rp_filter is paid for by
+// pinning the other interfaces up to the old aggregate, and those two halves do
+// not stay adjacent: a repair round that pins an interface discovered later
+// appends it after the aggregate entry already in the list, so reverse order
+// alone would drop that interface's own filter while the aggregate is still 0
+// and leave it briefly unprotected. Raising first makes the ordering hold no
+// matter how the rounds interleaved.
+func restoreTCSysctlStates(states []tcSysctlState) error {
+	var restoreErr error
+	for _, state := range tcSysctlRestoreOrder(states) {
+		current, err := os.ReadFile(state.path)
 		if err != nil {
-			restoreErr = E.Errors(restoreErr, err)
+			if !errors.Is(err, os.ErrNotExist) {
+				restoreErr = E.Errors(restoreErr, err)
+			}
 			continue
 		}
 		if strings.TrimSpace(string(current)) != state.applied {
@@ -1230,6 +1278,33 @@ func restoreTCSysctlStates(states []tcSysctlState) error {
 		}
 	}
 	return restoreErr
+}
+
+// tcSysctlRestoreOrder sequences the restores so nothing is widened ahead of the
+// entry that compensates for it: every raising restore first, then the rest,
+// each in reverse order of when it was recorded.
+func tcSysctlRestoreOrder(states []tcSysctlState) []tcSysctlState {
+	ordered := make([]tcSysctlState, 0, len(states))
+	for _, raising := range []bool{true, false} {
+		for _, state := range slices.Backward(states) {
+			if tcSysctlRestoreRaises(state) == raising {
+				ordered = append(ordered, state)
+			}
+		}
+	}
+	return ordered
+}
+
+// tcSysctlRestoreRaises reports whether putting this setting back increases it.
+// Non-numeric values are never treated as raising, so they restore in the second
+// pass where they cannot widen anything ahead of a compensating entry.
+func tcSysctlRestoreRaises(state tcSysctlState) bool {
+	original, originalErr := strconv.Atoi(state.original)
+	applied, appliedErr := strconv.Atoi(state.applied)
+	if originalErr != nil || appliedErr != nil {
+		return false
+	}
+	return original > applied
 }
 
 // clearTCAggregateRPFilter makes the delivery interface's own rp_filter=0 take
@@ -1259,7 +1334,7 @@ func clearTCAggregateRPFilter(deliveryName string) ([]tcSysctlState, error) {
 	if err != nil || aggregate == 0 {
 		return nil, nil
 	}
-	entries, err := os.ReadDir("/proc/sys/net/ipv4/conf")
+	entries, err := os.ReadDir(tcSysctlRoot)
 	if err != nil {
 		return nil, E.Cause(err, "list rp_filter interfaces")
 	}
@@ -1307,6 +1382,18 @@ func pinTCInterfaceRPFilter(interfaceName string, aggregate int) (tcSysctlState,
 	return setTCSysctl(path, strconv.Itoa(aggregate))
 }
 
+// handoffTCGlobalSysctls takes over the aggregate-rp_filter restore state of the
+// delivery link this one replaces.
+//
+// A replacement is created while the link it replaces still holds the aggregate
+// rp_filter at 0, so clearTCAggregateRPFilter finds nothing to do for the new
+// delivery interface and records no restore state of its own. Closing the old
+// link would then put the aggregate knob back and silently reinstate the
+// martian-source drop on the new delivery interface. This only concerns
+// globalSysctls: the per-interface settings in sysctls are always re-applied
+// fresh under the new delivery interface's own name, and the old delivery
+// interface is deleted (and its own sysctls restored, harmlessly, right before
+// that) regardless of who replaced it, so there is nothing there to hand off.
 func handoffTCGlobalSysctls(previous, next *tcDeliveryLink) {
 	if previous == nil || next == nil {
 		return

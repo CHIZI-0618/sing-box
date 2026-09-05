@@ -441,6 +441,17 @@ func (i *Inbound) closeResources() error {
 	cgroupErr := error(nil)
 	if cgroupBackend != nil {
 		cgroupErr = cgroupBackend.Close()
+		// Close keeps the runtime when a program could not be detached, because a
+		// legacy cgroup attachment is owned by the cgroup rather than by the
+		// program handle: dropping the handles would leave that program attached
+		// with nothing able to detach it. Take the backend back so a later close
+		// can retry the slots that failed.
+		if !cgroupBackend.IsClosed() {
+			i.setCgroupBackend(cgroupBackend)
+			if cgroupErr == nil {
+				cgroupErr = E.New("cgroup eBPF backend remained open after close")
+			}
+		}
 	}
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()

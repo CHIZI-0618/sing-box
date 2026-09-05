@@ -124,6 +124,7 @@ type tcRuntime struct {
 
 type TCBackend struct {
 	access          sync.RWMutex
+	health          backendHealth
 	runtime         *tcRuntime
 	tcpListenerMap  bool
 	control         tcControl
@@ -342,8 +343,8 @@ func (b *TCBackend) SetRoutingMark(mark uint32) error {
 	}
 	b.access.Lock()
 	defer b.access.Unlock()
-	if b.runtime == nil {
-		return errBackendClosed
+	if err := b.requireUsableLocked(); err != nil {
+		return err
 	}
 	previous := b.control.RoutingMark
 	b.control.RoutingMark = mark
@@ -376,6 +377,26 @@ func tcFlags(config TCConfig, policy CompiledPolicy) uint32 {
 	}.tcFlags()
 }
 
+func (b *TCBackend) requireUsableLocked() error {
+	return b.health.requireUsable(b.runtime != nil)
+}
+
+// invalidateLocked marks the backend unusable after a policy update failed and
+// its rollback failed too. The policy maps and the control flags that gate them
+// no longer agree and there is no longer a known-good state to compute the next
+// incremental update from, so the data path is switched off and every later
+// operation is refused until the backend is rebuilt. This mirrors
+// SharedNetworkBackend.invalidateLocked.
+func (b *TCBackend) invalidateLocked(operation string, cause error) error {
+	rebuildRequired := b.health.invalidate("TC", operation)
+	b.control.Enabled = 0
+	disableErr := b.updateControlLocked()
+	if disableErr != nil {
+		disableErr = E.Cause(disableErr, "disable unusable TC backend")
+	}
+	return E.Errors(cause, disableErr, rebuildRequired)
+}
+
 func (b *TCBackend) updateControlLocked() error {
 	key := uint32(0)
 	if err := updateMap(b.controlMapFD, unsafe.Pointer(&key), unsafe.Pointer(&b.control)); err != nil {
@@ -387,8 +408,8 @@ func (b *TCBackend) updateControlLocked() error {
 func (b *TCBackend) Enable() error {
 	b.access.Lock()
 	defer b.access.Unlock()
-	if b.runtime == nil {
-		return errBackendClosed
+	if err := b.requireUsableLocked(); err != nil {
+		return err
 	}
 	previousEnabled := b.control.Enabled
 	b.control.Enabled = 1
@@ -417,8 +438,8 @@ func (b *TCBackend) Disable() error {
 func (b *TCBackend) SetDeliveryInterface(interfaceIndex uint32, hardwareAddress MACAddress) error {
 	b.access.Lock()
 	defer b.access.Unlock()
-	if b.runtime == nil {
-		return errBackendClosed
+	if err := b.requireUsableLocked(); err != nil {
+		return err
 	}
 	previousInterface := b.control.DeliveryInterface
 	previousHardwareAddress := b.control.DeliveryMAC
@@ -446,8 +467,8 @@ func (b *TCBackend) RegisterTCPListener(ipv6 bool, fd int) error {
 	value := uint32(fd)
 	b.access.RLock()
 	defer b.access.RUnlock()
-	if b.runtime == nil {
-		return errBackendClosed
+	if err := b.requireUsableLocked(); err != nil {
+		return err
 	}
 	if err := updateMap(b.runtime.maps["tc_listener_sockets"].FD(), unsafe.Pointer(&key), unsafe.Pointer(&value)); err != nil {
 		return E.Cause(err, "register TC eBPF TCP listener")
@@ -493,8 +514,8 @@ func (b *TCBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool, err
 	}
 	b.access.Lock()
 	defer b.access.Unlock()
-	if b.runtime == nil {
-		return false, errBackendClosed
+	if err := b.requireUsableLocked(); err != nil {
+		return false, err
 	}
 	changed, err := replaceDualStackCIDRPolicy(
 		b.runtime.maps["tc_bypass_ipv4"],
@@ -505,8 +526,17 @@ func (b *TCBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool, err
 		"bypass CIDR",
 	)
 	if err != nil {
+		// The replace helper rolls its own partial work back. When that rollback
+		// fails too the maps hold neither policy and there is no state left to
+		// compute the next incremental update from, so the backend has to be
+		// marked unusable here rather than waiting for the control update below.
+		if policyRollbackFailed(err) {
+			return false, b.invalidateLocked("bypass CIDR policy", err)
+		}
 		return false, err
 	}
+	previousIPv4, previousIPv6 := b.bypassIPv4, b.bypassIPv6
+	previousFlags := b.control.Flags
 	b.bypassIPv4 = slices.Clone(policy.ipv4)
 	b.bypassIPv6 = slices.Clone(policy.ipv6)
 	if len(b.bypassIPv4) > 0 {
@@ -520,6 +550,29 @@ func (b *TCBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool, err
 		b.control.Flags &^= 1 << 9
 	}
 	if err = b.updateControlLocked(); err != nil {
+		// The policy maps are already live while the control flags that gate them
+		// are not, and the programs read the flag before the map, so leaving this
+		// half-applied changes what the data plane matches. Put the maps back.
+		_, restoreErr := replaceDualStackCIDRPolicy(
+			b.runtime.maps["tc_bypass_ipv4"],
+			b.runtime.maps["tc_bypass_ipv6"],
+			dualStackCIDRPrefixes(policy),
+			dualStackCIDRPrefixes{previousIPv4, previousIPv6},
+			"TC ",
+			"bypass CIDR",
+		)
+		if restoreErr != nil {
+			// The maps hold neither the old nor the new policy now. Restoring the
+			// in-memory fields would make the next incremental update diff against
+			// a state the kernel is not in and skip the entries that need
+			// repairing, so leave them and refuse further use instead.
+			return false, b.invalidateLocked(
+				"bypass CIDR policy",
+				policyUpdateError(err, restoreErr),
+			)
+		}
+		b.bypassIPv4, b.bypassIPv6 = previousIPv4, previousIPv6
+		b.control.Flags = previousFlags
 		return false, err
 	}
 	return changed, nil
@@ -535,8 +588,8 @@ func (b *TCBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 	}
 	b.access.Lock()
 	defer b.access.Unlock()
-	if b.runtime == nil {
-		return errBackendClosed
+	if err := b.requireUsableLocked(); err != nil {
+		return err
 	}
 	err := replaceHostAddressPolicy(
 		b.runtime.maps["tc_host_ipv4"],
@@ -547,8 +600,17 @@ func (b *TCBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 		ipv6,
 	)
 	if err != nil {
+		// The replace helper rolls its own partial work back. When that rollback
+		// fails too the maps hold neither policy and there is no state left to
+		// compute the next incremental update from, so the backend has to be
+		// marked unusable here rather than waiting for the control update below.
+		if policyRollbackFailed(err) {
+			return b.invalidateLocked("host address policy", err)
+		}
 		return err
 	}
+	previousIPv4, previousIPv6 := b.hostIPv4, b.hostIPv6
+	previousFlags := b.control.Flags
 	b.hostIPv4 = slices.Clone(ipv4)
 	b.hostIPv6 = slices.Clone(ipv6)
 	if len(b.hostIPv4) > 0 {
@@ -561,7 +623,30 @@ func (b *TCBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 	} else {
 		b.control.Flags &^= 1 << 17
 	}
-	return b.updateControlLocked()
+	if err = b.updateControlLocked(); err != nil {
+		// host_selected() checks SB_TC_FLAG_HOST_IPV4/IPV6 before it looks the
+		// address up, so a populated map behind a stale flag is not a bookkeeping
+		// mismatch: the host-address check is skipped entirely. Roll the maps back
+		// to the state the flags still describe.
+		restoreErr := replaceHostAddressPolicy(
+			b.runtime.maps["tc_host_ipv4"],
+			b.runtime.maps["tc_host_ipv6"],
+			ipv4,
+			ipv6,
+			previousIPv4,
+			previousIPv6,
+		)
+		if restoreErr != nil {
+			return b.invalidateLocked(
+				"host address policy",
+				policyUpdateError(err, restoreErr),
+			)
+		}
+		b.hostIPv4, b.hostIPv6 = previousIPv4, previousIPv6
+		b.control.Flags = previousFlags
+		return err
+	}
+	return nil
 }
 
 func makeTCAssignKey(protocol uint8, source, destination netip.AddrPort, interfaceIndex uint32) (tcAssignKey, error) {
