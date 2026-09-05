@@ -3,10 +3,10 @@ targets: bpfel,bpfeb
 cflags: -mcpu=v1 -O2 -g0 -ffreestanding -mllvm -disable-block-placement -mllvm -disable-branch-fold -nostdinc -Inative -isystem <clang-resource>/include -isystem <ndk-sysroot>/usr/include -isystem <ndk-sysroot>/usr/include/aarch64-linux-android
 include_environment: cleared
 bpf2go: v0.22.1-0.20260724091036-00feb08ae4e5
-clang: Android (13989888, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)
+clang: Android (13989888, +pgo, -bolt, +lto, -mlgo, based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)
 7ada1c574ba16872cfa13e7ba78a8011a6d55fcf747ea0db1786366bc50e8a92  native/abi.h
 acef2ae96d9657f06d0533ced13e39509f624074cbcf46197c2ed9909c5844b1  native/bpf_compat.h
-00c921216ead338634a89d8d7c98e85da35d8333d6ac37ac92a1698417e7687c  native/cgroup.bpf.c
+f836bd3cfbcf36b7753254d0d59de2067cd93f3ea5ff6231f95befff94ccedf0  native/cgroup.bpf.c
 5a511a669a2c9a4a3963f341bba98ba7aa553f69c1fcfe6f7e508f606c7a1e73  native/cgroup_coarse.bpf.c
 a01e61913dec4c570fac6c25fae32c490d12ed119be47c5ec2b80890f3966bcd  native/cgroup_storage.bpf.c
 6c4d2462faf69776d1af1c3311c2fd8954122212d2628d17575e9710b1a2aa6c  native/fakeip_policy.h
@@ -18,12 +18,12 @@ ddfc18d40c63fc4852a826111cbe2f61be1c79c6b7e4be939f52d646760207fc  native/shared_
 ab8a1207d1d3547d38d361c7afe863c9d75e69dc010261eb552b882c9e4c826f  native/shared_network_policy.h
 f0939f7c69ac32baacdbe882942c81c5f8f28ba2b06b85494f782986dd5e1fb1  native/shared_network_rewrite.h
 a87a25fe3feff3a0c8f499ff112faa256602743126075b1040ee831fc9b1c5ff  native/tc.bpf.c
-ccc90e76682667be7c2d84493fe930f92576548ddbda65d34a69767504e5aec1  internal/bpfgen/cgroup_bpfeb.o
-5454d1c783380e71493b67811111ce9f2c68ea47f468437534f27183bd1a7553  internal/bpfgen/cgroup_bpfel.o
-5cdcb3a9e3a8eafaab0a755d8c63b733e809b2c9fc9510874629b7b2fa4d0352  internal/bpfgen/cgroup_coarse_bpfeb.o
-c5012d5d4f3d9345d5578487560a0590f521e80fa6872335fb50c52e139dae6e  internal/bpfgen/cgroup_coarse_bpfel.o
-3cdb019d9cb2a88b939e90e32f057b734774bffd5d9ff607032dec4b56020431  internal/bpfgen/cgroup_storage_bpfeb.o
-df8a3b50dbce4e3bcb344a3a84cd28833097cfebcb906aee680ca85f330dd48c  internal/bpfgen/cgroup_storage_bpfel.o
+1a8611aa4392dd906084cb1902bb9bb47b89c4de8f598f23deb498dadb84405f  internal/bpfgen/cgroup_bpfeb.o
+35cc79ef39ccc347cdf8c6be3b386f8b648db0ac16b2dd1b1052e04015126929  internal/bpfgen/cgroup_bpfel.o
+de7581de54abeda45fff69ce288bb785b47dc89e7245779f07abe7de738834e2  internal/bpfgen/cgroup_coarse_bpfeb.o
+b681b6422c7cd6b7e8cad662db31c408babd3ee1390eab701f9864f6f0c2431c  internal/bpfgen/cgroup_coarse_bpfel.o
+f64cbfe4f789466ae15e9a0d873421678d44daee4056aeccd7726936c4b47e82  internal/bpfgen/cgroup_storage_bpfeb.o
+02345b1090ae5fc4afdce3f0e8f4db0fcdba156e7c8b6baaaab0b118f77fc5ce  internal/bpfgen/cgroup_storage_bpfel.o
 2f082b73efd5944790d28b0c0216e1ef871af76a638b6470ad77ad3cf545dc72  internal/bpfgen/shared_network_bpfeb.o
 fa7ca857d1458fe1a6024d61a00153a7eeeded2440f141010af5dab16f64d996  internal/bpfgen/shared_network_bpfel.o
 e7992ace4da05232ec9248f9592327d46e67a832438f7e0706b88f2b4e951ff3  internal/bpfgen/tc_bpfeb.o
