@@ -61,7 +61,7 @@ jobs:
             "PATH=$PATH" \
             SING_BOX_EBPF_INTEGRATION=1 \
             go test -v -count=1 \
-              -run '^Test(TCProgramRun|MapBatch|LRUFallbackBounded)Integration$' \
+              -run '^Test(TCProgramRun|MapBatch|LRUFallbackBounded|FakeIPICMPPassThrough)Integration$' \
               -tags with_ebpf,ebpf_integration \
               ./common/ebpf 2>&1 | tee -a verifier.log
 
