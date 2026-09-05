@@ -154,7 +154,7 @@ func startTCDataPlane(
 		return cleanup(E.Cause(err, "set TC eBPF routing mark"))
 	}
 	if localEnabled {
-		delivery, err := createTCDeliveryLink(backend, priority)
+		delivery, err := dataPlane.createTCDeliveryLink()
 		if err != nil {
 			return cleanup(err)
 		}
@@ -603,7 +603,7 @@ func (d *tcDataPlane) repairInfrastructure() (bool, error) {
 	if !replaceDelivery {
 		return routingChanged || deliveryChanged, routingErr
 	}
-	delivery, err := createTCDeliveryLink(d.backend, d.priority)
+	delivery, err := d.createTCDeliveryLink()
 	if err != nil {
 		return routingChanged || deliveryChanged, E.Errors(
 			routingErr,
@@ -1216,7 +1216,10 @@ func (a *tcInterfaceAttachment) closeLinks() error {
 	return closeErr
 }
 
-func createTCDeliveryLink(backend *commonEBPF.TCBackend, priority uint16) (*tcDeliveryLink, error) {
+func (d *tcDataPlane) createTCDeliveryLink() (*tcDeliveryLink, error) {
+	backend := d.backend
+	priority := d.priority
+	linkByName := d.linkByName()
 	redirectName, deliveryName, err := nextTCVethNames()
 	if err != nil {
 		return nil, err
@@ -1227,18 +1230,25 @@ func createTCDeliveryLink(backend *commonEBPF.TCBackend, priority uint16) (*tcDe
 	if err = netlink.LinkAdd(veth); err != nil {
 		return nil, E.Cause(err, "create TC eBPF delivery link")
 	}
-	delivery := &tcDeliveryLink{redirectName: redirectName, deliveryName: deliveryName}
+	// The pair exists from here on, so it belongs to the delivery link before
+	// anything else can fail. Close deletes whichever end it holds, and the one
+	// LinkAdd was given is enough: it carries the name, which is what LinkDel
+	// resolves the index from. Waiting for the lookup below to fill this in
+	// would leave the pair behind if that lookup is what failed.
+	delivery := &tcDeliveryLink{redirectName: redirectName, deliveryName: deliveryName, redirect: veth}
 	cleanup := func(startErr error) (*tcDeliveryLink, error) {
 		return nil, E.Errors(startErr, delivery.Close())
 	}
-	delivery.redirect, err = netlink.LinkByName(redirectName)
+	redirect, err := linkByName(redirectName)
 	if err != nil {
 		return cleanup(E.Cause(err, "find TC eBPF redirect link"))
 	}
-	delivery.delivery, err = netlink.LinkByName(deliveryName)
+	delivery.redirect = redirect
+	peer, err := linkByName(deliveryName)
 	if err != nil {
 		return cleanup(E.Cause(err, "find TC eBPF delivery peer"))
 	}
+	delivery.delivery = peer
 	for _, link := range []netlink.Link{delivery.redirect, delivery.delivery} {
 		if err = netlink.LinkSetUp(link); err != nil {
 			return cleanup(E.Cause(err, "bring up TC eBPF delivery link ", link.Attrs().Name))
