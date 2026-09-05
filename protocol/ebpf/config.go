@@ -168,9 +168,9 @@ func normalizeFakeIPICMP(mode string) (bool, error) {
 // what local.data_plane=tc and shared.data_plane=socket_assign both load.
 // shared.data_plane=packet_rewrite attaches through a separate backend
 // (SharedNetworkBackend, shared_rewrite_dataplane.go) that this round does
-// not extend, so it is refused explicitly here too rather than silently
-// doing nothing — the same treatment as local.data_plane=cgroup, and for the
-// same reason: no attachment point exists for it yet.
+// not extend. It is therefore not itself a usable path: packet-rewrite-only
+// is refused, while a simultaneously enabled local TC path may answer only
+// its own local traffic.
 func validateFakeIPICMP(
 	enabled bool,
 	fakeIPIPv4, fakeIPIPv6 netip.Prefix,
@@ -196,8 +196,8 @@ func validateFakeIPICMP(
 	}
 	if sharedEnabled && sharedDataPlane == sharedDataPlanePacketRewrite && !hasLocalTC {
 		return E.New(
-			"fakeip_icmp=reply is not supported with shared.data_plane=packet_rewrite alone: ",
-			"it attaches through a different eBPF backend that this does not yet support; use local.data_plane=tc or shared.data_plane=socket_assign",
+			"fakeip_icmp=reply is not supported by shared.data_plane=packet_rewrite: ",
+			"packet_rewrite uses a separate eBPF backend with no fakeip_icmp attachment; use local.data_plane=tc for local traffic or shared.data_plane=socket_assign for shared clients",
 		)
 	}
 	return E.New("fakeip_icmp=reply requires local.data_plane=tc or shared.data_plane=socket_assign to be enabled")

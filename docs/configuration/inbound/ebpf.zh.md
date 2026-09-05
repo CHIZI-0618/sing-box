@@ -105,15 +105,24 @@ FakeIP 地址能够响应 `ping`，部分客户端以此判断目标是否可达
 | 数据面 | `fakeip_icmp: reply` |
 | --- | --- |
 | `local.data_plane: tc` | 支持 |
-| `local.data_plane: cgroup`（且未启用任何共享路径） | 不支持 —— 启动时报错 |
-| `shared.data_plane: socket_assign` | 支持 |
-| `shared.data_plane: packet_rewrite` | 支持 |
+| `local.data_plane: cgroup` | 不支持本机流量 |
+| `shared.data_plane: socket_assign` | 支持 shared 客户端 |
+| `shared.data_plane: packet_rewrite` | 不支持 shared 客户端 |
 
 `local.data_plane: cgroup` 通过在报文构造之前改写 socket 目标地址来实现接管，
-不挂载在任何网络接口上，因此没有可用来响应的位置——仅启用 `cgroup` 本机接管、
-且未启用任何共享路径时开启 `reply` 会在启动时被拒绝。若要在保持
-`local.data_plane` 为 `cgroup` 的同时使用 `reply`，请将 `local.data_plane`
-改为 `tc`，或启用一种共享数据面。
+不挂载在任何网络接口上，因此没有可用来响应的位置。`shared.data_plane:
+packet_rewrite` 使用独立的 `SharedNetworkBackend`，该后端不挂载 FakeIP ICMP
+responder。若启用的路径只有这些不支持路径，开启 `reply` 会在启动时报错。
+
+同时启用本机和 shared 接管时，支持能力按路径分别计算：
+
+- `local: tc` + `shared: packet_rewrite` 可以启动，但只响应本机 TC 流量；shared
+  packet-rewrite 客户端不会收到 FakeIP ICMP 回复。
+- `local: cgroup` + `shared: socket_assign` 可以启动，但只响应 shared 客户端；
+  本机 cgroup 内进程产生的流量不会收到 FakeIP ICMP 回复。
+
+本机流量需要使用 `local.data_plane: tc`，shared 客户端需要使用
+`shared.data_plane: socket_assign`。只有同时启用这两条受支持路径，才能覆盖两者。
 
 ### local
 

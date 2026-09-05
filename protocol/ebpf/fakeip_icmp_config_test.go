@@ -56,7 +56,7 @@ func TestValidateFakeIPICMP(t *testing.T) {
 	}{
 		{name: "disabled is always fine", enabled: false},
 		{
-			name: "disabled ignores a missing FakeIP prefix",
+			name:    "disabled ignores a missing FakeIP prefix",
 			enabled: false, fakeIPIPv4: noPrefix,
 		},
 		{
@@ -67,6 +67,12 @@ func TestValidateFakeIPICMP(t *testing.T) {
 		{
 			name: "reply on local TC", enabled: true, fakeIPIPv4: fakeIPv4,
 			localEnabled: true, localDataPlane: localDataPlaneTC,
+			wantErr: false,
+		},
+		{
+			name: "reply on local TC plus shared packet_rewrite applies only to local TC", enabled: true, fakeIPIPv4: fakeIPv4,
+			localEnabled: true, localDataPlane: localDataPlaneTC,
+			sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite,
 			wantErr: false,
 		},
 		{
@@ -85,7 +91,7 @@ func TestValidateFakeIPICMP(t *testing.T) {
 			wantErr: true, wantErrContains: "shared.data_plane=packet_rewrite",
 		},
 		{
-			name: "reply on cgroup plus shared socket_assign uses the shared path", enabled: true, fakeIPIPv4: fakeIPv4,
+			name: "reply on cgroup plus shared socket_assign applies only to the shared path", enabled: true, fakeIPIPv4: fakeIPv4,
 			localEnabled: true, localDataPlane: localDataPlaneCgroup,
 			sharedEnabled: true, sharedDataPlane: sharedDataPlaneSocketAssign,
 			wantErr: false,
