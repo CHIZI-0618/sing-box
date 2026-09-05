@@ -206,7 +206,7 @@ INLINE bool swap_ethernet_addresses(struct __sk_buff *skb) {
 // returning false, because a caller that only ever passes the packet through
 // on false has no way to tell "not for us" from "cannot be read" apart, and
 // does not need to.
-INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 l3_offset,
+INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 packet_length, __u32 l3_offset,
     const struct sb_fakeip_icmp_control *control, struct ipv4_header **ip, struct icmp_echo_header **icmp) {
     struct ipv4_header *header = data + l3_offset;
     if ((void *)(header + 1) > data_end) return false;
@@ -214,7 +214,7 @@ INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 l3_offset,
     if ((network_order16(header->fragment_offset) & (IPV4_FRAGMENT_OFFSET_MASK | IPV4_FRAGMENT_MORE)) != 0U) return false;
     __u16 total_length = network_order16(header->total_length);
     if (total_length < sizeof(*header) + sizeof(struct icmp_echo_header)) return false;
-    if ((void *)header + total_length > data_end) return false;
+    if (packet_length < l3_offset || (__u32)total_length > packet_length - l3_offset) return false;
     __u8 destination[4];
     __builtin_memcpy(destination, &header->destination, 4U);
     if (!sb_ebpf_must_intercept_fakeip_ipv4(
@@ -236,7 +236,7 @@ INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 l3_offset,
 // hop or routing header ahead of a real echo request is passed through
 // unmodified rather than walked, which is the conservative half of "either
 // explicitly allow or explicitly drop, never parse past what is verified".
-INLINE bool find_ipv6_echo_request(void *data, void *data_end, __u32 l3_offset,
+INLINE bool find_ipv6_echo_request(void *data, void *data_end, __u32 packet_length, __u32 l3_offset,
     const struct sb_fakeip_icmp_control *control, struct ipv6_header **ip, struct icmp_echo_header **icmp) {
     struct ipv6_header *header = data + l3_offset;
     if ((void *)(header + 1) > data_end) return false;
@@ -244,7 +244,7 @@ INLINE bool find_ipv6_echo_request(void *data, void *data_end, __u32 l3_offset,
     if (header->next_header != IPPROTO_ICMPV6_VALUE) return false;
     __u16 payload_length = network_order16(header->payload_length);
     if (payload_length < sizeof(struct icmp_echo_header)) return false;
-    if ((void *)(header + 1) + payload_length > data_end) return false;
+    if (packet_length < l3_offset || (__u32)payload_length + sizeof(*header) > packet_length - l3_offset) return false;
     if (!sb_ebpf_must_intercept_fakeip_ipv6(
             header->destination, control->flags, SB_FAKEIP_ICMP_FLAG_FAKEIP_IPV6,
             control->fakeip_ipv6_prefix, control->fakeip_ipv6_mask)) {
@@ -393,7 +393,7 @@ INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
     if (ether_type == ETH_P_IP_VALUE && (control->flags & SB_FAKEIP_ICMP_FLAG_IPV4) != 0U) {
         struct ipv4_header *ip;
         struct icmp_echo_header *icmp;
-        if (!find_ipv4_echo_request(data, data_end, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
+        if (!find_ipv4_echo_request(data, data_end, skb->len, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
         __be32 old_source = ip->source;
         __be32 old_destination = ip->destination;
         __u8 old_type = icmp->type;
@@ -406,7 +406,7 @@ INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
     if (ether_type == ETH_P_IPV6_VALUE && (control->flags & SB_FAKEIP_ICMP_FLAG_LOCAL_IPV6) != 0U) {
         struct ipv6_header *ip;
         struct icmp_echo_header *icmp;
-        if (!find_ipv6_echo_request(data, data_end, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
+        if (!find_ipv6_echo_request(data, data_end, skb->len, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
         __u8 old_addresses[32];
         __builtin_memcpy(old_addresses, ip->source, 16U);
         __builtin_memcpy(old_addresses + 16U, ip->destination, 16U);
@@ -454,7 +454,7 @@ INLINE int shared_reply(struct __sk_buff *skb, bool ethernet) {
     if (ether_type == ETH_P_IP_VALUE && (control->flags & SB_FAKEIP_ICMP_FLAG_IPV4) != 0U) {
         struct ipv4_header *ip;
         struct icmp_echo_header *icmp;
-        if (!find_ipv4_echo_request(data, data_end, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
+        if (!find_ipv4_echo_request(data, data_end, skb->len, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
         __be32 old_source = ip->source;
         __be32 old_destination = ip->destination;
         __u8 old_type = icmp->type;
@@ -467,7 +467,7 @@ INLINE int shared_reply(struct __sk_buff *skb, bool ethernet) {
     if (ether_type == ETH_P_IPV6_VALUE && (control->flags & SB_FAKEIP_ICMP_FLAG_SHARED_IPV6) != 0U) {
         struct ipv6_header *ip;
         struct icmp_echo_header *icmp;
-        if (!find_ipv6_echo_request(data, data_end, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
+        if (!find_ipv6_echo_request(data, data_end, skb->len, l3_offset, control, &ip, &icmp)) return TC_ACT_UNSPEC;
         __u8 old_addresses[32];
         __builtin_memcpy(old_addresses, ip->source, 16U);
         __builtin_memcpy(old_addresses + 16U, ip->destination, 16U);
