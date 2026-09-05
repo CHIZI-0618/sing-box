@@ -56,7 +56,11 @@ func startTCPolicyRouting(enableIPv6 bool) (*tcPolicyRouting, error) {
 	}
 	routing := &tcPolicyRouting{lock: lock}
 	cleanup := func(startErr error) (*tcPolicyRouting, error) {
-		return nil, E.Errors(startErr, routing.Close())
+		closeErr := routing.Close()
+		if !routing.IsClosed() {
+			return routing, E.Errors(startErr, closeErr)
+		}
+		return nil, E.Errors(startErr, closeErr)
 	}
 	loopback, err := netlink.LinkByName("lo")
 	if err != nil {
@@ -569,26 +573,34 @@ func tcPolicyDeleteIgnored(err error) bool {
 	return err == nil || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ESRCH)
 }
 
+func (r *tcPolicyRouting) IsClosed() bool {
+	return r == nil || len(r.rules) == 0 && len(r.routes) == 0 && r.lock == nil
+}
+
 func (r *tcPolicyRouting) Close() error {
 	if r == nil {
 		return nil
 	}
 	var closeErr error
-	for index := range slices.Backward(r.rules) {
+	for index := len(r.rules) - 1; index >= 0; index-- {
 		if err := netlink.RuleDel(r.rules[index]); !tcPolicyDeleteIgnored(err) {
 			closeErr = E.Errors(closeErr, err)
+		} else {
+			r.rules = slices.Delete(r.rules, index, index+1)
 		}
 	}
-	r.rules = nil
-	for index := range slices.Backward(r.routes) {
+	if len(r.rules) != 0 {
+		return closeErr
+	}
+	for index := len(r.routes) - 1; index >= 0; index-- {
 		if err := netlink.RouteDel(&r.routes[index]); !tcPolicyDeleteIgnored(err) {
 			closeErr = E.Errors(closeErr, err)
+		} else {
+			r.routes = slices.Delete(r.routes, index, index+1)
 		}
 	}
-	r.routes = nil
-	if r.lock != nil {
-		closeErr = E.Errors(closeErr, r.lock.Close())
-		r.lock = nil
+	if len(r.routes) != 0 {
+		return closeErr
 	}
-	return closeErr
+	return E.Errors(closeErr, closeOwned(&r.lock))
 }

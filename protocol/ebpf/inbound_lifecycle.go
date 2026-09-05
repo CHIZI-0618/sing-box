@@ -37,6 +37,9 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 }
 
 func (i *Inbound) startInbound() error {
+	if err := i.closeTCDataPlane(); err != nil {
+		return E.Cause(err, "reclaim previous TC data plane")
+	}
 	if i.localEnabled && i.androidUIDOptions != nil {
 		if err := i.resolveAndroidUIDPolicy(); err != nil {
 			return E.Cause(err, "resolve Android UID policy")
@@ -139,7 +142,8 @@ func (i *Inbound) startInbound() error {
 	}
 	if backend != nil {
 		if err = i.listeners.registerTCTCPListeners(backend); err != nil {
-			return E.Errors(err, backend.Close())
+			i.setTCDataPlane(&tcDataPlane{backend: backend})
+			return E.Errors(err, i.closeTCDataPlane())
 		}
 	}
 	var dataPlane *tcDataPlane
@@ -155,10 +159,10 @@ func (i *Inbound) startInbound() error {
 			len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
 			i.tcPriority,
 		)
+		i.setTCDataPlane(dataPlane)
 		if err != nil {
 			return err
 		}
-		i.setTCDataPlane(dataPlane)
 	}
 	if err = i.startBypassRuleSets(); err != nil {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")
@@ -458,7 +462,7 @@ func (i *Inbound) closeResources() error {
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()
 	udpReplySocketErr := i.udpReplySockets.close()
-	dataPlaneErr := dataPlane.Close()
+	dataPlaneErr := i.closeTakenTCDataPlane(dataPlane)
 	routeErr := i.removeLocalRoutes()
 	selfBypassErr := error(nil)
 	if i.selfBypass != nil {
@@ -613,4 +617,20 @@ func (i *Inbound) reconcileTCDataPlane(localInterface string, sharedInterfaces [
 		return nil
 	}
 	return i.tcDataPlane.reconcile(localInterface, sharedInterfaces, hostAddresses)
+}
+
+// Keep the owner reachable after both normal shutdown and startup cleanup.
+func (i *Inbound) closeTakenTCDataPlane(dataPlane *tcDataPlane) error {
+	err := dataPlane.Close()
+	if !dataPlane.IsClosed() {
+		i.setTCDataPlane(dataPlane)
+		if err == nil {
+			err = E.New("TC eBPF data plane remained open after close")
+		}
+	}
+	return err
+}
+
+func (i *Inbound) closeTCDataPlane() error {
+	return i.closeTakenTCDataPlane(i.takeTCDataPlane())
 }
