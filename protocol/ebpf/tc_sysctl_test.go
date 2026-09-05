@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -314,4 +315,112 @@ func TestRestoreTCSysctlStatesRaisesBeforeLowering(t *testing.T) {
 	assertSysctl(t, "all", "2")
 	assertSysctl(t, "usb0", "0")
 	assertSysctl(t, "wlan0", "0")
+}
+
+// TestClearTCAggregateRPFilterRejectsUnparsableAggregate covers a value that
+// cannot be read at all. Reporting no work to do would let startup succeed while
+// the delivery interface is still behind an aggregate filter nobody lowered, so
+// the failure has to surface and nothing may be touched on the way out.
+func TestClearTCAggregateRPFilterRejectsUnparsableAggregate(t *testing.T) {
+	newTestSysctlRoot(t, map[string]string{
+		"all":         "not-a-number",
+		"wlan0":       "0",
+		"sbd00010001": "0",
+	})
+
+	states, err := clearTCAggregateRPFilter("sbd00010001")
+	if err == nil {
+		t.Fatalf("an unparsable aggregate was accepted, recording %+v", states)
+	}
+	if states != nil {
+		t.Fatalf("states recorded on the failure path: %+v", states)
+	}
+	assertSysctl(t, "all", "not-a-number")
+	assertSysctl(t, "wlan0", "0")
+}
+
+// TestClearTCAggregateRPFilterRejectsUnparsableInterface is the case that
+// matters: pinning an interface whose value cannot be read has to fail before
+// the aggregate knob is cleared. Clearing it anyway would drop that interface
+// from max(all, dev) to whatever dev happens to be, which is the one way this
+// function can weaken a filter rather than preserve it.
+func TestClearTCAggregateRPFilterRejectsUnparsableInterface(t *testing.T) {
+	// ReadDir returns entries in name order, so aaa0 is pinned before zzz0 fails.
+	newTestSysctlRoot(t, map[string]string{
+		"aaa0":        "0",
+		"all":         "2",
+		"sbd00010001": "0",
+		"zzz0":        "corrupt",
+	})
+
+	states, err := clearTCAggregateRPFilter("sbd00010001")
+	if err == nil {
+		t.Fatalf("an unparsable interface value was accepted, recording %+v", states)
+	}
+	if states != nil {
+		t.Fatalf("states recorded on the failure path: %+v", states)
+	}
+	// The aggregate must still be enabled: nothing was allowed to lower it.
+	assertSysctl(t, "all", "2")
+	// The interface pinned before the failure must be back where it started, so
+	// this round leaves no sysctl behind.
+	assertSysctl(t, "aaa0", "0")
+	assertSysctl(t, "zzz0", "corrupt")
+	assertSysctl(t, "sbd00010001", "0")
+}
+
+// TestClearTCAggregateRPFilterSkipsVanishedInterface keeps the one error the
+// loop is allowed to swallow: a directory whose rp_filter is gone belongs to an
+// interface that disappeared between listing and reading.
+func TestClearTCAggregateRPFilterSkipsVanishedInterface(t *testing.T) {
+	root := newTestSysctlRoot(t, map[string]string{
+		"all":         "2",
+		"wlan0":       "0",
+		"sbd00010001": "0",
+	})
+	if err := os.MkdirAll(filepath.Join(root, "gone0"), 0o755); err != nil {
+		t.Fatalf("create gone0: %v", err)
+	}
+
+	states, err := clearTCAggregateRPFilter("sbd00010001")
+	if err != nil {
+		t.Fatalf("a vanished interface should be skipped: %v", err)
+	}
+	assertSysctl(t, "all", "0")
+	assertSysctl(t, "wlan0", "2")
+
+	if err = restoreTCSysctlStates(states); err != nil {
+		t.Fatalf("restore sysctl states: %v", err)
+	}
+	assertSysctl(t, "all", "2")
+	assertSysctl(t, "wlan0", "0")
+}
+
+func TestPinTCInterfaceRPFilterRejectsUnparsableValue(t *testing.T) {
+	newTestSysctlRoot(t, map[string]string{"wlan0": "corrupt"})
+
+	state, changed, err := pinTCInterfaceRPFilter("wlan0", 2)
+	if err == nil {
+		t.Fatal("an unparsable value was reported as needing no change")
+	}
+	if changed {
+		t.Fatalf("a change was reported on the failure path: %+v", state)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the failure looks like a vanished interface and would be skipped: %v", err)
+	}
+	assertSysctl(t, "wlan0", "corrupt")
+}
+
+func TestPinTCInterfaceRPFilterLeavesStrongerInterfaceAlone(t *testing.T) {
+	newTestSysctlRoot(t, map[string]string{"wlan0": "2"})
+
+	_, changed, err := pinTCInterfaceRPFilter("wlan0", 1)
+	if err != nil {
+		t.Fatalf("pin rp_filter: %v", err)
+	}
+	if changed {
+		t.Fatal("an interface already above the aggregate was rewritten")
+	}
+	assertSysctl(t, "wlan0", "2")
 }

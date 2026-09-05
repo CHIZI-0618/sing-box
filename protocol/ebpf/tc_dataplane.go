@@ -1331,7 +1331,13 @@ func clearTCAggregateRPFilter(deliveryName string) ([]tcSysctlState, error) {
 		return nil, E.Cause(err, "read aggregate rp_filter")
 	}
 	aggregate, err := strconv.Atoi(strings.TrimSpace(string(current)))
-	if err != nil || aggregate == 0 {
+	if err != nil {
+		// Reporting no work to do here would let startup succeed while the
+		// delivery interface stays behind an aggregate filter nobody lowered,
+		// which is the silent blackhole this whole mechanism exists to avoid.
+		return nil, E.Cause(err, "parse aggregate rp_filter")
+	}
+	if aggregate == 0 {
 		return nil, nil
 	}
 	entries, err := os.ReadDir(tcSysctlRoot)
@@ -1348,6 +1354,9 @@ func clearTCAggregateRPFilter(deliveryName string) ([]tcSysctlState, error) {
 		}
 		state, changed, pinErr := pinTCInterfaceRPFilter(entry.Name(), aggregate)
 		if pinErr != nil {
+			// Only a vanished interface is skipped; anything else, including a
+			// value that could not be read, has to stop the aggregate knob from
+			// being cleared underneath it.
 			if errors.Is(pinErr, os.ErrNotExist) {
 				continue
 			}
@@ -1369,6 +1378,13 @@ func clearTCAggregateRPFilter(deliveryName string) ([]tcSysctlState, error) {
 
 // pinTCInterfaceRPFilter raises one interface to the aggregate value so that
 // clearing the aggregate knob leaves its effective filter untouched.
+//
+// An unreadable value is an error rather than "nothing to do". Reporting no work
+// here would let the caller go on to clear the aggregate knob, and this
+// interface would silently drop from max(all, dev) to whatever dev happens to
+// be — the one outcome of this function that weakens a filter instead of
+// preserving it. The caller raises the error before the aggregate is cleared and
+// puts back the interfaces it had already pinned.
 func pinTCInterfaceRPFilter(interfaceName string, aggregate int) (tcSysctlState, bool, error) {
 	path := tcInterfaceSysctlPath(interfaceName, "rp_filter")
 	current, err := os.ReadFile(path)
@@ -1376,7 +1392,10 @@ func pinTCInterfaceRPFilter(interfaceName string, aggregate int) (tcSysctlState,
 		return tcSysctlState{}, false, err
 	}
 	value, err := strconv.Atoi(strings.TrimSpace(string(current)))
-	if err != nil || value >= aggregate {
+	if err != nil {
+		return tcSysctlState{}, false, E.Cause(err, "parse rp_filter")
+	}
+	if value >= aggregate {
 		return tcSysctlState{}, false, nil
 	}
 	return setTCSysctl(path, strconv.Itoa(aggregate))
