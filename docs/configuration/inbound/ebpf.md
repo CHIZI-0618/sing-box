@@ -24,6 +24,7 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
   "network": ["tcp", "udp"],
   "udp_timeout": "5m",
   "tc_priority": 1,
+  "fakeip_icmp": "off",
   "bypass_rule_set": [],
   "local": {
     "enabled": true,
@@ -79,6 +80,49 @@ keeps the traditional `clsact` attachment so its numeric ordering remains effect
 
 Traffic to destination IP CIDRs contained in these rule sets bypasses this
 inbound. Non-IP rules are ignored.
+
+#### fakeip_icmp
+
+| Value | Behavior |
+| --- | --- |
+| `off` | ICMP Echo Request to the FakeIP pool is not answered. This is the default. |
+| `reply` | Synthesize a local Echo Reply for ICMP Echo Request destined to the configured FakeIP pool. |
+
+`reply` never proxies ICMP: it recognizes ICMP Echo Request destined to the
+FakeIP address pool and answers immediately with an in-place Echo Reply,
+without ever contacting the request's DNS-mapped destination. This makes a
+FakeIP address respond to `ping`, which some clients use to decide whether a
+destination is reachable. The reply's source address, identifier, sequence,
+and payload are unchanged from the request, and the reply is never longer
+than the request. A response therefore does not measure reachability of, or
+round-trip time to, the proxied destination — it measures only this host's
+own local response time.
+
+`reply` requires at least one FakeIP prefix (IPv4 or IPv6) to be configured
+and at least one of the interception paths in the support matrix below.
+Configuring `reply` without a usable path is a startup error naming the
+unsupported combination, not a silent no-op.
+
+Only the destination ICMP packet's own safe subset is answered: IPv4 with no
+options and no fragmentation, and IPv6 Echo with no extension header ahead of
+it. Anything else — including fragments, non-Echo ICMP, or a packet this
+object cannot safely parse in full — passes through unmodified.
+
+##### Support matrix
+
+| Data plane | `fakeip_icmp: reply` |
+| --- | --- |
+| `local.data_plane: tc` | Supported |
+| `local.data_plane: cgroup` (no shared path enabled) | Not supported — startup error |
+| `shared.data_plane: socket_assign` | Supported |
+| `shared.data_plane: packet_rewrite` | Supported |
+
+`local.data_plane: cgroup` intercepts by rewriting a socket's destination
+address before a packet is ever built, and has no attachment on any network
+interface to answer from — enabling `reply` with only `cgroup` local
+interception and no shared path enabled is refused at startup. Switch
+`local.data_plane` to `tc`, or enable a shared data plane, to use `reply`
+while `local.data_plane` stays `cgroup`.
 
 ### local
 

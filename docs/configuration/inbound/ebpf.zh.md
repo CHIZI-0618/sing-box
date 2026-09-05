@@ -23,6 +23,7 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
   "network": ["tcp", "udp"],
   "udp_timeout": "5m",
   "tc_priority": 1,
+  "fakeip_icmp": "off",
   "bypass_rule_set": [],
   "local": {
     "enabled": true,
@@ -77,6 +78,42 @@ filter 协调顺序时修改。
 #### bypass_rule_set
 
 匹配这些规则集中目标 IP CIDR 的流量绕过此入站，非 IP 规则会被忽略。
+
+#### fakeip_icmp
+
+| 值 | 行为 |
+| --- | --- |
+| `off` | 不响应发往 FakeIP 地址池的 ICMP Echo Request，默认值。 |
+| `reply` | 为发往已配置 FakeIP 地址池的 ICMP Echo Request 合成本地 Echo Reply。 |
+
+`reply` 从不代理 ICMP：它只识别发往 FakeIP 地址池的 ICMP Echo Request，并立即
+在本地原地合成 Echo Reply 作为响应，不会联系该请求 DNS 映射的真实目标。这使得
+FakeIP 地址能够响应 `ping`，部分客户端以此判断目标是否可达。回复的源地址、
+标识符、序列号和负载均与请求保持一致，且回复长度不会超过请求。因此该响应
+反映的不是被代理目标的可达性或往返延迟，而只是本机自身的本地响应时间。
+
+启用 `reply` 要求至少配置一个 FakeIP 前缀（IPv4 或 IPv6），并且至少存在下表中
+一种可用的接管路径。若配置了 `reply` 但没有可用路径，将在启动时报错并指明不受
+支持的组合，而不是静默失效。
+
+`reply` 仅响应目标 ICMP 报文中可验证的安全子集：无选项且未分片的 IPv4，以及
+前面没有扩展头的 IPv6 Echo。其余情况——包括分片报文、非 Echo 的 ICMP，或本对象
+无法完整安全解析的报文——均原样放行。
+
+##### 支持矩阵
+
+| 数据面 | `fakeip_icmp: reply` |
+| --- | --- |
+| `local.data_plane: tc` | 支持 |
+| `local.data_plane: cgroup`（且未启用任何共享路径） | 不支持 —— 启动时报错 |
+| `shared.data_plane: socket_assign` | 支持 |
+| `shared.data_plane: packet_rewrite` | 支持 |
+
+`local.data_plane: cgroup` 通过在报文构造之前改写 socket 目标地址来实现接管，
+不挂载在任何网络接口上，因此没有可用来响应的位置——仅启用 `cgroup` 本机接管、
+且未启用任何共享路径时开启 `reply` 会在启动时被拒绝。若要在保持
+`local.data_plane` 为 `cgroup` 的同时使用 `reply`，请将 `local.data_plane`
+改为 `tc`，或启用一种共享数据面。
 
 ### local
 
