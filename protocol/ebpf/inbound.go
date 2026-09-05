@@ -91,6 +91,7 @@ type Inbound struct {
 	tcPriority               uint16
 	fakeIPIPv4Prefix         netip.Prefix
 	fakeIPIPv6Prefix         netip.Prefix
+	fakeIPICMPReply          bool
 	sharedIncludeMAC         []commonEBPF.MACAddress
 	sharedExcludeMAC         []commonEBPF.MACAddress
 	tcDataPlaneAccess        sync.RWMutex
@@ -143,6 +144,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, err
 	}
 	localDataPlane, cgroupPath, sharedDataPlane := selection.localDataPlane, selection.cgroupPath, selection.sharedDataPlane
+	fakeIPICMPReply, err := normalizeFakeIPICMP(options.FakeIPICMP)
+	if err != nil {
+		return nil, E.Cause(err, "parse fakeip_icmp")
+	}
 	localDNSMode, err := normalizeDNSMode(options.Local.DNSMode)
 	if err != nil {
 		return nil, E.Cause(err, "parse local.dns_mode")
@@ -245,6 +250,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			ExcludeUID: excludeUIDRanges,
 		},
 		androidUIDOptions: newAndroidUIDOptions(options.Local),
+		fakeIPICMPReply:   fakeIPICMPReply,
 	}
 	if inbound.tcPriority == 0 {
 		inbound.tcPriority = defaultTCPriority
@@ -257,6 +263,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 	}
 	if err = inbound.normalizeFakeIPPrefixes(); err != nil {
+		return nil, err
+	}
+	if err = validateFakeIPICMP(
+		fakeIPICMPReply, inbound.fakeIPIPv4Prefix, inbound.fakeIPIPv6Prefix,
+		localEnabled, localDataPlane, sharedEnabled, sharedDataPlane,
+	); err != nil {
 		return nil, err
 	}
 	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort)

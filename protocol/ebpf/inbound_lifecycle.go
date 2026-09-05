@@ -118,6 +118,7 @@ func (i *Inbound) startInbound() error {
 		Policy:           i.compiledPolicy,
 		SelfBypassMap:    i.selfBypass.Map(),
 		TrackProcess:     i.processTracker != nil,
+		FakeIPICMPReply:  i.fakeIPICMPReply,
 	}
 	var backend *commonEBPF.TCBackend
 	if localTCEnabled || sharedSocketAssignEnabled {

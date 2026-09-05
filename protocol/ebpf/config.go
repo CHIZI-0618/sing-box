@@ -136,6 +136,73 @@ func hasAndroidUIDOptions(options option.EBPFLocalOptions) bool {
 	return len(options.IncludeAndroidUser) > 0 || len(options.IncludePackage) > 0 || len(options.ExcludePackage) > 0
 }
 
+const (
+	fakeIPICMPOff   = "off"
+	fakeIPICMPReply = "reply"
+)
+
+// normalizeFakeIPICMP parses the fakeip_icmp option. It does not know yet
+// whether a FakeIP prefix exists or which data planes are active — that
+// depends on state (the DNS transport manager's FakeIP store) normalizeFakeIPICMP
+// is not given, so those checks run later, in validateFakeIPICMP.
+func normalizeFakeIPICMP(mode string) (bool, error) {
+	switch mode {
+	case "", fakeIPICMPOff:
+		return false, nil
+	case fakeIPICMPReply:
+		return true, nil
+	default:
+		return false, E.New("unknown fakeip_icmp: ", mode)
+	}
+}
+
+// validateFakeIPICMP is the second half of fakeip_icmp validation, run once
+// the FakeIP prefixes are resolved and normalized and the local/shared data
+// planes are known. fakeip_icmp=reply needs something to match against and
+// somewhere to attach: refusing explicitly here, rather than accepting a
+// configuration that can never do anything, is what "确认某种模式无法安全支持时，
+// 应在显式开启时返回配置或能力错误" asks for.
+//
+// Attachment in this round rides commonEBPF.TCBackend only (see
+// tc_fakeip_icmp.go and tc_dataplane.go on the common/ebpf side), which is
+// what local.data_plane=tc and shared.data_plane=socket_assign both load.
+// shared.data_plane=packet_rewrite attaches through a separate backend
+// (SharedNetworkBackend, shared_rewrite_dataplane.go) that this round does
+// not extend, so it is refused explicitly here too rather than silently
+// doing nothing — the same treatment as local.data_plane=cgroup, and for the
+// same reason: no attachment point exists for it yet.
+func validateFakeIPICMP(
+	enabled bool,
+	fakeIPIPv4, fakeIPIPv6 netip.Prefix,
+	localEnabled bool, localDataPlane string,
+	sharedEnabled bool, sharedDataPlane string,
+) error {
+	if !enabled {
+		return nil
+	}
+	if !fakeIPIPv4.IsValid() && !fakeIPIPv6.IsValid() {
+		return E.New("fakeip_icmp=reply requires a FakeIP range to be configured (dns fakeip transport)")
+	}
+	hasLocalTC := localEnabled && localDataPlane == localDataPlaneTC
+	hasSharedSocketAssign := sharedEnabled && sharedDataPlane == sharedDataPlaneSocketAssign
+	if hasLocalTC || hasSharedSocketAssign {
+		return nil
+	}
+	if localEnabled && localDataPlane == localDataPlaneCgroup && !sharedEnabled {
+		return E.New(
+			"fakeip_icmp=reply is not supported with local.data_plane=cgroup and no shared interception enabled: ",
+			"cgroup's connect()/sendmsg() hooks cannot see or answer ICMP; switch to local.data_plane=tc, or enable shared.data_plane=socket_assign",
+		)
+	}
+	if sharedEnabled && sharedDataPlane == sharedDataPlanePacketRewrite && !hasLocalTC {
+		return E.New(
+			"fakeip_icmp=reply is not supported with shared.data_plane=packet_rewrite alone: ",
+			"it attaches through a different eBPF backend that this does not yet support; use local.data_plane=tc or shared.data_plane=socket_assign",
+		)
+	}
+	return E.New("fakeip_icmp=reply requires local.data_plane=tc or shared.data_plane=socket_assign to be enabled")
+}
+
 func normalizeDNSMode(mode string) (string, error) {
 	switch mode {
 	case "", dnsModeRespectPolicy:
