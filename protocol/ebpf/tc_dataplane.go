@@ -160,7 +160,7 @@ func startTCDataPlane(
 		}
 		dataPlane.delivery = delivery
 	}
-	attachments, err := attachTCInterfaces(backend, localInterface, sharedInterfaces, sharedSourceMACPolicy, priority)
+	attachments, err := dataPlane.attachTCInterfaces(localInterface, sharedInterfaces)
 	if err != nil {
 		return cleanup(err)
 	}
@@ -174,15 +174,11 @@ func startTCDataPlane(
 	return dataPlane, nil
 }
 
-func attachTCInterfaces(
-	backend *commonEBPF.TCBackend,
+func (d *tcDataPlane) attachTCInterfaces(
 	localInterface string,
 	sharedInterfaces []string,
-	sharedSourceMACPolicy bool,
-	priority uint16,
 ) ([]*tcInterfaceAttachment, error) {
 	roles := make(map[string]tcInterfaceRole, len(sharedInterfaces)+1)
-	attachments := make([]*tcInterfaceAttachment, 0, len(sharedInterfaces)+1)
 	if localInterface != "" {
 		roles[localInterface] = tcInterfaceRole{local: true}
 	}
@@ -191,24 +187,64 @@ func attachTCInterfaces(
 		role.shared = true
 		roles[interfaceName] = role
 	}
-	for interfaceName, role := range roles {
-		link, err := netlink.LinkByName(interfaceName)
+	names := make([]string, 0, len(roles))
+	for interfaceName := range roles {
+		names = append(names, interfaceName)
+	}
+	// reconcile walks its interfaces in this order too. Iterating the map
+	// directly would leave it to chance which interfaces are already attached
+	// when a later one fails, which is the situation the cleanup below covers.
+	slices.Sort(names)
+	attachments := make([]*tcInterfaceAttachment, 0, len(names))
+	linkByName := d.linkByName()
+	// Every attachment made here belongs to this call until it hands the list
+	// back. A failure at any step therefore has to release them: nothing else
+	// knows about them, so filters left attached would keep steering traffic to
+	// a listener that never started, and the interface locks they hold would
+	// turn the next attempt into "already managed by another TC eBPF inbound".
+	cleanup := func(startErr error) ([]*tcInterfaceAttachment, error) {
+		return nil, E.Errors(startErr, closeTCInterfaceAttachments(attachments))
+	}
+	for _, interfaceName := range names {
+		role := roles[interfaceName]
+		link, err := linkByName(interfaceName)
 		if err != nil && role.shared && !role.local && tcLinkNotFound(err) {
 			continue
 		}
 		if err != nil {
-			return nil, E.Cause(err, "find TC eBPF interface ", interfaceName)
+			return cleanup(E.Cause(err, "find TC eBPF interface ", interfaceName))
 		}
-		attachment, err := attachTCInterface(link, backend, role, sharedSourceMACPolicy, priority)
+		attachment, err := d.lockAndAttachInterface(interfaceName, link, role)
 		if err != nil {
-			for _, attachment := range slices.Backward(attachments) {
-				_ = attachment.Close()
-			}
-			return nil, E.Cause(err, "attach TC eBPF interface ", interfaceName)
+			return cleanup(E.Cause(err, "attach TC eBPF interface ", interfaceName))
 		}
 		attachments = append(attachments, attachment)
 	}
 	return attachments, nil
+}
+
+// lockAndAttachInterface takes the interface lock and attaches through the same
+// seam reconcile uses, so both paths agree on who owns the lock when the attach
+// fails.
+func (d *tcDataPlane) lockAndAttachInterface(
+	interfaceName string,
+	link netlink.Link,
+	role tcInterfaceRole,
+) (*tcInterfaceAttachment, error) {
+	framing, err := tcLinkFraming(link)
+	if err != nil {
+		return nil, err
+	}
+	interfaceLock, err := acquireTCInterfaceLock(interfaceName, link.Attrs().Index)
+	if err != nil {
+		return nil, err
+	}
+	return d.attachInterface(
+		interfaceName,
+		tcAttachmentState{index: link.Attrs().Index, framing: framing, role: role},
+		interfaceLock,
+		true,
+	)
 }
 
 func (d *tcDataPlane) deliveryName() string {
@@ -766,33 +802,6 @@ func (d *tcDataPlane) disable() error {
 		return nil
 	}
 	return d.backend.Disable()
-}
-
-func attachTCInterface(
-	link netlink.Link,
-	backend *commonEBPF.TCBackend,
-	role tcInterfaceRole,
-	sharedSourceMACPolicy bool,
-	priority uint16,
-) (*tcInterfaceAttachment, error) {
-	framing, err := tcLinkFraming(link)
-	if err != nil {
-		return nil, err
-	}
-	interfaceLock, err := acquireTCInterfaceLock(link.Attrs().Name, link.Attrs().Index)
-	if err != nil {
-		return nil, err
-	}
-	return attachTCInterfaceWithLock(
-		netlink.LinkByName,
-		backend,
-		link.Attrs().Name,
-		tcAttachmentState{index: link.Attrs().Index, framing: framing, role: role},
-		sharedSourceMACPolicy,
-		priority,
-		interfaceLock,
-		true,
-	)
 }
 
 func attachTCInterfaceWithLock(
