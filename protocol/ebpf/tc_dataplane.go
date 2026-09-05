@@ -25,9 +25,11 @@ import (
 )
 
 const (
-	tcLocalFilterHandle    = 0x5344
-	tcSharedFilterHandle   = 0x5345
-	tcDeliveryFilterHandle = 0x5346
+	tcLocalFilterHandle           = 0x5344
+	tcSharedFilterHandle          = 0x5345
+	tcDeliveryFilterHandle        = 0x5346
+	tcLocalICMPReplyFilterHandle  = 0x5347
+	tcSharedICMPReplyFilterHandle = 0x5348
 )
 
 var tcVethSequence atomic.Uint32
@@ -56,6 +58,15 @@ type tcInterfaceAttachment struct {
 	localLink      link.Link
 	sharedLink     link.Link
 	attachmentType string
+	// localICMPFilter/sharedICMPFilter/localICMPLink/sharedICMPLink are the
+	// fakeip_icmp reply filters, attached alongside localFilter/sharedFilter
+	// under the same role and only when backend.FakeIPICMPEnabled(); nil
+	// whenever that feature is off, the same as every other field here is nil
+	// whenever its own role/attachment-type does not apply.
+	localICMPFilter  *netlink.BpfFilter
+	sharedICMPFilter *netlink.BpfFilter
+	localICMPLink    link.Link
+	sharedICMPLink   link.Link
 }
 
 type tcDeliveryLink struct {
@@ -879,6 +890,19 @@ func attachTCInterfaceWithLock(
 		if err != nil {
 			return cleanup(E.Cause(err, "attach TC local egress filter on interface ", interfaceName))
 		}
+		if backend.FakeIPICMPEnabled() {
+			attachment.localICMPFilter, err = attachTCFilter(
+				link,
+				netlink.HANDLE_MIN_EGRESS,
+				backend.FakeIPICMPLocalReplyProgramFD(framing),
+				"sb_icmp_local",
+				tcLocalICMPReplyFilterHandle,
+				priority,
+			)
+			if err != nil {
+				return cleanup(E.Cause(err, "attach fakeip_icmp local reply filter on interface ", interfaceName))
+			}
+		}
 	}
 	if state.role.shared {
 		attachment.sharedFilter, err = attachTCFilter(
@@ -891,6 +915,19 @@ func attachTCInterfaceWithLock(
 		)
 		if err != nil {
 			return cleanup(E.Cause(err, "attach TC shared ingress filter on interface ", interfaceName))
+		}
+		if backend.FakeIPICMPEnabled() {
+			attachment.sharedICMPFilter, err = attachTCFilter(
+				link,
+				netlink.HANDLE_MIN_INGRESS,
+				backend.FakeIPICMPSharedReplyProgramFD(framing),
+				"sb_icmp_shared",
+				tcSharedICMPReplyFilterHandle,
+				priority,
+			)
+			if err != nil {
+				return cleanup(E.Cause(err, "attach fakeip_icmp shared reply filter on interface ", interfaceName))
+			}
 		}
 	}
 	return attachment, nil
@@ -911,6 +948,14 @@ func attachTCXInterface(linkDevice netlink.Link, backend *commonEBPF.TCBackend, 
 			_ = attachment.sharedLink.Close()
 			attachment.sharedLink = nil
 		}
+		if attachment.localICMPLink != nil {
+			_ = attachment.localICMPLink.Close()
+			attachment.localICMPLink = nil
+		}
+		if attachment.sharedICMPLink != nil {
+			_ = attachment.sharedICMPLink.Close()
+			attachment.sharedICMPLink = nil
+		}
 		return false, err
 	}
 	if attachment.role.local {
@@ -927,6 +972,21 @@ func attachTCXInterface(linkDevice netlink.Link, backend *commonEBPF.TCBackend, 
 			return closeLinks(err)
 		}
 		attachment.localLink = attached
+		if backend.FakeIPICMPEnabled() {
+			icmpProgram := backend.FakeIPICMPLocalReplyProgram(attachment.framing)
+			if icmpProgram == nil {
+				return closeLinks(E.New("fakeip_icmp local reply program is unavailable"))
+			}
+			icmpAttached, err := link.AttachTCX(link.TCXOptions{
+				Interface: linkDevice.Attrs().Index,
+				Program:   icmpProgram,
+				Attach:    CiliumEBPF.AttachTCXEgress,
+			})
+			if err != nil {
+				return closeLinks(err)
+			}
+			attachment.localICMPLink = icmpAttached
+		}
 	}
 	if attachment.role.shared {
 		program := backend.SharedIngressProgram(attachment.framing)
@@ -942,6 +1002,21 @@ func attachTCXInterface(linkDevice netlink.Link, backend *commonEBPF.TCBackend, 
 			return closeLinks(err)
 		}
 		attachment.sharedLink = attached
+		if backend.FakeIPICMPEnabled() {
+			icmpProgram := backend.FakeIPICMPSharedReplyProgram(attachment.framing)
+			if icmpProgram == nil {
+				return closeLinks(E.New("fakeip_icmp shared reply program is unavailable"))
+			}
+			icmpAttached, err := link.AttachTCX(link.TCXOptions{
+				Interface: linkDevice.Attrs().Index,
+				Program:   icmpProgram,
+				Attach:    CiliumEBPF.AttachTCXIngress,
+			})
+			if err != nil {
+				return closeLinks(err)
+			}
+			attachment.sharedICMPLink = icmpAttached
+		}
 	}
 	return true, nil
 }
@@ -989,6 +1064,21 @@ func updateTCInterfaceAttachment(
 			return E.Cause(err, "attach TC local egress filter on interface ", attachment.interfaceName)
 		}
 		addedLocal = true
+		if backend.FakeIPICMPEnabled() && attachment.localICMPFilter == nil {
+			attachment.localICMPFilter, err = attachTCFilter(
+				link,
+				netlink.HANDLE_MIN_EGRESS,
+				backend.FakeIPICMPLocalReplyProgramFD(attachment.framing),
+				"sb_icmp_local",
+				tcLocalICMPReplyFilterHandle,
+				priority,
+			)
+			if err != nil {
+				_ = detachTCFilter(attachment.localFilter)
+				attachment.localFilter = nil
+				return E.Cause(err, "attach fakeip_icmp local reply filter on interface ", attachment.interfaceName)
+			}
+		}
 	}
 	if role.shared && attachment.sharedFilter == nil {
 		attachment.sharedFilter, err = attachTCFilter(
@@ -1003,10 +1093,33 @@ func updateTCInterfaceAttachment(
 			if addedLocal {
 				_ = detachTCFilter(attachment.localFilter)
 				attachment.localFilter = nil
+				_ = detachTCFilter(attachment.localICMPFilter)
+				attachment.localICMPFilter = nil
 			}
 			return E.Cause(err, "attach TC shared ingress filter on interface ", attachment.interfaceName)
 		}
 		addedShared = true
+		if backend.FakeIPICMPEnabled() && attachment.sharedICMPFilter == nil {
+			attachment.sharedICMPFilter, err = attachTCFilter(
+				link,
+				netlink.HANDLE_MIN_INGRESS,
+				backend.FakeIPICMPSharedReplyProgramFD(attachment.framing),
+				"sb_icmp_shared",
+				tcSharedICMPReplyFilterHandle,
+				priority,
+			)
+			if err != nil {
+				_ = detachTCFilter(attachment.sharedFilter)
+				attachment.sharedFilter = nil
+				if addedLocal {
+					_ = detachTCFilter(attachment.localFilter)
+					attachment.localFilter = nil
+					_ = detachTCFilter(attachment.localICMPFilter)
+					attachment.localICMPFilter = nil
+				}
+				return E.Cause(err, "attach fakeip_icmp shared reply filter on interface ", attachment.interfaceName)
+			}
+		}
 	}
 	if !role.shared && attachment.sharedFilter != nil {
 		if err = detachTCFilter(attachment.sharedFilter); err != nil {
@@ -1021,12 +1134,20 @@ func updateTCInterfaceAttachment(
 			return E.Cause(err, "detach TC shared ingress filter from interface ", attachment.interfaceName)
 		}
 		attachment.sharedFilter = nil
+		if attachment.sharedICMPFilter != nil {
+			_ = detachTCFilter(attachment.sharedICMPFilter)
+			attachment.sharedICMPFilter = nil
+		}
 	}
 	if !role.local && attachment.localFilter != nil {
 		if err = detachTCFilter(attachment.localFilter); err != nil {
 			return E.Cause(err, "detach TC local egress filter from interface ", attachment.interfaceName)
 		}
 		attachment.localFilter = nil
+		if attachment.localICMPFilter != nil {
+			_ = detachTCFilter(attachment.localICMPFilter)
+			attachment.localICMPFilter = nil
+		}
 	}
 	attachment.role = role
 	return nil
@@ -1067,25 +1188,70 @@ func updateTCXInterfaceAttachment(
 		} else {
 			attachment.sharedLink = attached
 		}
+		if backend.FakeIPICMPEnabled() {
+			icmpProgram := backend.FakeIPICMPSharedReplyProgram(attachment.framing)
+			if local {
+				icmpProgram = backend.FakeIPICMPLocalReplyProgram(attachment.framing)
+			}
+			if icmpProgram == nil {
+				_ = attached.Close()
+				if local {
+					attachment.localLink = nil
+					return E.New("fakeip_icmp local reply program is unavailable")
+				}
+				attachment.sharedLink = nil
+				return E.New("fakeip_icmp shared reply program is unavailable")
+			}
+			icmpAttached, err := link.AttachTCX(link.TCXOptions{
+				Interface: linkDevice.Attrs().Index,
+				Program:   icmpProgram,
+				Attach:    attachType,
+			})
+			if err != nil {
+				_ = attached.Close()
+				if local {
+					attachment.localLink = nil
+				} else {
+					attachment.sharedLink = nil
+				}
+				return err
+			}
+			if local {
+				attachment.localICMPLink = icmpAttached
+			} else {
+				attachment.sharedICMPLink = icmpAttached
+			}
+		}
 		return nil
 	}
 	detach := func(local bool) error {
 		attached := attachment.sharedLink
+		icmpAttached := attachment.sharedICMPLink
 		if local {
 			attached = attachment.localLink
+			icmpAttached = attachment.localICMPLink
+		}
+		var detachErr error
+		if icmpAttached != nil {
+			detachErr = icmpAttached.Close()
+			if local {
+				attachment.localICMPLink = nil
+			} else {
+				attachment.sharedICMPLink = nil
+			}
 		}
 		if attached == nil {
-			return nil
+			return detachErr
 		}
 		if err := attached.Close(); err != nil {
-			return err
+			return E.Errors(detachErr, err)
 		}
 		if local {
 			attachment.localLink = nil
 		} else {
 			attachment.sharedLink = nil
 		}
-		return nil
+		return detachErr
 	}
 	if err := transitionTCXInterfaceRole(
 		attachment.role,
@@ -1194,9 +1360,13 @@ func (a *tcInterfaceAttachment) closeFilters() error {
 	closeErr := E.Errors(
 		detachTCFilter(a.sharedFilter),
 		detachTCFilter(a.localFilter),
+		detachTCFilter(a.sharedICMPFilter),
+		detachTCFilter(a.localICMPFilter),
 	)
 	a.sharedFilter = nil
 	a.localFilter = nil
+	a.sharedICMPFilter = nil
+	a.localICMPFilter = nil
 	return closeErr
 }
 
@@ -1212,6 +1382,14 @@ func (a *tcInterfaceAttachment) closeLinks() error {
 	if a.localLink != nil {
 		closeErr = E.Errors(closeErr, a.localLink.Close())
 		a.localLink = nil
+	}
+	if a.sharedICMPLink != nil {
+		closeErr = E.Errors(closeErr, a.sharedICMPLink.Close())
+		a.sharedICMPLink = nil
+	}
+	if a.localICMPLink != nil {
+		closeErr = E.Errors(closeErr, a.localICMPLink.Close())
+		a.localICMPLink = nil
 	}
 	return closeErr
 }
