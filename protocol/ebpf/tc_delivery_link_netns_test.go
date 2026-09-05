@@ -70,8 +70,16 @@ func TestCreateTCDeliveryLinkRemovesThePairWhenTheLookupFails(t *testing.T) {
 }
 
 // TestCreateTCDeliveryLinkRemovesThePairWhenAttachingFails covers the same
-// property later in the same function, where the handles are already held: an
-// empty backend has no delivery program, so the filter attach is what fails.
+// property later in the same function, where the handles are already held, the
+// sysctls have already been changed, and clsact has already been ensured: an
+// empty backend has no delivery program loaded, so attachTCFilter is what
+// fails, with "TC eBPF program is unavailable".
+//
+// Asserting that exact message, rather than just that err is non-nil, is what
+// pins this test to the filter-attach step. Without it, an earlier step
+// failing instead — the sysctl writes or ensureTCClsact, which this same
+// function also runs before reaching the filter — would still turn the test
+// green while covering none of what the comment above claims.
 func TestCreateTCDeliveryLinkRemovesThePairWhenAttachingFails(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	dataPlane := &tcDataPlane{backend: &commonEBPF.TCBackend{}, priority: defaultTCPriority}
@@ -79,6 +87,9 @@ func TestCreateTCDeliveryLinkRemovesThePairWhenAttachingFails(t *testing.T) {
 	delivery, err := dataPlane.createTCDeliveryLink()
 	if err == nil {
 		t.Fatalf("attaching with no program loaded was reported as success: %+v", delivery)
+	}
+	if !strings.Contains(err.Error(), "TC eBPF program is unavailable") {
+		t.Fatalf("error = %v, want the filter attach to be what failed", err)
 	}
 	if leftBehind := deliveryPairLeftBehind(t); len(leftBehind) != 0 {
 		t.Fatalf("the delivery pair %v was left behind with nothing owning it", leftBehind)
