@@ -3,7 +3,9 @@
 package ebpf
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	CiliumEBPF "github.com/cilium/ebpf"
@@ -183,5 +185,90 @@ func TestCgroupLockBlocksAnotherOpen(t *testing.T) {
 	}
 	if !lockable(t, directory) {
 		t.Fatal("the lock outlived the handle that held it")
+	}
+}
+
+// TestLockCgroupFileReportsHeldLockNeutrally covers what a caller is told when
+// the cgroup is already locked. The holder may be another running instance or a
+// handle this process itself kept after a close that could not finish, and the
+// lock alone does not say which, so the message must not name a cause. EBUSY is
+// kept because callers match on it.
+func TestLockCgroupFileReportsHeldLockNeutrally(t *testing.T) {
+	directory := t.TempDir()
+	holder, err := os.Open(directory)
+	if err != nil {
+		t.Fatalf("open the holder: %v", err)
+	}
+	defer holder.Close()
+	if err = unix.Flock(int(holder.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatalf("lock the holder: %v", err)
+	}
+
+	contender, err := os.Open(directory)
+	if err != nil {
+		t.Fatalf("open the contender: %v", err)
+	}
+	defer contender.Close()
+
+	err = lockCgroupFile(contender)
+	if err == nil {
+		t.Fatal("locking a cgroup that is already locked reported success")
+	}
+	if !errors.Is(err, unix.EBUSY) {
+		t.Fatalf("error = %v, want it to still report EBUSY", err)
+	}
+	message := err.Error()
+	for _, expected := range []string{
+		"the exclusive lock on this cgroup is already held",
+		"another active instance",
+		"an earlier close that did not finish",
+		"lock cgroup",
+	} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("error = %q, want it to mention %q", message, expected)
+		}
+	}
+	// The message must not settle on one cause.
+	if strings.Contains(message, "another eBPF inbound is already active") {
+		t.Fatalf("error = %q, still names another inbound as the cause", message)
+	}
+}
+
+func TestLockCgroupFileSucceedsOnFreeCgroup(t *testing.T) {
+	directory := t.TempDir()
+	file, err := os.Open(directory)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer file.Close()
+	if err = lockCgroupFile(file); err != nil {
+		t.Fatalf("locking a free cgroup failed: %v", err)
+	}
+	if lockable(t, directory) {
+		t.Fatal("the lock was not actually taken")
+	}
+}
+
+// TestLockCgroupFileKeepsOtherErrorsShaped covers the errors that are not a lock
+// conflict: they keep going through the shared mapping, which is what turns a
+// permission failure into its own explanation.
+func TestLockCgroupFileKeepsOtherErrorsShaped(t *testing.T) {
+	file, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	// Flocking a closed descriptor fails with EBADF rather than EWOULDBLOCK.
+	err = lockCgroupFile(file)
+	if err == nil {
+		t.Fatal("locking through a closed descriptor reported success")
+	}
+	if errors.Is(err, unix.EBUSY) {
+		t.Fatalf("error = %v, want it not to be reported as a lock conflict", err)
+	}
+	if !strings.Contains(err.Error(), "lock cgroup") {
+		t.Fatalf("error = %q, want it to name the operation", err)
 	}
 }

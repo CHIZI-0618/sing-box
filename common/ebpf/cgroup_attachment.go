@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"errors"
+	"os"
 	"strings"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -12,6 +13,29 @@ import (
 	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
 )
+
+// lockCgroupFile takes the exclusive lock that marks this cgroup as managed
+// here.
+//
+// A lock that is already held is still reported as EBUSY, so callers matching
+// on it keep working, but it is described for what is known rather than what is
+// likely. The holder may be another running instance, and it may equally be a
+// handle this process itself has not let go of, because a close that could not
+// detach every program keeps the cgroup open. Naming only the first would send
+// the reader looking for a second process that need not exist.
+func lockCgroupFile(cgroupFile *os.File) error {
+	err := unix.Flock(int(cgroupFile.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, unix.EWOULDBLOCK) {
+		return E.Cause(unix.EBUSY,
+			"the exclusive lock on this cgroup is already held, "+
+				"either by another active instance or by an earlier close that did not finish: ",
+			"lock cgroup")
+	}
+	return eBPFOperationError("lock cgroup", err)
+}
 
 func detachOwnedCgroupPrograms(cgroupFD int) error {
 	for _, definition := range cgroupProgramDefinitions {
