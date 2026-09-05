@@ -401,6 +401,7 @@ func (i *Inbound) checkKernelCapabilities() error {
 			((sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0)) ||
 			len(i.bypassRuleSet) > 0,
 		NeedProcessTracking: localSelected && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
+		FakeIPICMPReply:     i.fakeIPICMPReply,
 	})
 	if err != nil {
 		return E.Cause(err, "probe eBPF kernel capabilities")
