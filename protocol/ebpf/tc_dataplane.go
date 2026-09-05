@@ -85,6 +85,50 @@ type tcDataPlane struct {
 	hostAddresses         []netip.Addr
 	sharedSourceMACPolicy bool
 	priority              uint16
+	// hooks is nil in production. Tests set it to reconcile against synthetic
+	// interfaces, which is the only way to reach the ordering between releasing
+	// an attachment and taking the interface lock of the one that replaced it.
+	hooks *tcDataPlaneHooks
+}
+
+type tcDataPlaneHooks struct {
+	linkByName func(string) (netlink.Link, error)
+	// attach must release a lock it is given ownership of when it fails, the
+	// way attachTCInterfaceWithLock does.
+	attach func(
+		interfaceName string,
+		state tcAttachmentState,
+		lock io.Closer,
+		lockOwned bool,
+	) (*tcInterfaceAttachment, error)
+}
+
+func (d *tcDataPlane) linkByName() func(string) (netlink.Link, error) {
+	if d.hooks != nil && d.hooks.linkByName != nil {
+		return d.hooks.linkByName
+	}
+	return netlink.LinkByName
+}
+
+func (d *tcDataPlane) attachInterface(
+	interfaceName string,
+	state tcAttachmentState,
+	lock io.Closer,
+	lockOwned bool,
+) (*tcInterfaceAttachment, error) {
+	if d.hooks != nil && d.hooks.attach != nil {
+		return d.hooks.attach(interfaceName, state, lock, lockOwned)
+	}
+	return attachTCInterfaceWithLock(
+		d.linkByName(),
+		d.backend,
+		interfaceName,
+		state,
+		d.sharedSourceMACPolicy,
+		d.priority,
+		lock,
+		lockOwned,
+	)
 }
 
 func startTCDataPlane(
@@ -210,6 +254,16 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 			return err
 		}
 	}
+	// Release what no longer describes its interface before anything is attached,
+	// so no stale interface lock is still held when the attach pass takes one.
+	// The shared packet-rewrite data plane releases in this order for the same
+	// reason.
+	if err = d.closeStaleTCAttachmentsLocked(current, desired); err != nil {
+		if hostChanged {
+			err = E.Errors(err, d.backend.UpdateHostAddresses(d.hostAddresses))
+		}
+		return err
+	}
 	rollback := func(rollbackErr error) error {
 		for _, attachment := range d.attachments {
 			if role, loaded := previousRoles[attachment.interfaceName]; loaded && attachment.role != role {
@@ -296,16 +350,7 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 			}
 			lockOwned = true
 		}
-		attachment, attachErr := attachTCInterfaceWithLock(
-			netlink.LinkByName,
-			d.backend,
-			interfaceName,
-			state,
-			d.sharedSourceMACPolicy,
-			d.priority,
-			lock,
-			lockOwned,
-		)
+		attachment, attachErr := d.attachInterface(interfaceName, state, lock, lockOwned)
 		if attachErr != nil {
 			return rollback(E.Cause(attachErr, "attach TC eBPF interface ", interfaceName))
 		}
@@ -315,6 +360,8 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 	}
 	var closeErr error
 	for _, previous := range current {
+		// Everything not wanted was released above and everything wanted was
+		// taken out of this map by the attach pass, so this is a safety net.
 		closeErr = E.Errors(closeErr, previous.Close())
 	}
 	for interfaceName, previous := range replaced {
@@ -352,7 +399,7 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 }
 
 func (d *tcDataPlane) desiredAttachmentState(localInterface string, sharedInterfaces []string) (map[string]tcAttachmentState, error) {
-	desired, err := desiredTCAttachmentState(localInterface, sharedInterfaces, netlink.LinkByName)
+	desired, err := desiredTCAttachmentState(localInterface, sharedInterfaces, d.linkByName())
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +653,57 @@ func (d *tcDeliveryLink) repair(backend *commonEBPF.TCBackend, priority uint16) 
 		changed = true
 	}
 	return changed, false, nil
+}
+
+// closeStaleTCAttachmentsLocked releases the attachments that no longer describe
+// the interface they were created for, before the attach pass takes any lock.
+//
+// Being wanted by name is not enough to keep one. The interface lock is named
+// after the interface index alone, so an attachment holds the lock for the index
+// it was created at, and that index is only still its own while the interface
+// still carries it. An attachment whose interface was renumbered is holding a
+// lock for an index another interface may be given. Keeping such an attachment
+// until the end of the reconciliation makes the interface that took the index
+// fail to attach, whichever order the two are processed in.
+//
+// An attachment still sitting at its own index is left alone: it may be healthy,
+// and deciding that is the attach pass's job.
+//
+// The released attachments leave d.attachments straight away rather than at the
+// end, so the state this data plane reports stays true even when the rest of the
+// reconciliation fails: they are closed, and nothing that follows may treat them
+// as live.
+func (d *tcDataPlane) closeStaleTCAttachmentsLocked(
+	current map[string]*tcInterfaceAttachment,
+	desired map[string]tcAttachmentState,
+) error {
+	stale := make([]string, 0, len(current))
+	for interfaceName, attachment := range current {
+		state, wanted := desired[interfaceName]
+		if !wanted || state.index != attachment.interfaceIndex {
+			stale = append(stale, interfaceName)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	slices.Sort(stale)
+	var closeErr error
+	released := make(map[*tcInterfaceAttachment]bool, len(stale))
+	for _, interfaceName := range stale {
+		attachment := current[interfaceName]
+		released[attachment] = true
+		closeErr = E.Errors(closeErr, attachment.Close())
+		delete(current, interfaceName)
+	}
+	remaining := make([]*tcInterfaceAttachment, 0, len(d.attachments))
+	for _, attachment := range d.attachments {
+		if !released[attachment] {
+			remaining = append(remaining, attachment)
+		}
+	}
+	d.attachments = remaining
+	return closeErr
 }
 
 func closeTCInterfaceAttachments(attachments []*tcInterfaceAttachment) error {
