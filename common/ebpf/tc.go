@@ -241,9 +241,14 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		assignmentMapFD: maps["tc_assignment"].FD(),
 		selfMapExternal: config.EnableLocal && config.SelfBypassMap != nil,
 	}
+	// From here, backend owns maps and loadedPrograms: giving up on either of the
+	// steps below has to close it rather than just returning the step's error, or
+	// what it already holds leaks. Close's own error is folded into the one
+	// reported rather than discarded — calling Close does not by itself mean the
+	// maps and programs it held were actually released, and an error out of it is
+	// exactly the case where they may not have been.
 	if err = backend.updateControlLocked(); err != nil {
-		_ = backend.Close()
-		return nil, err
+		return nil, E.Errors(err, backend.Close())
 	}
 	if err = populateCompiledPolicyMaps(policyMapTargets{
 		Scope:             "TC eBPF",
@@ -257,8 +262,7 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		IncludeSourceMAC:  maps["tc_include_source_mac"],
 		ExcludeSourceMAC:  maps["tc_exclude_source_mac"],
 	}, policy); err != nil {
-		_ = backend.Close()
-		return nil, err
+		return nil, E.Errors(err, backend.Close())
 	}
 	return backend, nil
 }
@@ -325,10 +329,16 @@ func loadTCResources(config TCConfig, baseOverrides map[string]mapSpecOverride, 
 	loadedPrograms, err := loadObjectPrograms(loadTC, maps, selections)
 	if err != nil {
 		if externalSelfMap {
+			// The caller's map is deleted from this map first so closeMaps below
+			// does not reach it: it is not this function's to close, whether or
+			// not the rest of the load succeeded.
 			delete(maps, "tc_self_sockets")
 		}
-		_ = closeMaps(maps)
-		return nil, nil, err
+		// closeMaps closing something here does not mean the map it held is
+		// actually gone — the same caveat as backend.Close() above — but a
+		// failure out of it is still worth reporting alongside the load failure
+		// that made this function give up, rather than being dropped.
+		return nil, nil, E.Errors(err, closeMaps(maps))
 	}
 	programs := make([]*CiliumEBPF.Program, tcProgramCount)
 	for index, program := range loadedPrograms {
