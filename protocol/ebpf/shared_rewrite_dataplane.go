@@ -8,8 +8,10 @@ import (
 	"net/netip"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	CiliumEBPF "github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -22,6 +24,17 @@ const (
 	sharedRewriteIngressFilterHandle = 0x5342
 	sharedRewriteEgressFilterHandle  = 0x5343
 )
+
+var sharedRewriteAttachmentSequence atomic.Uint32
+
+type sharedRewriteAttachmentOptions struct {
+	skipLock  bool
+	temporary bool
+}
+
+func temporarySharedRewriteAttachmentOptions() sharedRewriteAttachmentOptions {
+	return sharedRewriteAttachmentOptions{temporary: true}
+}
 
 type sharedRewriteDataPlane struct {
 	access        sync.Mutex
@@ -40,6 +53,10 @@ type sharedRewriteAttachment struct {
 	lock            io.Closer
 	ingressFilter   *netlink.BpfFilter
 	egressFilter    *netlink.BpfFilter
+	ingressName     string
+	egressName      string
+	ingressHandle   uint16
+	egressHandle    uint16
 	ingressLink     link.Link
 	egressLink      link.Link
 	restoreLocalnet bool
@@ -80,80 +97,152 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 		desired[interfaceName] = device
 	}
 
-	if len(desired) > 0 && d.backend == nil {
-		backend, err := d.owner.prepareBackend()
+	backend := d.backend
+	newBackend := false
+	if len(desired) > 0 && backend == nil {
+		var err error
+		backend, err = d.owner.prepareBackend()
 		if err != nil {
 			return E.Cause(err, "initialize shared packet-rewrite backend")
 		}
-		d.backend = backend
+		newBackend = true
 	}
-	if d.backend != nil && !slices.Equal(d.hostAddresses, hostAddresses) {
-		if err := d.backend.UpdateHostAddresses(hostAddresses); err != nil {
+	hostChanged := backend != nil && !slices.Equal(d.hostAddresses, hostAddresses)
+	if hostChanged {
+		if err := backend.UpdateHostAddresses(hostAddresses); err != nil {
+			if newBackend {
+				return E.Errors(
+					E.Cause(err, "update shared packet-rewrite host addresses"),
+					discardSharedRewriteBackend(d.owner, backend),
+				)
+			}
 			return E.Cause(err, "update shared packet-rewrite host addresses")
 		}
-		d.hostAddresses = slices.Clone(hostAddresses)
 	}
 
-	changed := false
+	current := make(map[string]*sharedRewriteAttachment, len(d.attachments))
 	for name, attachment := range d.attachments {
-		device, keep := desired[name]
-		if keep && device.Attrs().Index == attachment.interfaceIndex {
+		current[name] = attachment
+	}
+	candidate := make(map[string]*sharedRewriteAttachment, len(desired))
+	created := make([]*sharedRewriteAttachment, 0, len(desired))
+	retired := make([]*sharedRewriteAttachment, 0, len(d.attachments))
+	changed := hostChanged
+	names := make([]string, 0, len(desired))
+	for name := range desired {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	cleanupCandidates := func(cause error) error {
+		for _, attachment := range slices.Backward(created) {
+			cause = E.Errors(cause, attachment.Close())
+		}
+		if hostChanged {
+			rollbackErr := backend.UpdateHostAddresses(d.hostAddresses)
+			if rollbackErr != nil {
+				cause = E.Errors(cause, E.Cause(rollbackErr, "rollback shared packet-rewrite host addresses"))
+			}
+		}
+		if newBackend {
+			cause = E.Errors(cause, discardSharedRewriteBackend(d.owner, backend))
+		}
+		return cause
+	}
+
+	for _, name := range names {
+		device := desired[name]
+		previous := current[name]
+		if previous != nil && device.Attrs().Index == previous.interfaceIndex {
 			localnetChanged, err := ensureSharedRewriteLocalnet(name)
 			if err != nil {
-				return E.Cause(err, "repair route_localnet for ", name)
+				return cleanupCandidates(E.Cause(err, "repair route_localnet for ", name))
 			}
 			if localnetChanged {
-				attachment.restoreLocalnet = true
+				previous.restoreLocalnet = true
 			}
-			healthy, err := attachment.healthy(device, d.priority)
+			healthy, err := previous.healthy(device, d.priority)
 			if err != nil {
-				return E.Cause(err, "inspect shared packet-rewrite attachment on ", name)
+				return cleanupCandidates(E.Cause(err, "inspect shared packet-rewrite attachment on ", name))
 			}
 			if healthy {
-				delete(desired, name)
+				candidate[name] = previous
+				delete(current, name)
 				continue
 			}
 		}
-		if err := d.detachLocked(attachment); err != nil {
-			return E.Cause(err, "detach shared packet-rewrite interface ", name)
+		if previous != nil {
+			retired = append(retired, previous)
 		}
-		delete(d.attachments, name)
+		options := sharedRewriteAttachmentOptions{}
+		if previous != nil && device.Attrs().Index == previous.interfaceIndex {
+			options = temporarySharedRewriteAttachmentOptions()
+			options.skipLock = true
+		} else if previous != nil {
+			options = temporarySharedRewriteAttachmentOptions()
+		}
+		attachment, err := attachSharedRewriteInterfaceWithOptions(device, backend, d.priority, options)
+		if err != nil {
+			return cleanupCandidates(E.Cause(err, "attach shared packet-rewrite interface ", name))
+		}
+		candidate[name] = attachment
+		created = append(created, attachment)
 		changed = true
 	}
-	var added []string
-	for name, device := range desired {
-		attachment, err := attachSharedRewriteInterface(device, d.backend, d.priority)
-		if err != nil {
-			rollbackErr := error(nil)
-			for index := len(added) - 1; index >= 0; index-- {
-				addedName := added[index]
-				rollbackErr = E.Errors(rollbackErr, d.detachLocked(d.attachments[addedName]))
-				delete(d.attachments, addedName)
-			}
-			if rollbackErr != nil {
-				rollbackErr = E.Cause(rollbackErr, "rollback new shared packet-rewrite attachments")
-			}
-			return E.Errors(E.Cause(err, "attach shared packet-rewrite interface ", name), rollbackErr)
-		}
-		d.attachments[name] = attachment
-		added = append(added, name)
+	for _, previous := range current {
+		retired = append(retired, previous)
 		changed = true
 	}
 
-	wantEnabled := len(d.attachments) > 0
+	wantEnabled := len(candidate) > 0
 	if wantEnabled != d.enabled {
 		var err error
 		if wantEnabled {
-			err = d.backend.Enable()
-		} else if d.backend != nil {
-			err = d.backend.Disable()
+			err = backend.Enable()
+		} else if backend != nil {
+			err = backend.Disable()
 		}
 		if err != nil {
-			return err
+			return cleanupCandidates(err)
 		}
-		d.enabled = wantEnabled
 		changed = true
 	}
+
+	var closeErr error
+	for _, previous := range retired {
+		replacement := candidate[previous.interfaceName]
+		if replacement != nil && replacement.interfaceIndex == previous.interfaceIndex {
+			lock := previous.lock
+			previous.lock = nil
+			if previous.restoreLocalnet {
+				replacement.restoreLocalnet = true
+				previous.restoreLocalnet = false
+			}
+			if err := d.detachLocked(previous); err != nil {
+				// The candidate is already active. Keep it as the committed state
+				// and report the old attachment cleanup failure to the caller.
+				closeErr = E.Errors(closeErr, E.Cause(err, "detach shared packet-rewrite interface ", previous.interfaceName))
+				changed = true
+				if replacement.lock == nil {
+					replacement.lock = lock
+				}
+				continue
+			}
+			replacement.lock = lock
+		} else {
+			if err := d.detachLocked(previous); err != nil {
+				// Continue committing the candidate topology so a stale attachment
+				// cannot prevent a newly discovered interface from being used.
+				closeErr = E.Errors(closeErr, E.Cause(err, "detach shared packet-rewrite interface ", previous.interfaceName))
+				changed = true
+			}
+		}
+	}
+
+	d.backend = backend
+	d.attachments = candidate
+	d.hostAddresses = slices.Clone(hostAddresses)
+	d.enabled = wantEnabled
 	if changed {
 		d.owner.udpNat.Purge()
 	}
@@ -161,7 +250,17 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 		d.ready = true
 		d.owner.sharedRewriteReadyLocked(d.attachmentDescriptionsLocked())
 	}
-	return nil
+	return closeErr
+}
+
+func discardSharedRewriteBackend(owner *sharedRewrite, backend *commonEBPF.SharedNetworkBackend) error {
+	if backend == nil {
+		return nil
+	}
+	if owner.sharedBackendInstance() == backend {
+		owner.takeSharedBackend()
+	}
+	return backend.Close()
 }
 
 func (d *sharedRewriteDataPlane) detachLocked(attachment *sharedRewriteAttachment) error {
@@ -223,16 +322,43 @@ func attachSharedRewriteInterface(
 	backend *commonEBPF.SharedNetworkBackend,
 	priority uint16,
 ) (*sharedRewriteAttachment, error) {
+	return attachSharedRewriteInterfaceWithOptions(device, backend, priority, sharedRewriteAttachmentOptions{})
+}
+
+func attachSharedRewriteInterfaceWithOptions(
+	device netlink.Link,
+	backend *commonEBPF.SharedNetworkBackend,
+	priority uint16,
+	options sharedRewriteAttachmentOptions,
+) (*sharedRewriteAttachment, error) {
 	name := device.Attrs().Name
 	attachment := &sharedRewriteAttachment{interfaceName: name, interfaceIndex: device.Attrs().Index}
+	var err error
 	cleanup := func(err error) (*sharedRewriteAttachment, error) {
 		return nil, E.Errors(err, attachment.Close())
 	}
-	interfaceLock, err := acquireTCInterfaceLock(name, device.Attrs().Index)
-	if err != nil {
-		return nil, err
+	if !options.skipLock {
+		interfaceLock, err := acquireTCInterfaceLock(name, device.Attrs().Index)
+		if err != nil {
+			return nil, err
+		}
+		attachment.lock = interfaceLock
 	}
-	attachment.lock = interfaceLock
+	attachment.ingressName = "sb_share_in"
+	attachment.egressName = "sb_share_out"
+	attachment.ingressHandle = sharedRewriteIngressFilterHandle
+	attachment.egressHandle = sharedRewriteEgressFilterHandle
+	if options.temporary {
+		sequence := sharedRewriteAttachmentSequence.Add(1) & 0x0fff
+		if sequence == 0 {
+			sequence = 1
+		}
+		suffix := strconv.FormatUint(uint64(sequence), 16)
+		attachment.ingressName = "sbi" + suffix
+		attachment.egressName = "sbo" + suffix
+		attachment.ingressHandle += uint16(sequence)
+		attachment.egressHandle += uint16(sequence)
+	}
 	attachment.restoreLocalnet, err = enableSharedRewriteLocalnet(name)
 	if err != nil {
 		return cleanup(err)
@@ -264,11 +390,11 @@ func attachSharedRewriteInterface(
 	if err = ensureTCClsact(device); err != nil {
 		return cleanup(err)
 	}
-	attachment.egressFilter, err = attachTCFilter(device, netlink.HANDLE_MIN_EGRESS, backend.EgressProgramFD(), "sb_share_out", sharedRewriteEgressFilterHandle, priority)
+	attachment.egressFilter, err = attachTCFilter(device, netlink.HANDLE_MIN_EGRESS, backend.EgressProgramFD(), attachment.egressName, attachment.egressHandle, priority)
 	if err != nil {
 		return cleanup(err)
 	}
-	attachment.ingressFilter, err = attachTCFilter(device, netlink.HANDLE_MIN_INGRESS, backend.IngressProgramFD(), "sb_share_in", sharedRewriteIngressFilterHandle, priority)
+	attachment.ingressFilter, err = attachTCFilter(device, netlink.HANDLE_MIN_INGRESS, backend.IngressProgramFD(), attachment.ingressName, attachment.ingressHandle, priority)
 	if err != nil {
 		return cleanup(err)
 	}
@@ -284,11 +410,11 @@ func (a *sharedRewriteAttachment) healthy(device netlink.Link, priority uint16) 
 		}
 		return tcxLinkAttached(a.egressLink, a.interfaceIndex, CiliumEBPF.AttachTCXEgress)
 	}
-	ingress, err := tcFilterAttached(device, netlink.HANDLE_MIN_INGRESS, "sb_share_in", sharedRewriteIngressFilterHandle, priority)
+	ingress, err := tcFilterAttached(device, netlink.HANDLE_MIN_INGRESS, a.ingressName, a.ingressHandle, priority)
 	if err != nil || !ingress {
 		return false, err
 	}
-	return tcFilterAttached(device, netlink.HANDLE_MIN_EGRESS, "sb_share_out", sharedRewriteEgressFilterHandle, priority)
+	return tcFilterAttached(device, netlink.HANDLE_MIN_EGRESS, a.egressName, a.egressHandle, priority)
 }
 
 func (a *sharedRewriteAttachment) closeLinks() error {
