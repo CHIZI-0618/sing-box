@@ -477,6 +477,9 @@ func (i *Inbound) closeResources() error {
 }
 
 func (i *Inbound) prepareCgroupBackend() error {
+	if err := i.reclaimCgroupBackend(); err != nil {
+		return err
+	}
 	backend, err := commonEBPF.PrepareCgroup(commonEBPF.CgroupConfig{
 		Path:          i.cgroupPath,
 		EnableTCP:     i.enableTCP,
@@ -503,6 +506,60 @@ func (i *Inbound) tcBackend() *commonEBPF.TCBackend {
 		return nil
 	}
 	return i.tcDataPlane.backend
+}
+
+// cgroupBackendCloser is the part of a retained backend the reclaim needs, so
+// the decision can be exercised without loading one.
+type cgroupBackendCloser interface {
+	Close() error
+	IsClosed() bool
+	CgroupPath() string
+}
+
+// reclaimCgroupBackendState retries the close of a retained backend and reports
+// whether it finished. It is a variable so tests can drive both outcomes.
+var reclaimCgroupBackendState = func(backend cgroupBackendCloser) (bool, error) {
+	closeErr := backend.Close()
+	if backend.IsClosed() {
+		return true, closeErr
+	}
+	return false, E.Errors(
+		E.New("cgroup eBPF backend from a previous run is still attached to ", backend.CgroupPath()),
+		closeErr,
+	)
+}
+
+// reclaimCgroupBackend finishes with a backend a previous close could not,
+// before a new one is prepared.
+//
+// Close keeps its runtime when a program could not be detached, so the handles a
+// retry needs stay owned, and closeResources hands the backend back for that
+// reason. Nothing retries it on its own. Two things follow from leaving it
+// alone, and they are different problems.
+//
+// On the same cgroup, the retained handle still holds the exclusive lock
+// PrepareCgroup takes, so preparing a replacement fails at the lock and reports
+// the cgroup as belonging to someone else. Nothing is overwritten there, because
+// the assignment only happens once PrepareCgroup has succeeded; the start simply
+// cannot proceed. On a different cgroup, PrepareCgroup does succeed and the
+// assignment then replaces the retained backend, which is where a reference is
+// genuinely dropped.
+//
+// Retrying here covers both: starting up is when the lifecycle is available
+// again, and this is the same close it already performs. A backend that still
+// will not close is handed back rather than dropped, and the error says what is
+// actually wrong instead of letting the lock failure report it as somebody
+// else's cgroup.
+func (i *Inbound) reclaimCgroupBackend() error {
+	retained := i.takeCgroupBackend()
+	if retained == nil {
+		return nil
+	}
+	reclaimed, err := reclaimCgroupBackendState(retained)
+	if !reclaimed {
+		i.setCgroupBackend(retained)
+	}
+	return err
 }
 
 func (i *Inbound) cgroupBackendInstance() *commonEBPF.CgroupBackend {
