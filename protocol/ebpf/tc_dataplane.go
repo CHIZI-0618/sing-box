@@ -65,8 +65,8 @@ type tcInterfaceAttachment struct {
 	// whenever its own role/attachment-type does not apply.
 	localICMPFilter  *netlink.BpfFilter
 	sharedICMPFilter *netlink.BpfFilter
-	localICMPLink    link.Link
-	sharedICMPLink   link.Link
+	localICMPLink    io.Closer
+	sharedICMPLink   io.Closer
 }
 
 type tcDeliveryLink struct {
@@ -940,23 +940,7 @@ func tcxUnsupportedError(err error) bool {
 
 func attachTCXInterface(linkDevice netlink.Link, backend *commonEBPF.TCBackend, attachment *tcInterfaceAttachment) (bool, error) {
 	closeLinks := func(err error) (bool, error) {
-		if attachment.localLink != nil {
-			_ = attachment.localLink.Close()
-			attachment.localLink = nil
-		}
-		if attachment.sharedLink != nil {
-			_ = attachment.sharedLink.Close()
-			attachment.sharedLink = nil
-		}
-		if attachment.localICMPLink != nil {
-			_ = attachment.localICMPLink.Close()
-			attachment.localICMPLink = nil
-		}
-		if attachment.sharedICMPLink != nil {
-			_ = attachment.sharedICMPLink.Close()
-			attachment.sharedICMPLink = nil
-		}
-		return false, err
+		return false, E.Errors(err, attachment.closeLinks())
 	}
 	if attachment.role.local {
 		program := backend.LocalEgressProgram(attachment.framing)
@@ -1029,6 +1013,36 @@ func updateTCInterfaceAttachment(
 	sharedSourceMACPolicy bool,
 	priority uint16,
 ) error {
+	return updateTCInterfaceAttachmentWithOps(
+		linkByName,
+		backend,
+		attachment,
+		role,
+		sharedSourceMACPolicy,
+		priority,
+		tcInterfaceAttachmentOps{
+			ensureClsact: ensureTCClsact,
+			attachFilter: attachTCFilter,
+			detachFilter: detachTCFilter,
+		},
+	)
+}
+
+type tcInterfaceAttachmentOps struct {
+	ensureClsact func(netlink.Link) error
+	attachFilter func(netlink.Link, uint32, int, string, uint16, uint16) (*netlink.BpfFilter, error)
+	detachFilter func(*netlink.BpfFilter) error
+}
+
+func updateTCInterfaceAttachmentWithOps(
+	linkByName func(string) (netlink.Link, error),
+	backend *commonEBPF.TCBackend,
+	attachment *tcInterfaceAttachment,
+	role tcInterfaceRole,
+	sharedSourceMACPolicy bool,
+	priority uint16,
+	ops tcInterfaceAttachmentOps,
+) error {
 	link, err := linkByName(attachment.interfaceName)
 	if err != nil {
 		return err
@@ -1045,14 +1059,32 @@ func updateTCInterfaceAttachment(
 	if attachment.localLink != nil || attachment.sharedLink != nil {
 		return E.New("TC eBPF interface has an inconsistent attachment type")
 	}
-	if err = ensureTCClsact(link); err != nil {
+	if err = ops.ensureClsact(link); err != nil {
 		return E.Cause(err, "ensure TC clsact on interface ", attachment.interfaceName)
 	}
 	attachment.attachmentType = "clsact"
 	addedLocal := false
+	addedLocalICMP := false
 	addedShared := false
+	addedSharedICMP := false
+	rollbackAdded := func(startErr error) error {
+		var rollbackErr error
+		if addedSharedICMP {
+			rollbackErr = E.Errors(rollbackErr, detachTCFilterOwnedWith(&attachment.sharedICMPFilter, ops.detachFilter))
+		}
+		if addedShared {
+			rollbackErr = E.Errors(rollbackErr, detachTCFilterOwnedWith(&attachment.sharedFilter, ops.detachFilter))
+		}
+		if addedLocalICMP {
+			rollbackErr = E.Errors(rollbackErr, detachTCFilterOwnedWith(&attachment.localICMPFilter, ops.detachFilter))
+		}
+		if addedLocal {
+			rollbackErr = E.Errors(rollbackErr, detachTCFilterOwnedWith(&attachment.localFilter, ops.detachFilter))
+		}
+		return E.Errors(startErr, rollbackErr)
+	}
 	if role.local && attachment.localFilter == nil {
-		attachment.localFilter, err = attachTCFilter(
+		attachment.localFilter, err = ops.attachFilter(
 			link,
 			netlink.HANDLE_MIN_EGRESS,
 			backend.LocalEgressProgramFD(attachment.framing),
@@ -1064,24 +1096,23 @@ func updateTCInterfaceAttachment(
 			return E.Cause(err, "attach TC local egress filter on interface ", attachment.interfaceName)
 		}
 		addedLocal = true
-		if backend.FakeIPICMPEnabled() && attachment.localICMPFilter == nil {
-			attachment.localICMPFilter, err = attachTCFilter(
-				link,
-				netlink.HANDLE_MIN_EGRESS,
-				backend.FakeIPICMPLocalReplyProgramFD(attachment.framing),
-				"sb_icmp_local",
-				tcLocalICMPReplyFilterHandle,
-				priority,
-			)
-			if err != nil {
-				_ = detachTCFilter(attachment.localFilter)
-				attachment.localFilter = nil
-				return E.Cause(err, "attach fakeip_icmp local reply filter on interface ", attachment.interfaceName)
-			}
+	}
+	if role.local && backend.FakeIPICMPEnabled() && attachment.localICMPFilter == nil {
+		attachment.localICMPFilter, err = ops.attachFilter(
+			link,
+			netlink.HANDLE_MIN_EGRESS,
+			backend.FakeIPICMPLocalReplyProgramFD(attachment.framing),
+			"sb_icmp_local",
+			tcLocalICMPReplyFilterHandle,
+			priority,
+		)
+		if err != nil {
+			return rollbackAdded(E.Cause(err, "attach fakeip_icmp local reply filter on interface ", attachment.interfaceName))
 		}
+		addedLocalICMP = true
 	}
 	if role.shared && attachment.sharedFilter == nil {
-		attachment.sharedFilter, err = attachTCFilter(
+		attachment.sharedFilter, err = ops.attachFilter(
 			link,
 			netlink.HANDLE_MIN_INGRESS,
 			backend.SharedIngressProgramFD(attachment.framing),
@@ -1090,63 +1121,38 @@ func updateTCInterfaceAttachment(
 			priority,
 		)
 		if err != nil {
-			if addedLocal {
-				_ = detachTCFilter(attachment.localFilter)
-				attachment.localFilter = nil
-				_ = detachTCFilter(attachment.localICMPFilter)
-				attachment.localICMPFilter = nil
-			}
-			return E.Cause(err, "attach TC shared ingress filter on interface ", attachment.interfaceName)
+			return rollbackAdded(E.Cause(err, "attach TC shared ingress filter on interface ", attachment.interfaceName))
 		}
 		addedShared = true
-		if backend.FakeIPICMPEnabled() && attachment.sharedICMPFilter == nil {
-			attachment.sharedICMPFilter, err = attachTCFilter(
-				link,
-				netlink.HANDLE_MIN_INGRESS,
-				backend.FakeIPICMPSharedReplyProgramFD(attachment.framing),
-				"sb_icmp_shared",
-				tcSharedICMPReplyFilterHandle,
-				priority,
-			)
-			if err != nil {
-				_ = detachTCFilter(attachment.sharedFilter)
-				attachment.sharedFilter = nil
-				if addedLocal {
-					_ = detachTCFilter(attachment.localFilter)
-					attachment.localFilter = nil
-					_ = detachTCFilter(attachment.localICMPFilter)
-					attachment.localICMPFilter = nil
-				}
-				return E.Cause(err, "attach fakeip_icmp shared reply filter on interface ", attachment.interfaceName)
-			}
+	}
+	if role.shared && backend.FakeIPICMPEnabled() && attachment.sharedICMPFilter == nil {
+		attachment.sharedICMPFilter, err = ops.attachFilter(
+			link,
+			netlink.HANDLE_MIN_INGRESS,
+			backend.FakeIPICMPSharedReplyProgramFD(attachment.framing),
+			"sb_icmp_shared",
+			tcSharedICMPReplyFilterHandle,
+			priority,
+		)
+		if err != nil {
+			return rollbackAdded(E.Cause(err, "attach fakeip_icmp shared reply filter on interface ", attachment.interfaceName))
+		}
+		addedSharedICMP = true
+	}
+	if !role.shared {
+		if err = detachTCFilterOwnedWith(&attachment.sharedICMPFilter, ops.detachFilter); err != nil {
+			return rollbackAdded(E.Cause(err, "detach fakeip_icmp shared reply filter from interface ", attachment.interfaceName))
+		}
+		if err = detachTCFilterOwnedWith(&attachment.sharedFilter, ops.detachFilter); err != nil {
+			return rollbackAdded(E.Cause(err, "detach TC shared ingress filter from interface ", attachment.interfaceName))
 		}
 	}
-	if !role.shared && attachment.sharedFilter != nil {
-		if err = detachTCFilter(attachment.sharedFilter); err != nil {
-			if addedShared {
-				_ = detachTCFilter(attachment.sharedFilter)
-				attachment.sharedFilter = nil
-			}
-			if addedLocal {
-				_ = detachTCFilter(attachment.localFilter)
-				attachment.localFilter = nil
-			}
-			return E.Cause(err, "detach TC shared ingress filter from interface ", attachment.interfaceName)
+	if !role.local {
+		if err = detachTCFilterOwnedWith(&attachment.localICMPFilter, ops.detachFilter); err != nil {
+			return rollbackAdded(E.Cause(err, "detach fakeip_icmp local reply filter from interface ", attachment.interfaceName))
 		}
-		attachment.sharedFilter = nil
-		if attachment.sharedICMPFilter != nil {
-			_ = detachTCFilter(attachment.sharedICMPFilter)
-			attachment.sharedICMPFilter = nil
-		}
-	}
-	if !role.local && attachment.localFilter != nil {
-		if err = detachTCFilter(attachment.localFilter); err != nil {
-			return E.Cause(err, "detach TC local egress filter from interface ", attachment.interfaceName)
-		}
-		attachment.localFilter = nil
-		if attachment.localICMPFilter != nil {
-			_ = detachTCFilter(attachment.localICMPFilter)
-			attachment.localICMPFilter = nil
+		if err = detachTCFilterOwnedWith(&attachment.localFilter, ops.detachFilter); err != nil {
+			return rollbackAdded(E.Cause(err, "detach TC local egress filter from interface ", attachment.interfaceName))
 		}
 	}
 	attachment.role = role
@@ -1175,32 +1181,49 @@ func updateTCXInterfaceAttachment(
 			}
 			return E.New("TC eBPF shared program is unavailable")
 		}
-		attached, err := link.AttachTCX(link.TCXOptions{
-			Interface: linkDevice.Attrs().Index,
-			Program:   program,
-			Attach:    attachType,
-		})
-		if err != nil {
-			return err
-		}
+		attached := attachment.sharedLink
 		if local {
-			attachment.localLink = attached
-		} else {
-			attachment.sharedLink = attached
+			attached = attachment.localLink
+		}
+		added := false
+		if attached == nil {
+			var err error
+			attached, err = link.AttachTCX(link.TCXOptions{
+				Interface: linkDevice.Attrs().Index,
+				Program:   program,
+				Attach:    attachType,
+			})
+			if err != nil {
+				return err
+			}
+			added = true
+			if local {
+				attachment.localLink = attached
+			} else {
+				attachment.sharedLink = attached
+			}
 		}
 		if backend.FakeIPICMPEnabled() {
+			icmpExisting := attachment.sharedICMPLink
+			if local {
+				icmpExisting = attachment.localICMPLink
+			}
+			if icmpExisting != nil {
+				return nil
+			}
 			icmpProgram := backend.FakeIPICMPSharedReplyProgram(attachment.framing)
 			if local {
 				icmpProgram = backend.FakeIPICMPLocalReplyProgram(attachment.framing)
 			}
 			if icmpProgram == nil {
-				_ = attached.Close()
+				startErr := E.New("fakeip_icmp shared reply program is unavailable")
 				if local {
-					attachment.localLink = nil
-					return E.New("fakeip_icmp local reply program is unavailable")
+					startErr = E.New("fakeip_icmp local reply program is unavailable")
 				}
-				attachment.sharedLink = nil
-				return E.New("fakeip_icmp shared reply program is unavailable")
+				if added {
+					return E.Errors(startErr, closeTCXRoleLink(attachment, local))
+				}
+				return startErr
 			}
 			icmpAttached, err := link.AttachTCX(link.TCXOptions{
 				Interface: linkDevice.Attrs().Index,
@@ -1208,11 +1231,8 @@ func updateTCXInterfaceAttachment(
 				Attach:    attachType,
 			})
 			if err != nil {
-				_ = attached.Close()
-				if local {
-					attachment.localLink = nil
-				} else {
-					attachment.sharedLink = nil
+				if added {
+					return E.Errors(err, closeTCXRoleLink(attachment, local))
 				}
 				return err
 			}
@@ -1225,39 +1245,22 @@ func updateTCXInterfaceAttachment(
 		return nil
 	}
 	detach := func(local bool) error {
-		attached := attachment.sharedLink
-		icmpAttached := attachment.sharedICMPLink
 		if local {
-			attached = attachment.localLink
-			icmpAttached = attachment.localICMPLink
-		}
-		var detachErr error
-		if icmpAttached != nil {
-			detachErr = icmpAttached.Close()
-			if local {
-				attachment.localICMPLink = nil
-			} else {
-				attachment.sharedICMPLink = nil
+			if err := closeOwned(&attachment.localICMPLink); err != nil {
+				return err
 			}
+			return closeTCXRoleLink(attachment, true)
 		}
-		if attached == nil {
-			return detachErr
+		if err := closeOwned(&attachment.sharedICMPLink); err != nil {
+			return err
 		}
-		if err := attached.Close(); err != nil {
-			return E.Errors(detachErr, err)
-		}
-		if local {
-			attachment.localLink = nil
-		} else {
-			attachment.sharedLink = nil
-		}
-		return detachErr
+		return closeTCXRoleLink(attachment, false)
 	}
 	if err := transitionTCXInterfaceRole(
 		attachment.role,
 		role,
-		attachment.localLink != nil,
-		attachment.sharedLink != nil,
+		attachment.localLink != nil && (!backend.FakeIPICMPEnabled() || attachment.localICMPLink != nil),
+		attachment.sharedLink != nil && (!backend.FakeIPICMPEnabled() || attachment.sharedICMPLink != nil),
 		attach,
 		detach,
 	); err != nil {
@@ -1322,7 +1325,9 @@ func (a *tcInterfaceAttachment) resetAttachment() error {
 		return nil
 	}
 	closeErr := E.Errors(a.closeFilters(), a.closeLinks())
-	a.attachmentType = ""
+	if closeErr == nil {
+		a.attachmentType = ""
+	}
 	return closeErr
 }
 
@@ -1357,17 +1362,12 @@ func (a *tcInterfaceAttachment) closeFilters() error {
 	if a == nil {
 		return nil
 	}
-	closeErr := E.Errors(
-		detachTCFilter(a.sharedFilter),
-		detachTCFilter(a.localFilter),
-		detachTCFilter(a.sharedICMPFilter),
-		detachTCFilter(a.localICMPFilter),
+	return E.Errors(
+		detachTCFilterOwned(&a.sharedICMPFilter),
+		detachTCFilterOwned(&a.sharedFilter),
+		detachTCFilterOwned(&a.localICMPFilter),
+		detachTCFilterOwned(&a.localFilter),
 	)
-	a.sharedFilter = nil
-	a.localFilter = nil
-	a.sharedICMPFilter = nil
-	a.localICMPFilter = nil
-	return closeErr
 }
 
 func (a *tcInterfaceAttachment) closeLinks() error {
@@ -1375,23 +1375,56 @@ func (a *tcInterfaceAttachment) closeLinks() error {
 		return nil
 	}
 	var closeErr error
-	if a.sharedLink != nil {
-		closeErr = E.Errors(closeErr, a.sharedLink.Close())
-		a.sharedLink = nil
-	}
-	if a.localLink != nil {
-		closeErr = E.Errors(closeErr, a.localLink.Close())
-		a.localLink = nil
-	}
-	if a.sharedICMPLink != nil {
-		closeErr = E.Errors(closeErr, a.sharedICMPLink.Close())
-		a.sharedICMPLink = nil
-	}
-	if a.localICMPLink != nil {
-		closeErr = E.Errors(closeErr, a.localICMPLink.Close())
-		a.localICMPLink = nil
-	}
+	closeErr = E.Errors(closeErr, closeOwned(&a.sharedICMPLink))
+	closeErr = E.Errors(closeErr, closeTCXRoleLink(a, false))
+	closeErr = E.Errors(closeErr, closeOwned(&a.localICMPLink))
+	closeErr = E.Errors(closeErr, closeTCXRoleLink(a, true))
 	return closeErr
+}
+
+func detachTCFilterOwned(filter **netlink.BpfFilter) error {
+	return detachTCFilterOwnedWith(filter, detachTCFilter)
+}
+
+func detachTCFilterOwnedWith(filter **netlink.BpfFilter, detach func(*netlink.BpfFilter) error) error {
+	if filter == nil || *filter == nil {
+		return nil
+	}
+	if err := detach(*filter); err != nil {
+		return err
+	}
+	*filter = nil
+	return nil
+}
+
+func closeOwned(closer *io.Closer) error {
+	if closer == nil || *closer == nil {
+		return nil
+	}
+	if err := (*closer).Close(); err != nil {
+		return err
+	}
+	*closer = nil
+	return nil
+}
+
+func closeTCXRoleLink(attachment *tcInterfaceAttachment, local bool) error {
+	attached := attachment.sharedLink
+	if local {
+		attached = attachment.localLink
+	}
+	if attached == nil {
+		return nil
+	}
+	if err := attached.Close(); err != nil {
+		return err
+	}
+	if local {
+		attachment.localLink = nil
+	} else {
+		attachment.sharedLink = nil
+	}
+	return nil
 }
 
 func (d *tcDataPlane) createTCDeliveryLink() (*tcDeliveryLink, error) {
