@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
@@ -195,18 +196,177 @@ func notifyTCInterfaceUpdate(updates chan<- struct{}) {
 	}
 }
 
-func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
-	for {
+const (
+	tcRetryInitialDelay = 2 * time.Second
+	tcRetryMaximumDelay = time.Minute
+)
+
+// tcSharedRewriteOutcome is what the shared packet-rewrite step of one interface
+// update reported.
+//
+// It exists to keep the recovery backoff answerable to that step alone. Every
+// other step of an update reports its own failures through the warning limiters
+// and is retried by the next netlink event as before, because their failures do
+// not leave an interface unattached the way a failed shared packet-rewrite
+// attach does.
+type tcSharedRewriteOutcome int
+
+const (
+	// tcSharedRewriteUnknown means the shared packet-rewrite step did not run,
+	// because the update returned before reaching it. It says nothing about
+	// whether a recovery is outstanding, so a pending retry is left alone rather
+	// than cancelled.
+	tcSharedRewriteUnknown tcSharedRewriteOutcome = iota
+	// tcSharedRewriteSettled means there is nothing to recover: the step
+	// succeeded, or there is no shared packet-rewrite data plane to run.
+	tcSharedRewriteSettled
+	tcSharedRewriteRecoverable
+	// tcSharedRewriteUnrecoverable means the backend is closed or has to be
+	// rebuilt, so repeating the attach cannot succeed.
+	tcSharedRewriteUnrecoverable
+)
+
+// tcRetryTimer is the slice of *time.Timer this loop needs, reduced to the two
+// operations a round performs. A round makes at most one of them: an
+// event-driven round that finds the shared step did not run makes none, because
+// it must leave the deadline it did not observe exactly as it was. Arming hides
+// the stop-and-drain a bare Reset would require, which keeps a signal from a
+// previous delay out of the next one. Tests substitute it to drive the backoff
+// without waiting on real time.
+type tcRetryTimer interface {
+	Arm(delay time.Duration)
+	Disarm()
+	Expired() <-chan time.Time
+}
+
+type tcRealRetryTimer struct {
+	timer *time.Timer
+}
+
+// newTCRetryTimer returns a timer that is not running, so the loop can hold one
+// for its whole life and arm it only when a recovery is outstanding.
+func newTCRetryTimer() tcRetryTimer {
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	return &tcRealRetryTimer{timer: timer}
+}
+
+func (t *tcRealRetryTimer) Arm(delay time.Duration) {
+	t.drain()
+	t.timer.Reset(delay)
+}
+
+func (t *tcRealRetryTimer) Disarm() {
+	t.drain()
+}
+
+func (t *tcRealRetryTimer) drain() {
+	if !t.timer.Stop() {
 		select {
-		case <-ctx.Done():
-			return
-		case <-updates:
-			i.updateTCInterfaces(ctx)
+		case <-t.timer.C:
+		default:
 		}
 	}
 }
 
-func (i *Inbound) updateTCInterfaces(ctx context.Context) {
+func (t *tcRealRetryTimer) Expired() <-chan time.Time { return t.timer.C }
+
+var tcRetryTimerFactory = newTCRetryTimer
+
+func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
+	runTCInterfaceUpdateLoop(ctx, updates, i.updateTCInterfaces)
+}
+
+// runTCInterfaceUpdateLoop drives interface updates from netlink notifications
+// and, when a shared packet-rewrite attach failed, from a backoff timer.
+//
+// The timer is armed only for that one failure. A netlink notification still
+// runs an update immediately, but it never resets the backoff: this data plane
+// generates netlink events of its own while attaching and detaching, and an
+// unrelated event on another interface arrives just as often, so treating any
+// event as progress would keep restarting the delay and turn the backoff into a
+// busy loop. The delay resets only after a round that reported nothing left to
+// recover.
+func runTCInterfaceUpdateLoop(
+	ctx context.Context,
+	updates <-chan struct{},
+	update func(context.Context) tcSharedRewriteOutcome,
+) {
+	retryTimer := tcRetryTimerFactory()
+	defer retryTimer.Disarm()
+	var (
+		retryChannel <-chan time.Time
+		retryDelay   time.Duration
+	)
+	arm := func(delay time.Duration) {
+		retryTimer.Arm(delay)
+		retryChannel = retryTimer.Expired()
+	}
+	disarm := func() {
+		retryTimer.Disarm()
+		retryChannel = nil
+	}
+	for {
+		// The timer's channel is only selected on while a recovery is outstanding,
+		// so a disarmed timer cannot deliver a signal from an earlier delay.
+		triggeredByTimer := false
+		select {
+		case <-ctx.Done():
+			return
+		case <-updates:
+		case <-retryChannel:
+			triggeredByTimer = true
+		}
+		// A notification and the timer can be ready together and select picks one
+		// at random. The two queued signals are handled differently and neither
+		// is lost: arming or disarming below drains a timer fire that was already
+		// queued, since it belongs to a deadline this round has just superseded,
+		// while a queued notification stays in its channel and drives the next
+		// round.
+		if ctx.Err() != nil {
+			return
+		}
+		switch update(ctx) {
+		case tcSharedRewriteRecoverable:
+			// Advance on every failed round, including one an event triggered, so
+			// a stream of events cannot hold the delay down.
+			retryDelay = nextTCRetryDelay(retryDelay)
+			arm(retryDelay)
+		case tcSharedRewriteUnknown:
+			// The step did not run, so it says nothing about an outstanding
+			// recovery. Only re-arm when the timer is what woke this round: its
+			// deadline has passed and the retry would otherwise be dropped. An
+			// event-driven round leaves the existing deadline alone, or a stream
+			// of events returning early would postpone the retry indefinitely.
+			if triggeredByTimer && retryDelay > 0 {
+				arm(retryDelay)
+			}
+		default:
+			retryDelay = 0
+			disarm()
+		}
+	}
+}
+
+func nextTCRetryDelay(current time.Duration) time.Duration {
+	if current <= 0 {
+		return tcRetryInitialDelay
+	}
+	next := current * 2
+	if next > tcRetryMaximumDelay {
+		return tcRetryMaximumDelay
+	}
+	return next
+}
+
+// updateTCInterfaces runs one reconciliation pass and reports what the shared
+// packet-rewrite step made of it. The result is set in that step alone; the
+// steps after it report their own failures through the warning limiters and
+// must not overwrite it, or a shared packet-rewrite recovery would be cancelled
+// by an unrelated success.
+func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcSharedRewriteOutcome) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -238,9 +398,15 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		previous := i.sharedRewrite.dataPlane.attachmentDescriptions()
 		if err = i.sharedRewrite.dataPlane.reconcile(sharedInterfaces, hostAddresses); err != nil {
 			i.interfaceWarnings.reconcile.warn(i.logger, "refresh shared packet-rewrite interfaces: ", err)
-		} else if attachments := i.sharedRewrite.dataPlane.attachmentDescriptions(); !slices.Equal(previous, attachments) {
-			i.logger.Debug("eBPF shared packet-rewrite attachments updated: attachments=[", strings.Join(attachments, ", "), "]")
+			outcome = i.sharedRewrite.dataPlane.retryOutcome()
+		} else {
+			outcome = tcSharedRewriteSettled
+			if attachments := i.sharedRewrite.dataPlane.attachmentDescriptions(); !slices.Equal(previous, attachments) {
+				i.logger.Debug("eBPF shared packet-rewrite attachments updated: attachments=[", strings.Join(attachments, ", "), "]")
+			}
 		}
+	} else {
+		outcome = tcSharedRewriteSettled
 	}
 	infrastructureChanged, err := i.repairTCInfrastructure()
 	infrastructureHealthy := err == nil
@@ -284,6 +450,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 			"]",
 		)
 	}
+	return outcome
 }
 
 func (i *Inbound) repairTCInfrastructure() (bool, error) {

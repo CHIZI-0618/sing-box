@@ -295,3 +295,30 @@ func TestPurgeInvalidatedFlowsRunsOnlyWhenInvalidated(t *testing.T) {
 type failingCloser struct{}
 
 func (failingCloser) Close() error { return E.New("synthetic close failure") }
+
+// TestApplyAttachmentsLeavesHealthyInterfaceUntouched covers what keeps a retry
+// from re-attaching an interface that is already working. reconcile drops a
+// healthy attachment from the desired set before this pass runs, so a retry that
+// finds nothing left to recover must not detach or attach anything.
+func TestApplyAttachmentsLeavesHealthyInterfaceUntouched(t *testing.T) {
+	harness := newTestSharedRewriteHarness(t, nil)
+	harness.attached("eth0", 2)
+	existing := harness.dataPlane.attachments["eth0"]
+
+	// The desired set is empty because reconcile recognised eth0 as healthy.
+	if err := harness.apply(nil, map[string]netlink.Link{}); err != nil {
+		t.Fatalf("apply attachments: %v", err)
+	}
+	if harness.attachCalls["eth0"] != 0 {
+		t.Fatalf("attach called %d times for a healthy interface, want 0", harness.attachCalls["eth0"])
+	}
+	if harness.dataPlane.attachments["eth0"] != existing {
+		t.Fatalf("the healthy attachment was replaced: %+v", harness.dataPlane.attachments["eth0"])
+	}
+	if harness.purgeCalls != 0 {
+		t.Fatalf("udpNat purged %d times with nothing detached, want 0", harness.purgeCalls)
+	}
+	if !harness.dataPlane.enabled {
+		t.Fatal("the backend was disabled while a healthy attachment is in place")
+	}
+}

@@ -49,6 +49,10 @@ type sharedRewriteDataPlaneHooks struct {
 	attach      sharedRewriteAttachFunc
 	setEnabled  func(enabled bool) error
 	purgeUDPNat func()
+	// backendState stands in for the backend's own health reporting, which a
+	// test cannot put into the "still open but has to be rebuilt" state from
+	// outside the package that owns it.
+	backendState func() (closed bool, requiresRebuild bool)
 }
 
 type sharedRewriteAttachFunc func(
@@ -122,8 +126,8 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	// Collect what has to go instead of detaching it here. An attachment that is
 	// being replaced has to stay in place until its replacement exists: a filter
 	// and its interface lock cannot coexist with a second copy, so detaching
-	// first and failing to reattach leaves the interface completely unattached,
-	// and nothing retries until the next netlink event.
+	// first and failing to reattach leaves the interface unattached until a
+	// recovery round puts it back.
 	var stale []string
 	for name, attachment := range d.attachments {
 		device, keep := desired[name]
@@ -221,10 +225,10 @@ func (d *sharedRewriteDataPlane) applyAttachmentsLocked(
 		if err != nil {
 			rollbackErr := error(nil)
 			if replacing {
-				// This retries the call that just failed. It recovers a transient
-				// failure and nothing more: a persistent one leaves the interface
-				// unattached until the next netlink event, because there is no
-				// backoff retry in this data plane.
+				// This retries the call that just failed, which covers a failure
+				// that has already passed by the time the second call runs. A
+				// persistent one leaves the interface unattached and is reported
+				// to the caller, whose backoff schedules the next attempt.
 				restored, restoreErr := d.attachInterfaceLocked(device)
 				if restoreErr != nil {
 					rollbackErr = E.Errors(rollbackErr, E.Cause(restoreErr, "restore shared packet-rewrite interface ", name))
@@ -516,4 +520,34 @@ func restoreSharedRewriteLocalnet(interfaceName string) error {
 		return E.Cause(err, "restore route_localnet for ", interfaceName)
 	}
 	return nil
+}
+
+// retryOutcome classifies a failed reconcile for the recovery backoff. Repeating
+// an attach can only help while the backend is still usable: once it is closed
+// or has to be rebuilt, every later attempt fails the same way, and recovery has
+// to come from a restart instead.
+func (d *sharedRewriteDataPlane) retryOutcome() tcSharedRewriteOutcome {
+	if d == nil {
+		return tcSharedRewriteUnrecoverable
+	}
+	d.access.Lock()
+	defer d.access.Unlock()
+	closed, requiresRebuild := d.backendStateLocked()
+	if closed || requiresRebuild {
+		return tcSharedRewriteUnrecoverable
+	}
+	return tcSharedRewriteRecoverable
+}
+
+// backendStateLocked reports the two conditions that make another attach
+// pointless. A backend that has not been built yet is neither: the next attempt
+// may manage to build it.
+func (d *sharedRewriteDataPlane) backendStateLocked() (closed bool, requiresRebuild bool) {
+	if d.hooks != nil && d.hooks.backendState != nil {
+		return d.hooks.backendState()
+	}
+	if d.backend == nil {
+		return false, false
+	}
+	return d.backend.IsClosed(), d.backend.RequiresRebuild()
 }

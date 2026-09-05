@@ -517,6 +517,18 @@ func (b *SharedNetworkBackend) Close() error {
 	return closeErr
 }
 
+// RequiresRebuild reports whether a failed policy rollback left this backend
+// unusable. Every operation on it fails from then on, so a caller retrying
+// one can stop instead of repeating work that cannot succeed.
+func (b *SharedNetworkBackend) RequiresRebuild() bool {
+	if b == nil {
+		return false
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.health.rebuildRequired != nil
+}
+
 func (b *SharedNetworkBackend) IsClosed() bool {
 	if b == nil {
 		return true
