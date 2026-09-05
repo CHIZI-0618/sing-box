@@ -212,6 +212,9 @@ INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 l3_offset,
     if ((void *)(header + 1) > data_end) return false;
     if (header->version != 4U || header->ihl != 5U || header->protocol != IPPROTO_ICMP_VALUE) return false;
     if ((network_order16(header->fragment_offset) & (IPV4_FRAGMENT_OFFSET_MASK | IPV4_FRAGMENT_MORE)) != 0U) return false;
+    __u16 total_length = network_order16(header->total_length);
+    if (total_length < sizeof(*header) + sizeof(struct icmp_echo_header)) return false;
+    if ((void *)header + total_length > data_end) return false;
     __u8 destination[4];
     __builtin_memcpy(destination, &header->destination, 4U);
     if (!sb_ebpf_must_intercept_fakeip_ipv4(
@@ -239,6 +242,9 @@ INLINE bool find_ipv6_echo_request(void *data, void *data_end, __u32 l3_offset,
     if ((void *)(header + 1) > data_end) return false;
     if ((network_order32(header->version_flow) >> 28U) != 6U) return false;
     if (header->next_header != IPPROTO_ICMPV6_VALUE) return false;
+    __u16 payload_length = network_order16(header->payload_length);
+    if (payload_length < sizeof(struct icmp_echo_header)) return false;
+    if ((void *)(header + 1) + payload_length > data_end) return false;
     if (!sb_ebpf_must_intercept_fakeip_ipv6(
             header->destination, control->flags, SB_FAKEIP_ICMP_FLAG_FAKEIP_IPV6,
             control->fakeip_ipv6_prefix, control->fakeip_ipv6_mask)) {
