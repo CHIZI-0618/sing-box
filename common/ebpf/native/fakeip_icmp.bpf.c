@@ -174,9 +174,14 @@ INLINE bool parse_ethernet(void *data, void *data_end, __u16 *protocol, __u32 *l
 }
 
 // swap_ethernet_addresses exchanges the frame's source and destination MAC
-// addresses in place, so a reflected reply is addressed back to the client
-// that sent the request rather than toward whatever the request's own
-// destination MAC was (this box's own interface).
+// addresses in place. shared_reply uses this so the reflected reply is
+// addressed back to the client that sent the request rather than toward
+// whatever the request's own destination MAC was (this box's own interface).
+// local_reply uses the same swap for a different reason: the frame's own
+// source address, now in the destination field, is this device's own
+// address, which is what lets the reinjected frame read as PACKET_HOST
+// instead of PACKET_OTHERHOST once it re-enters this device's own receive
+// path (see local_reply's own comment).
 INLINE bool swap_ethernet_addresses(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
@@ -273,6 +278,15 @@ INLINE bool find_ipv6_echo_request(void *data, void *data_end, __u32 l3_offset,
 // ICMP message itself — so the address swap needs no update there at all;
 // only the type field's checksum contribution changes, patched with the
 // known old and new 16-bit type+code word.
+//
+// That word is assembled with a byte copy rather than a host-order shift
+// (type << 8 | code): l3_csum_replace/l4_csum_replace treat "from"/"to" as
+// the field's raw on-the-wire bytes, the same convention old_port/new_port
+// already rely on elsewhere in this codebase without any ntohs/htons
+// applied. A shift bakes in one specific byte order, which only matches one
+// of the two endianness targets this same source is compiled for (bpfel and
+// bpfeb) — the other silently gets a checksum patched against a byte-swapped
+// word, valid-looking to the compiler but wrong on the wire.
 INLINE int reply_ipv4_echo(struct __sk_buff *skb, __u32 l3_offset, __be32 old_source, __be32 old_destination, __u8 old_type, __u8 old_code) {
     __be32 new_source = old_destination;
     __be32 new_destination = old_source;
@@ -280,10 +294,14 @@ INLINE int reply_ipv4_echo(struct __sk_buff *skb, __u32 l3_offset, __be32 old_so
     __u32 destination_offset = l3_offset + __builtin_offsetof(struct ipv4_header, destination);
     __u32 checksum_offset = l3_offset + __builtin_offsetof(struct ipv4_header, checksum);
     __u32 icmp_offset = l3_offset + 20U;
-    __u16 old_type_code = ((__u16)old_type << 8) | (__u16)old_code;
-    __u16 new_type_code = (__u16)ICMP_ECHO_REPLY_VALUE << 8;
-    __u32 icmp_checksum_offset = icmp_offset + __builtin_offsetof(struct icmp_echo_header, checksum);
     __u8 new_type = (__u8)ICMP_ECHO_REPLY_VALUE;
+    __u8 old_type_code_bytes[2] = {old_type, old_code};
+    __u8 new_type_code_bytes[2] = {new_type, old_code};
+    __u16 old_type_code;
+    __u16 new_type_code;
+    __builtin_memcpy(&old_type_code, old_type_code_bytes, 2U);
+    __builtin_memcpy(&new_type_code, new_type_code_bytes, 2U);
+    __u32 icmp_checksum_offset = icmp_offset + __builtin_offsetof(struct icmp_echo_header, checksum);
     if (l3_csum_replace(skb, checksum_offset, old_source, new_source, 4U) != 0 ||
         l3_csum_replace(skb, checksum_offset, old_destination, new_destination, 4U) != 0 ||
         l4_csum_replace(skb, icmp_checksum_offset, old_type_code, new_type_code, 2U) != 0 ||
@@ -310,10 +328,16 @@ INLINE int reply_ipv6_echo(struct __sk_buff *skb, __u32 l3_offset, const __u8 ol
     __builtin_memcpy(new_addresses + 16U, old_addresses, 16U);
     __u32 source_offset = l3_offset + __builtin_offsetof(struct ipv6_header, source);
     __u32 icmp_offset = l3_offset + sizeof(struct ipv6_header);
-    __u16 old_type_code = ((__u16)old_type << 8) | (__u16)old_code;
-    __u16 new_type_code = (__u16)ICMPV6_ECHO_REPLY_VALUE << 8;
-    __u32 icmp_checksum_offset = icmp_offset + __builtin_offsetof(struct icmp_echo_header, checksum);
     __u8 new_type = (__u8)ICMPV6_ECHO_REPLY_VALUE;
+    // See reply_ipv4_echo: a byte copy, not a host-order shift, so the same
+    // source compiles correctly for both the bpfel and bpfeb targets.
+    __u8 old_type_code_bytes[2] = {old_type, old_code};
+    __u8 new_type_code_bytes[2] = {new_type, old_code};
+    __u16 old_type_code;
+    __u16 new_type_code;
+    __builtin_memcpy(&old_type_code, old_type_code_bytes, 2U);
+    __builtin_memcpy(&new_type_code, new_type_code_bytes, 2U);
+    __u32 icmp_checksum_offset = icmp_offset + __builtin_offsetof(struct icmp_echo_header, checksum);
     __s64 address_diff = csum_diff((const __be32 *)old_addresses, 32U, (const __be32 *)new_addresses, 32U, 0U);
     if (address_diff < 0) return TC_ACT_SHOT;
     if (l4_csum_replace(skb, icmp_checksum_offset, 0U, (__u64)address_diff, BPF_F_PSEUDO_HDR) != 0 ||
@@ -334,6 +358,18 @@ INLINE int reply_ipv6_echo(struct __sk_buff *skb, __u32 l3_offset, const __u8 ol
 // BPF_F_INGRESS) — the same device's own receive path, so the reply is
 // delivered to the pinging socket exactly as a genuine incoming reply would
 // be, without a socket lookup or an sk_assign ever entering into it.
+//
+// On an Ethernet-framed interface, the redirected frame is re-classified by
+// eth_type_trans on the way back into this device's own receive path, which
+// compares the frame's destination address against the device's own address
+// to decide pkt_type: PACKET_HOST if they match, PACKET_OTHERHOST otherwise.
+// The original request's destination was the far side's address (this device
+// was only ever transmitting it), so without correction the reinjected frame
+// reads as addressed to someone else and the IP stack silently drops it
+// before it ever reaches the listening socket. Swapping source and
+// destination — the same operation shared_reply already does to address its
+// reflected frame back to the real sender — happens to also solve this,
+// since the request's own source is this device's own address.
 INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
     const struct sb_fakeip_icmp_control *control = load_control();
     if (control == 0 || (control->flags & SB_FAKEIP_ICMP_FLAG_ENABLED) == 0U) return TC_ACT_UNSPEC;
@@ -356,6 +392,7 @@ INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
         __be32 old_destination = ip->destination;
         __u8 old_type = icmp->type;
         __u8 old_code = icmp->code;
+        if (ethernet && !swap_ethernet_addresses(skb)) return TC_ACT_SHOT;
         int result = reply_ipv4_echo(skb, l3_offset, old_source, old_destination, old_type, old_code);
         if (result != TC_ACT_OK) return result;
         return redirect((int)skb->ifindex, BPF_F_INGRESS);
@@ -369,6 +406,7 @@ INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
         __builtin_memcpy(old_addresses + 16U, ip->destination, 16U);
         __u8 old_type = icmp->type;
         __u8 old_code = icmp->code;
+        if (ethernet && !swap_ethernet_addresses(skb)) return TC_ACT_SHOT;
         int result = reply_ipv6_echo(skb, l3_offset, old_addresses, old_type, old_code);
         if (result != TC_ACT_OK) return result;
         return redirect((int)skb->ifindex, BPF_F_INGRESS);
