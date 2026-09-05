@@ -420,6 +420,14 @@ func retainLocalAttachmentStates(localInterface string, desired map[string]tcAtt
 		}
 		state, loaded := desired[attachment.interfaceName]
 		if !loaded {
+			// The interface could not be resolved, so this retains the index the
+			// attachment was created with. That is only meaningful while the index
+			// is still the attachment's to claim: if another interface reports it,
+			// the one this attachment describes is gone, and retaining it would
+			// hold the interface lock the other one needs.
+			if tcAttachmentIndexClaimed(desired, attachment.interfaceName, attachment.interfaceIndex) {
+				continue
+			}
 			state = tcAttachmentState{
 				index:   attachment.interfaceIndex,
 				framing: attachment.framing,
@@ -429,6 +437,17 @@ func retainLocalAttachmentStates(localInterface string, desired map[string]tcAtt
 		state.role.local = true
 		desired[attachment.interfaceName] = state
 	}
+}
+
+// tcAttachmentIndexClaimed reports whether an interface other than the named one
+// is already known to carry this index.
+func tcAttachmentIndexClaimed(desired map[string]tcAttachmentState, interfaceName string, index int) bool {
+	for name, state := range desired {
+		if name != interfaceName && state.index == index {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {

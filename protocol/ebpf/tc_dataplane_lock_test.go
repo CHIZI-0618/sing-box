@@ -481,3 +481,133 @@ func TestReconcileOrderReportsReleaseFailure(t *testing.T) {
 		t.Fatalf("attach ran %d times after the release failed, want 0", attachCalls)
 	}
 }
+
+// TestReconcileOrderRetainedLocalDoesNotBlockAReusedIndex covers the handoff
+// retention meeting a reused index.
+//
+// While the default interface monitor has no answer, the previous local
+// attachment is kept in the desired set at the index it was created with, so a
+// brief gap does not tear down interception that still works. If another
+// interface has since been given that index, the retained entry is describing an
+// interface that is gone, and holding its lock stops the interface that took the
+// index from attaching.
+func TestReconcileOrderRetainedLocalDoesNotBlockAReusedIndex(t *testing.T) {
+	const index = testTCInterfaceLockIndex + 11
+	retained := newTestTCAttachment(t, "wlan0", index)
+	retained.role = tcInterfaceRole{local: true}
+	attached := make(map[string]int)
+	dataPlane := &tcDataPlane{
+		backend:     &commonEBPF.TCBackend{},
+		attachments: []*tcInterfaceAttachment{retained},
+		priority:    defaultTCPriority,
+		hooks: &tcDataPlaneHooks{
+			linkByName: func(name string) (netlink.Link, error) {
+				// wlan0 is gone; a shared interface now carries the index it had.
+				if name == "shared0" {
+					return testTCLink("shared0", index), nil
+				}
+				return nil, netlink.LinkNotFoundError{}
+			},
+			attach: func(
+				interfaceName string,
+				state tcAttachmentState,
+				lock io.Closer,
+				lockOwned bool,
+			) (*tcInterfaceAttachment, error) {
+				attached[interfaceName] = state.index
+				return &tcInterfaceAttachment{
+					interfaceName:  interfaceName,
+					interfaceIndex: state.index,
+					role:           state.role,
+					lock:           lock,
+					lockOwned:      lockOwned,
+					attachmentType: "clsact",
+				}, nil
+			},
+		},
+	}
+	t.Cleanup(func() { _ = dataPlane.Close() })
+
+	// An empty local interface is what makes the retention apply.
+	if err := dataPlane.reconcile("", []string{"shared0"}, nil); err != nil {
+		t.Fatalf("reconcile while the default interface is unavailable: %v", err)
+	}
+	if attached["shared0"] != index {
+		t.Fatalf("shared0 attached at index %d, want the index wlan0 left (%d)", attached["shared0"], index)
+	}
+	for _, attachment := range dataPlane.attachments {
+		if attachment == retained {
+			t.Fatal("the retained local attachment outlived the interface that took its index")
+		}
+	}
+}
+
+// TestRetainLocalAttachmentStatesKeepsAnIndexNobodyElseClaims is the case the
+// retention exists for: the default interface monitor has no answer, nothing
+// else has taken the index, and the attachment is kept so a brief gap does not
+// tear down interception that still works.
+func TestRetainLocalAttachmentStatesKeepsAnIndexNobodyElseClaims(t *testing.T) {
+	attachment := &tcInterfaceAttachment{
+		interfaceName:  "wlan0",
+		interfaceIndex: 5,
+		role:           tcInterfaceRole{local: true},
+	}
+	desired := map[string]tcAttachmentState{
+		"shared0": {index: 6},
+	}
+	retainLocalAttachmentStates("", desired, []*tcInterfaceAttachment{attachment})
+
+	state, retained := desired["wlan0"]
+	if !retained {
+		t.Fatalf("desired = %v, want the local attachment retained", desired)
+	}
+	if state.index != 5 || !state.role.local {
+		t.Fatalf("retained state = %+v, want index 5 with the local role", state)
+	}
+}
+
+// TestRetainLocalAttachmentStatesDropsAnIndexAnotherInterfaceHolds covers the
+// same retention when the index is no longer the attachment's to claim: another
+// interface reports it, so the attachment describes an interface that is gone
+// and keeping it would only hold a lock the other one needs.
+func TestRetainLocalAttachmentStatesDropsAnIndexAnotherInterfaceHolds(t *testing.T) {
+	attachment := &tcInterfaceAttachment{
+		interfaceName:  "wlan0",
+		interfaceIndex: 5,
+		role:           tcInterfaceRole{local: true},
+	}
+	desired := map[string]tcAttachmentState{
+		"shared0": {index: 5},
+	}
+	retainLocalAttachmentStates("", desired, []*tcInterfaceAttachment{attachment})
+
+	if _, retained := desired["wlan0"]; retained {
+		t.Fatalf("desired = %v, want wlan0 dropped because another interface holds its index", desired)
+	}
+	if desired["shared0"].index != 5 {
+		t.Fatalf("desired = %v, want the interface that reported the index untouched", desired)
+	}
+}
+
+// TestRetainLocalAttachmentStatesKeepsAResolvedInterface covers an attachment
+// whose interface is still resolvable: the retention only adds the local role
+// and leaves the index the lookup reported.
+func TestRetainLocalAttachmentStatesKeepsAResolvedInterface(t *testing.T) {
+	attachment := &tcInterfaceAttachment{
+		interfaceName:  "wlan0",
+		interfaceIndex: 5,
+		role:           tcInterfaceRole{local: true},
+	}
+	desired := map[string]tcAttachmentState{
+		"wlan0": {index: 7, role: tcInterfaceRole{shared: true}},
+	}
+	retainLocalAttachmentStates("", desired, []*tcInterfaceAttachment{attachment})
+
+	state := desired["wlan0"]
+	if state.index != 7 {
+		t.Fatalf("retained state = %+v, want the index the lookup reported", state)
+	}
+	if !state.role.local || !state.role.shared {
+		t.Fatalf("retained state = %+v, want both roles", state)
+	}
+}
