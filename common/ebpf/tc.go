@@ -69,6 +69,12 @@ type TCConfig struct {
 	RoutingMark       uint32
 	SelfBypassMap     *CiliumEBPF.Map
 	TrackProcess      bool
+	// FakeIPICMPReply loads the independent fakeip_icmp object (see
+	// tc_fakeip_icmp.go) and attaches it wherever this TC data plane already
+	// attaches local or shared filters. Left false, prepareTC never touches
+	// that object, and this backend requires nothing beyond what it already
+	// requires today.
+	FakeIPICMPReply bool
 }
 
 type PortRange struct {
@@ -135,6 +141,10 @@ type TCBackend struct {
 	bypassIPv6      []netip.Prefix
 	hostIPv4        [][4]byte
 	hostIPv6        [][16]byte
+	// fakeipICMPRuntime is nil unless TCConfig.FakeIPICMPReply was set; see
+	// tc_fakeip_icmp.go.
+	fakeipICMPRuntime   *tcRuntime
+	fakeipICMPControlFD int
 }
 
 func PrepareTC(config TCConfig) (*TCBackend, error) {
@@ -263,6 +273,11 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		ExcludeSourceMAC:  maps["tc_exclude_source_mac"],
 	}, policy); err != nil {
 		return nil, E.Errors(err, backend.Close())
+	}
+	if config.FakeIPICMPReply {
+		if err = backend.enableFakeIPICMPLocked(config, fakeIPIPv4, fakeIPIPv6); err != nil {
+			return nil, E.Errors(err, backend.Close())
+		}
 	}
 	return backend, nil
 }
@@ -763,6 +778,7 @@ func (b *TCBackend) Close() error {
 		delete(b.runtime.maps, "tc_self_sockets")
 	}
 	closeErr = E.Errors(closeErr, closeMaps(b.runtime.maps))
+	closeErr = E.Errors(closeErr, b.closeFakeIPICMPLocked())
 	b.runtime = nil
 	b.controlMapFD = -1
 	b.assignmentMapFD = -1
