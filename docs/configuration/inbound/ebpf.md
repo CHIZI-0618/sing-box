@@ -152,6 +152,20 @@ This is a platform network capability change, not a `fakeip_icmp` defect: a
 client's link-local IPv6 address, which does not depend on any upstream
 delegation, remains usable across such a switch.
 
+`local.data_plane: tc` has the equivalent dependency in the other direction:
+`local_reply` only ever sees a request that ordinary routing has already sent
+out the local TC interface, so a local ping to the FakeIP range needs this
+host itself to have some IPv6 route out that interface — a plain default
+route is enough, exactly as for IPv4, matching a route to the FakeIP prefix
+specifically is not required. When `local.ipv6` and `fakeip_icmp: reply` are
+both enabled but no such route exists, sing-box logs a warning naming the
+local interface at startup and again whenever the local interface changes,
+rather than leaving a local IPv6 ping to time out with nothing in the log to
+explain why. This is a warning, not a startup error, because the missing
+route is ordinary transient network state (unlike `local.data_plane: cgroup`,
+which can never support `fakeip_icmp` on any network) that resolves itself
+once the host gains real IPv6 connectivity.
+
 ### local
 
 #### local.enabled

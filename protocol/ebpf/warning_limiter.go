@@ -72,4 +72,5 @@ type interfaceWarningLimiters struct {
 	infrastructure   warningLimiter
 	hostPolicy       warningLimiter
 	reconcile        warningLimiter
+	fakeIPICMPRoute  warningLimiter
 }

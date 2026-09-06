@@ -135,6 +135,16 @@ IPv6——以 Android 热点为例，客户端的 IPv6 来自 Android 从自身�
 能力发生了变化，不是 `fakeip_icmp` 的缺陷：客户端不依赖上游下发、始终可用的
 link-local IPv6 地址，在这种切换前后都不受影响。
 
+`local.data_plane: tc` 在另一个方向上有对应的前提：`local_reply` 只能看到系统
+路由已经正常发送到本机 TC 接口上的请求，所以本机 ping FakeIP 网段需要本机自己
+在该接口上有某条 IPv6 路由——哪怕只是一条默认路由就够了，跟 IPv4 场景一样，不
+需要专门匹配 FakeIP 前缀的路由。当 `local.ipv6` 和 `fakeip_icmp: reply` 都启用、
+但没有这样一条路由时，sing-box 会在启动时、以及之后每次本机接口发生变化时，打
+一条指明具体接口名的警告日志，而不是让本机 IPv6 ping 静默超时、日志里什么线索
+都没有。这是警告而不是启动报错，因为路由缺失属于普通的、会自行变化的网络状态
+（不同于 `local.data_plane: cgroup`——那种情况下无论什么网络都不可能支持
+`fakeip_icmp`），一旦本机获得真正的 IPv6 连通性就会自动恢复。
+
 ### local
 
 #### local.enabled

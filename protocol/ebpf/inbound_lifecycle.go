@@ -163,6 +163,7 @@ func (i *Inbound) startInbound() error {
 		if err != nil {
 			return err
 		}
+		i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
 	}
 	if err = i.startBypassRuleSets(); err != nil {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")

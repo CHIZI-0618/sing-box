@@ -439,6 +439,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcSharedRewri
 		i.interfaceWarnings.reconcile.warn(i.logger, "refresh TC eBPF interfaces: ", err)
 		return
 	}
+	i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
 	if err = i.updateCgroupHostAddresses(hostAddresses); err != nil {
 		i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh cgroup eBPF host addresses: ", err)
 	}
