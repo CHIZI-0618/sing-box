@@ -47,6 +47,7 @@ type Server struct {
 	dnsRouter      adapter.DNSRouter
 	outbound       adapter.OutboundManager
 	endpoint       adapter.EndpointManager
+	inbound        adapter.InboundManager
 	logger         log.Logger
 	httpServer     *http.Server
 	trafficManager *trafficcontrol.Manager
@@ -81,6 +82,7 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
 		outbound:  service.FromContext[adapter.OutboundManager](ctx),
 		endpoint:  service.FromContext[adapter.EndpointManager](ctx),
+		inbound:   service.FromContext[adapter.InboundManager](ctx),
 		logger:    logFactory.NewLogger("clash-api"),
 		httpServer: &http.Server{
 			Addr:    options.ExternalController,
@@ -135,6 +137,7 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 		r.Mount("/profile", profileRouter())
 		r.Mount("/cache", cacheRouter(ctx))
 		r.Mount("/dns", dnsRouter(s.dnsRouter))
+		r.Mount("/ebpf", ebpfRouter(s.inbound))
 
 		s.setupMetaAPI(r)
 	})

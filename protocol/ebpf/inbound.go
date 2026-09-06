@@ -113,6 +113,7 @@ type Inbound struct {
 	tcpWarnings       warningLimiter
 	policyWarnings    warningLimiter
 	interfaceWarnings interfaceWarningLimiters
+	diagnostics       tcOutcomeHistory
 }
 
 func (i *Inbound) localTCEnabled() bool {

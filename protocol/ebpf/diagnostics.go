@@ -1,0 +1,306 @@
+//go:build with_ebpf && (linux || android)
+
+package ebpf
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"sort"
+	"sync"
+	"time"
+)
+
+// EBPFAttachmentDiagnostics describes one place this inbound is actually
+// intercepting traffic right now: either a TC attachment on a network
+// interface, or (Mechanism == "cgroup") the cgroup local data plane, which
+// has no per-interface attachment of its own.
+type EBPFAttachmentDiagnostics struct {
+	// InterfaceName is the network interface name for a TC attachment, or
+	// the cgroup path for the cgroup local data plane.
+	InterfaceName string `json:"interface_name"`
+	// InterfaceIndex is 0 for the cgroup local data plane, which has no
+	// interface index.
+	InterfaceIndex int    `json:"interface_index,omitempty"`
+	Role           string `json:"role"`      // "local", "shared", or "local+shared"
+	Framing        string `json:"framing"`   // "ethernet" or "raw_ip"; empty for cgroup
+	Mechanism      string `json:"mechanism"` // "tcx", "clsact", or "cgroup"
+	FakeIPICMP     bool   `json:"fakeip_icmp"`
+}
+
+// Runtime states EBPFDiagnostics.State reports. These summarize the fields
+// below into the one value most operators actually want at a glance; the
+// individual fields remain available for anything more specific.
+const (
+	// EBPFDiagnosticsStateNormal is every configured data plane attached and
+	// no recovery outstanding.
+	EBPFDiagnosticsStateNormal = "normal"
+	// EBPFDiagnosticsStateWaitingForInterface is a configured data plane with
+	// no matching interface available yet (for example, local TC configured
+	// but no default route exists) -- not a failure, since there is nothing
+	// to attach to.
+	EBPFDiagnosticsStateWaitingForInterface = "waiting_for_interface"
+	// EBPFDiagnosticsStateRecovering is a failure with a retry still
+	// outstanding: the scheduler in interface_monitor.go is actively
+	// retrying, no operator action is needed unless it persists.
+	EBPFDiagnosticsStateRecovering = "recovering"
+	// EBPFDiagnosticsStateNeedsAttention is a failure with no retry
+	// outstanding for it (the backend reported itself closed or requiring a
+	// rebuild -- see tcSharedRewriteUnrecoverable) or a bypass_rule_set
+	// revert that itself failed, leaving backends disagreeing about policy.
+	// Recovering on its own is not expected here; restarting the inbound
+	// (or the whole process) is.
+	EBPFDiagnosticsStateNeedsAttention = "needs_attention"
+)
+
+// EBPFDiagnostics is one running eBPF inbound's actual interception state,
+// as distinct from the static kernel-capability probe `sing-box tools ebpf
+// status` reports: answering "is this configured inbound intercepting
+// traffic right now" needs a running instance, not just kernel support, so
+// this is computed from live state (Inbound.Diagnostics), not probed from a
+// separate process.
+type EBPFDiagnostics struct {
+	Tag   string `json:"tag"`
+	State string `json:"state"`
+
+	LocalEnabled    bool   `json:"local_enabled"`
+	LocalDataPlane  string `json:"local_data_plane,omitempty"`
+	SharedEnabled   bool   `json:"shared_enabled"`
+	SharedDataPlane string `json:"shared_data_plane,omitempty"`
+	FakeIPICMPReply bool   `json:"fakeip_icmp_reply"`
+
+	Attachments []EBPFAttachmentDiagnostics `json:"attachments,omitempty"`
+
+	// LastError and LastErrorAt are the most recent warning recorded across
+	// every category this inbound logs through (interface topology,
+	// infrastructure, host policy, reconcile, bypass_rule_set policy, TCP,
+	// UDP) -- whichever happened most recently, even if its own log line was
+	// itself rate-limited into silence.
+	LastError   string     `json:"last_error,omitempty"`
+	LastErrorAt *time.Time `json:"last_error_at,omitempty"`
+	// LastRecoveryAt is when a general-TC or shared-packet-rewrite failure
+	// most recently cleared on its own. Nil if none has, in this process.
+	LastRecoveryAt *time.Time `json:"last_recovery_at,omitempty"`
+	// RecoveryPending is whether interface_monitor.go's scheduler currently
+	// has an outstanding retry for general TC state or shared packet-rewrite.
+	RecoveryPending bool `json:"recovery_pending"`
+
+	// BypassRuleSetConsistent is false only when a compensating rollback
+	// itself failed (see Inbound.bypassRuleSetInconsistent in
+	// inbound_policy.go): backends are now known to disagree about the
+	// bypass_rule_set policy, not just temporarily out of date.
+	BypassRuleSetConsistent bool `json:"bypass_rule_set_consistent"`
+	// BypassRuleSetPending is whether a previously-failed bypass_rule_set
+	// refresh is still awaiting retry.
+	BypassRuleSetPending bool `json:"bypass_rule_set_pending"`
+
+	UDPSessionCount int                        `json:"udp_session_count"`
+	UDPReplySockets udpReplySocketPoolSnapshot `json:"udp_reply_sockets"`
+}
+
+// tcOutcomeHistory is the small amount of extra bookkeeping Diagnostics
+// needs that nothing else in this package already tracks: the last outcome
+// runTCInterfaceUpdateLoop's update step reported, and when a failing
+// component most recently cleared.
+type tcOutcomeHistory struct {
+	access         sync.Mutex
+	haveOutcome    bool
+	lastOutcome    tcUpdateOutcome
+	lastOutcomeAt  time.Time
+	lastRecoveryAt time.Time
+}
+
+// recordTCUpdateOutcome is runTCInterfaceUpdates' hook: called with every
+// outcome the update step reports, whether or not anything changed, so
+// Diagnostics always reflects the most recent round.
+func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
+	now := time.Now()
+	i.diagnostics.access.Lock()
+	defer i.diagnostics.access.Unlock()
+	recoveredNow := func(previous, current tcSharedRewriteOutcome) bool {
+		return previous == tcSharedRewriteRecoverable && current == tcSharedRewriteSettled
+	}
+	if i.diagnostics.haveOutcome &&
+		(recoveredNow(i.diagnostics.lastOutcome.general, outcome.general) ||
+			recoveredNow(i.diagnostics.lastOutcome.sharedRewrite, outcome.sharedRewrite)) {
+		i.diagnostics.lastRecoveryAt = now
+	}
+	i.diagnostics.lastOutcome = outcome
+	i.diagnostics.lastOutcomeAt = now
+	i.diagnostics.haveOutcome = true
+}
+
+// DiagnosticsJSON satisfies experimental/clashapi's duck-typed
+// ebpfDiagnosticsProvider interface, so the running Clash API server (when
+// configured) can report this inbound's status without importing this
+// package or its with_ebpf build tag.
+func (i *Inbound) DiagnosticsJSON() any {
+	return i.Diagnostics()
+}
+
+// Diagnostics reports this inbound's current interception state. Safe to
+// call concurrently with normal operation; every field is read through the
+// same locks the running data plane itself uses, so this never blocks
+// longer than one of those already does elsewhere.
+func (i *Inbound) Diagnostics() EBPFDiagnostics {
+	diagnostics := EBPFDiagnostics{
+		Tag:             i.Tag(),
+		LocalEnabled:    i.localEnabled,
+		SharedEnabled:   i.sharedEnabled,
+		FakeIPICMPReply: i.fakeIPICMPReply,
+	}
+	if i.localEnabled {
+		diagnostics.LocalDataPlane = i.localDataPlane
+	}
+	if i.sharedEnabled {
+		diagnostics.SharedDataPlane = i.sharedDataPlane
+	}
+
+	i.tcDataPlaneAccess.RLock()
+	tcDataPlane := i.tcDataPlane
+	i.tcDataPlaneAccess.RUnlock()
+	diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.attachmentDiagnostics()...)
+	if i.localCgroupEnabled() {
+		if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {
+			diagnostics.Attachments = append(diagnostics.Attachments, EBPFAttachmentDiagnostics{
+				InterfaceName: backend.CgroupPath(),
+				Role:          "local",
+				Mechanism:     "cgroup",
+			})
+		}
+	}
+	sort.Slice(diagnostics.Attachments, func(a, b int) bool {
+		return diagnostics.Attachments[a].InterfaceName < diagnostics.Attachments[b].InterfaceName
+	})
+
+	var lastErrorAt time.Time
+	for _, limiter := range []*warningLimiter{
+		&i.interfaceWarnings.inventory,
+		&i.interfaceWarnings.defaultInterface,
+		&i.interfaceWarnings.topology,
+		&i.interfaceWarnings.infrastructure,
+		&i.interfaceWarnings.hostPolicy,
+		&i.interfaceWarnings.reconcile,
+		&i.interfaceWarnings.fakeIPICMPRoute,
+		&i.policyWarnings,
+		&i.tcpWarnings,
+		&i.udpWarnings.packetInfo,
+		&i.udpWarnings.originalDestination,
+		&i.udpWarnings.cleanup,
+	} {
+		message, at := limiter.last()
+		if at.After(lastErrorAt) {
+			lastErrorAt = at
+			diagnostics.LastError = message
+		}
+	}
+	if !lastErrorAt.IsZero() {
+		diagnostics.LastErrorAt = &lastErrorAt
+	}
+
+	i.diagnostics.access.Lock()
+	if i.diagnostics.haveOutcome {
+		diagnostics.RecoveryPending = i.diagnostics.lastOutcome.general == tcSharedRewriteRecoverable ||
+			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteRecoverable
+	}
+	if !i.diagnostics.lastRecoveryAt.IsZero() {
+		recoveryAt := i.diagnostics.lastRecoveryAt
+		diagnostics.LastRecoveryAt = &recoveryAt
+	}
+	i.diagnostics.access.Unlock()
+
+	i.bypassRuleSetAccess.Lock()
+	diagnostics.BypassRuleSetConsistent = !i.bypassRuleSetInconsistent
+	diagnostics.BypassRuleSetPending = i.bypassRuleSetNeedsRetry
+	i.bypassRuleSetAccess.Unlock()
+
+	diagnostics.UDPSessionCount = i.udpClientTable.count()
+	diagnostics.UDPReplySockets = i.udpReplySockets.snapshot()
+
+	diagnostics.State = deriveDiagnosticsState(diagnostics)
+	return diagnostics
+}
+
+// deriveDiagnosticsState computes EBPFDiagnostics.State from the rest of the
+// struct.
+func deriveDiagnosticsState(d EBPFDiagnostics) string {
+	if d.LocalEnabled && !attachmentHasRole(d.Attachments, "local") {
+		return EBPFDiagnosticsStateWaitingForInterface
+	}
+	if d.SharedEnabled && !attachmentHasRole(d.Attachments, "shared") {
+		return EBPFDiagnosticsStateWaitingForInterface
+	}
+	if !d.BypassRuleSetConsistent {
+		return EBPFDiagnosticsStateNeedsAttention
+	}
+	if d.RecoveryPending || d.BypassRuleSetPending {
+		return EBPFDiagnosticsStateRecovering
+	}
+	return EBPFDiagnosticsStateNormal
+}
+
+func attachmentHasRole(attachments []EBPFAttachmentDiagnostics, role string) bool {
+	for _, attachment := range attachments {
+		if attachment.Role == role || attachment.Role == "local+shared" {
+			return true
+		}
+	}
+	return false
+}
+
+// WriteJSON writes d as JSON, matching the shape common/ebpf's kernel-probe
+// report already uses for `sing-box tools ebpf status --json`.
+func (d EBPFDiagnostics) WriteJSON(w io.Writer) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(d)
+}
+
+// WriteText writes d as a short human-readable block.
+func (d EBPFDiagnostics) WriteText(w io.Writer) error {
+	lines := []string{
+		fmt.Sprintf("Tag: %s", d.Tag),
+		fmt.Sprintf("State: %s", d.State),
+	}
+	if d.LocalEnabled {
+		lines = append(lines, fmt.Sprintf("Local data plane: %s", d.LocalDataPlane))
+	}
+	if d.SharedEnabled {
+		lines = append(lines, fmt.Sprintf("Shared data plane: %s", d.SharedDataPlane))
+	}
+	lines = append(lines, fmt.Sprintf("FakeIP ICMP reply: %t", d.FakeIPICMPReply))
+	if len(d.Attachments) == 0 {
+		lines = append(lines, "Attachments: none")
+	} else {
+		lines = append(lines, "Attachments:")
+		for _, attachment := range d.Attachments {
+			framing := attachment.Framing
+			if framing == "" {
+				framing = "n/a"
+			}
+			lines = append(lines, fmt.Sprintf(
+				"  %s: role=%s mechanism=%s framing=%s fakeip_icmp=%t",
+				attachment.InterfaceName, attachment.Role, attachment.Mechanism, framing, attachment.FakeIPICMP,
+			))
+		}
+	}
+	lines = append(lines, fmt.Sprintf("Recovery pending: %t", d.RecoveryPending))
+	if d.LastRecoveryAt != nil {
+		lines = append(lines, fmt.Sprintf("Last recovery: %s", d.LastRecoveryAt.Format(time.RFC3339)))
+	}
+	if d.LastError != "" {
+		lines = append(lines, fmt.Sprintf("Last error (%s): %s", d.LastErrorAt.Format(time.RFC3339), d.LastError))
+	}
+	lines = append(lines, fmt.Sprintf("bypass_rule_set: consistent=%t pending=%t", d.BypassRuleSetConsistent, d.BypassRuleSetPending))
+	lines = append(lines, fmt.Sprintf("UDP sessions: %d", d.UDPSessionCount))
+	lines = append(lines, fmt.Sprintf(
+		"UDP reply sockets: count=%d peak=%d evicted=%d capacity_rejected=%d",
+		d.UDPReplySockets.Count, d.UDPReplySockets.Peak, d.UDPReplySockets.Evicted, d.UDPReplySockets.CapacityRejected,
+	))
+	for _, line := range lines {
+		if _, err := io.WriteString(w, line+"\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -339,7 +339,11 @@ func (t *tcRealRetryTimer) Expired() <-chan time.Time { return t.timer.C }
 var tcRetryTimerFactory = newTCRetryTimer
 
 func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
-	runTCInterfaceUpdateLoop(ctx, updates, i.updateTCInterfaces)
+	runTCInterfaceUpdateLoop(ctx, updates, func(ctx context.Context) tcUpdateOutcome {
+		outcome := i.updateTCInterfaces(ctx)
+		i.recordTCUpdateOutcome(outcome)
+		return outcome
+	})
 }
 
 // tcRetryState is one component's independently-tracked backoff: delay is

@@ -148,6 +148,22 @@ func (t *udpClientTable) clientShard(client netip.AddrPort) *udpClientShard {
 	return &t.clientShards[(port^port>>8)&(udpClientShardCount-1)]
 }
 
+// count reports the number of tracked UDP clients, for diagnostics. It locks
+// each shard in turn rather than all at once, so this is a point-in-time
+// estimate under concurrent traffic, not a value consistent with any single
+// instant -- adequate for a diagnostics counter, not for anything that would
+// act on the exact number.
+func (t *udpClientTable) count() int {
+	total := 0
+	for index := range t.clientShards {
+		shard := &t.clientShards[index]
+		shard.access.RLock()
+		total += len(shard.clients)
+		shard.access.RUnlock()
+	}
+	return total
+}
+
 func (t *udpClientTable) setDirectBinding(
 	client netip.AddrPort,
 	destination netip.AddrPort,
@@ -274,10 +290,10 @@ type udpReplySocketPoolStats struct {
 // udpReplySocketPoolSnapshot is a point-in-time, non-atomic-together read of
 // udpReplySocketPoolStats for diagnostics/logging.
 type udpReplySocketPoolSnapshot struct {
-	Count            int64
-	Peak             int64
-	Evicted          int64
-	CapacityRejected int64
+	Count            int64 `json:"count"`
+	Peak             int64 `json:"peak"`
+	Evicted          int64 `json:"evicted"`
+	CapacityRejected int64 `json:"capacity_rejected"`
 }
 
 func (p *udpReplySocketPool) snapshot() udpReplySocketPoolSnapshot {

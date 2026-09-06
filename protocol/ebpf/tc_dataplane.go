@@ -857,6 +857,41 @@ func closeTCInterfaceAttachments(attachments []*tcInterfaceAttachment) error {
 	return closeErr
 }
 
+// attachmentDiagnostics is attachmentDescriptions' structured sibling, for
+// item 7's runtime status query: the same walk over d.attachments, but
+// returning fields a JSON/text renderer can use directly instead of a
+// pre-formatted log string.
+func (d *tcDataPlane) attachmentDiagnostics() []EBPFAttachmentDiagnostics {
+	if d == nil {
+		return nil
+	}
+	d.access.Lock()
+	defer d.access.Unlock()
+	diagnostics := make([]EBPFAttachmentDiagnostics, 0, len(d.attachments))
+	for _, attachment := range d.attachments {
+		role := "local"
+		if attachment.role.local && attachment.role.shared {
+			role = "local+shared"
+		} else if attachment.role.shared {
+			role = "shared"
+		}
+		fakeIPICMP := attachment.localICMPFilter != nil || attachment.sharedICMPFilter != nil ||
+			attachment.localICMPLink != nil || attachment.sharedICMPLink != nil
+		diagnostics = append(diagnostics, EBPFAttachmentDiagnostics{
+			InterfaceName:  attachment.interfaceName,
+			InterfaceIndex: attachment.interfaceIndex,
+			Role:           role,
+			Framing:        attachment.framing.String(),
+			Mechanism:      attachment.attachmentType,
+			FakeIPICMP:     fakeIPICMP,
+		})
+	}
+	slices.SortFunc(diagnostics, func(a, b EBPFAttachmentDiagnostics) int {
+		return strings.Compare(a.InterfaceName, b.InterfaceName)
+	})
+	return diagnostics
+}
+
 func (d *tcDataPlane) attachmentDescriptions() []string {
 	if d == nil {
 		return nil
