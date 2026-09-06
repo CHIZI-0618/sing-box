@@ -71,3 +71,38 @@ func TestTCPolicyRollbackClassificationAndHealthContract(t *testing.T) {
 		t.Fatal("an invalidated backend must refuse further use")
 	}
 }
+
+// TestTCBackendRequiresRebuild covers the public accessor protocol/ebpf's
+// bypass_rule_set coordinator relies on to tell "this backend's own forward
+// apply failed in a way its internal rollback also failed" apart from an
+// ordinary, harmless rejection (a policy over capacity, say): the backend
+// is still open (a real caller cannot distinguish it from a healthy one any
+// other way), but every later operation on it will keep failing the same
+// way. Mirrors TestSharedNetworkBackendRequiresRebuild.
+func TestTCBackendRequiresRebuild(t *testing.T) {
+	var backend TCBackend
+	if backend.RequiresRebuild() {
+		t.Fatal("a fresh backend reports that it requires a rebuild")
+	}
+
+	backend.runtime = &tcRuntime{}
+	if backend.requireUsableLocked() != nil {
+		t.Fatal("a backend with a runtime reports itself unusable")
+	}
+	if backend.RequiresRebuild() {
+		t.Fatal("an open backend reports that it requires a rebuild")
+	}
+
+	backend.health.invalidate("TC", "test policy")
+	if !backend.RequiresRebuild() {
+		t.Fatal("an invalidated backend does not report that it requires a rebuild")
+	}
+	if backend.requireUsableLocked() == nil {
+		t.Fatal("an invalidated backend still reports itself usable")
+	}
+
+	var absent *TCBackend
+	if absent.RequiresRebuild() {
+		t.Fatal("a nil backend reports that it requires a rebuild")
+	}
+}

@@ -247,6 +247,21 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	var err error
 	if backend := i.tcBackend(); backend != nil {
 		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
+			// UpdateCompiledBypassCIDR's own internal rollback can itself
+			// fail, in which case the backend marks itself as requiring a
+			// rebuild before returning here -- its maps and control flags no
+			// longer agree, and there is no known-good state left to
+			// diff the next update against. That backend was never added
+			// to applied (it never got past this call), so the fail()
+			// below's revert pass never reaches it either; without this
+			// check, its previous known=true would be left standing, and
+			// bypassRuleSetInconsistent would only be set if some *other*
+			// backend's own revert failed, not from this one's forward
+			// apply having wrecked it outright.
+			if backend.RequiresRebuild() {
+				i.bypassRuleSetTC.known = false
+				i.bypassRuleSetInconsistent = true
+			}
 			return fail(err)
 		}
 		i.bypassRuleSetTC = bypassRuleSetBackendVersion{version: version, known: true}
@@ -265,6 +280,11 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	}
 	if backend := i.cgroupBackendInstance(); backend != nil {
 		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
+			// Same reasoning as TC's own case above.
+			if backend.RequiresRebuild() {
+				i.bypassRuleSetCgroup.known = false
+				i.bypassRuleSetInconsistent = true
+			}
 			return fail(err)
 		}
 		i.bypassRuleSetCgroup = bypassRuleSetBackendVersion{version: version, known: true}
@@ -303,6 +323,11 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 					},
 				})
 			} else if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
+				// Same reasoning as TC's own case above.
+				if backend.RequiresRebuild() {
+					i.bypassRuleSetShared.known = false
+					i.bypassRuleSetInconsistent = true
+				}
 				return fail(err)
 			} else {
 				i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}

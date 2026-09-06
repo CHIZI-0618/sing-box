@@ -410,6 +410,22 @@ func (b *TCBackend) requireUsableLocked() error {
 	return b.health.requireUsable(b.runtime != nil)
 }
 
+// RequiresRebuild reports whether a previous operation's internal rollback
+// itself failed, leaving this backend's maps and control flags no longer
+// agreeing with each other and with no known-good state left to compute the
+// next incremental update from -- invalidateLocked already disabled the
+// data path when this happened. Every operation on it fails from then on,
+// so a caller retrying one can stop instead of repeating work that cannot
+// succeed. Mirrors SharedNetworkBackend.RequiresRebuild.
+func (b *TCBackend) RequiresRebuild() bool {
+	if b == nil {
+		return false
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.health.rebuildRequired != nil
+}
+
 // invalidateLocked marks the backend unusable after a policy update failed and
 // its rollback failed too. The policy maps and the control flags that gate them
 // no longer agree and there is no longer a known-good state to compute the next

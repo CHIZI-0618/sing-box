@@ -272,3 +272,35 @@ func TestLockCgroupFileKeepsOtherErrorsShaped(t *testing.T) {
 		t.Fatalf("error = %q, want it to name the operation", err)
 	}
 }
+
+// TestCgroupBackendRequiresRebuild is TestTCBackendRequiresRebuild's cgroup
+// counterpart, covering the same public accessor protocol/ebpf's
+// bypass_rule_set coordinator relies on. Mirrors
+// TestSharedNetworkBackendRequiresRebuild.
+func TestCgroupBackendRequiresRebuild(t *testing.T) {
+	var backend CgroupBackend
+	if backend.RequiresRebuild() {
+		t.Fatal("a fresh backend reports that it requires a rebuild")
+	}
+
+	backend.runtime = &cgroupRuntime{}
+	if backend.IsClosed() {
+		t.Fatal("a backend with a runtime reports itself closed")
+	}
+	if backend.RequiresRebuild() {
+		t.Fatal("an open backend reports that it requires a rebuild")
+	}
+
+	backend.health.invalidate("cgroup", "test policy")
+	if backend.IsClosed() {
+		t.Fatal("invalidation must not make the backend look closed")
+	}
+	if !backend.RequiresRebuild() {
+		t.Fatal("an invalidated backend does not report that it requires a rebuild")
+	}
+
+	var absent *CgroupBackend
+	if absent.RequiresRebuild() {
+		t.Fatal("a nil backend reports that it requires a rebuild")
+	}
+}
