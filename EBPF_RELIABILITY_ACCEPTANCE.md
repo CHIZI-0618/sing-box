@@ -12,10 +12,11 @@ from this branch; it is not part of the public documentation site under
 
 All code, test, and CI changes described in this document, including §12's
 response to the first independent code review, §13's response to a second
-one, §14's response to a third, and §15's response to a fourth, land at
-`f7b001f8852c48dbe41db9518e7ce7a8c9dd8399`. This section is updated in place
-each time this document itself is revised, rather than being re-derived —
-this document's own commit necessarily lands after the hash it names.
+one, §14's response to a third, §15's response to a fourth, and §16's
+response to a fifth, land at `7b843d0dd041dbad23573751aff13576c89c082d`.
+This section is updated in place each time this document itself is
+revised, rather than being re-derived — this document's own commit
+necessarily lands after the hash it names.
 
 Full commit range for the code/test/CI work this document evidences (oldest
 first):
@@ -46,14 +47,17 @@ f05e751d docs: record the second independent review's three findings and this ro
 60085018 ebpf: never let a UDP send-command failure skip inspecting the receipt
 9df654b4 docs: record the third independent review's finding and this round's fix
 f7b001f8 ebpf: guard the UDP receipt-size read against the script's own set -e
+c92e38aa docs: record the fourth independent review's finding and this round's fix
+7b843d0d ebpf: guard the remaining hash preparation/retrieval reads against set -e
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
 (`.codex-remote-attachments/`, predating this work) and `outputs/` (the
 independent reviews' own artifact bundles — `outputs/ebpf-review/`,
-`outputs/ebpf-review-round2/`, `outputs/ebpf-review-round3/`, and
-`outputs/ebpf-review-round4/` — left exactly as delivered) — see §12, §13,
-§14, and §15 for how those reviews' findings were addressed.
+`outputs/ebpf-review-round2/`, `outputs/ebpf-review-round3/`,
+`outputs/ebpf-review-round4/`, and `outputs/ebpf-review-round5/` — left
+exactly as delivered) — see §12 through §16 for how those reviews'
+findings were addressed.
 
 ## 2. Environment
 
@@ -957,3 +961,116 @@ was modified by this round beyond this one finding. `outputs/ebpf-review/`,
 `outputs/ebpf-review-round4/` (each review's own artifact bundle) were read
 for context and left completely untouched, uncommitted, exactly as
 delivered.
+
+## 16. Response to a fifth independent code review
+
+A fifth independent review of `f7b001f8` and HEAD `c92e38aa` confirmed
+§15's fix closed the round-4 receipt-size finding: the unchanged
+round-4 `receipt-errors.sh` harness still records FAIL and returns
+normally in both roles for a nonzero `stat` exit and a successful-empty
+output, with no retry, and it explicitly noted a normal function return is
+intentional — the final script summary, not each check function, is
+responsible for turning a report's `FAIL` rows into the script's exit `1`.
+It then found that the same defect class §15 fixed for the UDP
+receipt-size read had never been applied to hash preparation/retrieval —
+the disclosure in §15's own "What this round does not resolve" turned out
+to name only one of six remaining sites, not the full extent of the
+adjacent risk.
+
+### P2 — six more hash preparation/retrieval reads were unguarded under `set -e`
+
+**Finding**: `remote_hash=$($SSH ...)` in `check_local_tcp_rewrite` (line
+328) and `check_local_udp_rewrite` (line 407), and both `sent_hash=$(
+$DOWNSTREAM_SSH ...)` and `remote_hash=$($SSH ...)` in
+`check_shared_tcp_rewrite` (lines 467, 483) and `check_shared_udp_rewrite`
+(lines 507, 538) — six sites total — were all still bare command
+substitutions under this script's own `set -euo pipefail`. A simulated SSH
+exit of 255 at any of the six terminated that production function's shell
+outright, without a `FAIL` record and without reaching the function's own
+end; in a full script run this skips the remaining offload matrix and the
+final summary, and the script's own exit code falls outside the documented
+`0`/`1`/`2`/`3` set entirely (a raw shell termination code instead). The
+review reproduced all six with simulated SSH failure, not a hardware
+claim, via `bash outputs/ebpf-review-round5/hash-errors.sh`.
+
+**Fix** (`7b843d0d`): all six sites now use the exact guard `f7b001f8`
+introduced for the receipt-size read — `if ! x=$(...); then x=""; fi`,
+which `set -e` does not treat as fatal — and validate the result as a
+64-character lowercase hex SHA-256 digest via
+`[[ "$x" =~ ^[0-9a-f]{64}$ ]]` rather than merely checking for emptiness.
+A failed SSH call and a successful-but-malformed result (truncated,
+empty, non-hex) are now rejected identically, and both are reported as an
+explicit evidence-read error distinct from a genuine content mismatch —
+previously, a malformed-but-nonempty `remote_hash` that happened to differ
+from `sent_hash` would have been reported as "content mismatch: ...
+corrupted in transit," misattributing an inability to read the evidence to
+the eBPF rewrite path the check exists to judge.
+
+This is the review's recommended treatment as one class of error-handling
+fix applied uniformly across every transfer path, per its own instruction
+to guard payload preparation and hash retrieval, validate the digest
+format, and report a preparation/evidence failure separately from a
+content-mismatch verdict.
+
+**Verified**: an ad hoc, uncommitted scratchpad harness was written that,
+per the review's own explicit instruction, (a) enables `set -euo pipefail`
+itself, matching the real script exactly, and (b) calls each check
+function as an ordinary top-level command rather than from inside an
+`if`/`!` condition — wrapping a function call that way disables `errexit`
+for everything executed inside it for the duration of that call, which
+would silently mask the exact bug under test. All six sites, driven with a
+selectively-failing fake SSH returning exit 255 exactly at the targeted
+command, now record a `FAIL` naming the evidence-read error and let the
+harness continue past a `REACHED_END` marker printed immediately after the
+call, for both `check_local_tcp_rewrite`/`check_local_udp_rewrite` and
+both the send-preparation and receive-retrieval sites of
+`check_shared_tcp_rewrite`/`check_shared_udp_rewrite`. The round-2 through
+round-4 regression harnesses (real-loopback content matching, a listener
+that cannot bind, single-byte corruption, the send-failure-plus-corrupt-
+receipt scenario, and the round-4 receipt-size guard) were re-run
+unchanged and still pass, confirming no regression. `bash -n` and
+`shellcheck -x` both clean; the full `go test -race` suite for
+`common/ebpf` and `protocol/ebpf` still passes as root under WSL Debian.
+Never run against real hardware.
+
+### What this round does not resolve
+
+Unchanged from §15: real hardware remains unexecuted; the
+`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing` flake's root cause
+remains unconfirmed (this review did not run the Go suite and does not
+bear on it either way); real GitHub Actions, Android, and TCX-on-physical-
+silicon remain unverified; items 11 and 12 remain held.
+
+A manual re-check of every remaining `$SSH`/`$DOWNSTREAM_SSH`
+command-substitution assignment in the file, prompted by this round's
+finding, confirms none of those specific call sites still have the bare,
+unguarded shape — each remaining one (`check_shared_fakeip_icmp`'s
+`out=$($DOWNSTREAM_SSH ...)`) was already written inside an `if`/`then`
+test from an earlier round and was never affected. That same check turned
+up a related, disclosed-but-unfixed risk of the identical defect class
+this round and §15 both just fixed, at four sites this review did not
+name: `before=$(dut_counter ...)` / `after=$(dut_counter ...)` in
+`check_shared_fakeip_icmp` (lines 456, 458) and `check_shared_tcp_rewrite`
+(lines 490, 507) are bare assignments of a function whose own body pipes
+`curl | jq` under this script's `set -o pipefail`; if `$DUT_DIAGNOSTICS_URL`
+is set but the DUT's diagnostics endpoint is unreachable, or `curl`/`jq`
+themselves are unavailable, that pipeline can exit nonzero and, by the
+same mechanism §15 and this round both just fixed for `$SSH`/
+`$DOWNSTREAM_SSH` assignments, abort the whole script rather than
+recording a structured outcome. This was not named by this review and is
+not fixed by this round's commit — it is disclosed here, in the same
+report-don't-fix-unprompted spirit this engagement has followed throughout,
+for a future round to assess on its own review.
+
+### Summary
+
+| Finding | Severity | Status | Live-verified |
+|---|---|---|---|
+| Six hash preparation/retrieval reads unguarded under set -e | P2 | Fixed | Yes, reproduces the exit-255 abort at all six sites |
+
+No production code, existing Go tests, or the acceptance evidence above §16
+was modified by this round beyond this one finding. `outputs/ebpf-review/`,
+`outputs/ebpf-review-round2/`, `outputs/ebpf-review-round3/`,
+`outputs/ebpf-review-round4/`, and `outputs/ebpf-review-round5/` (each
+review's own artifact bundle) were read for context and left completely
+untouched, uncommitted, exactly as delivered.
