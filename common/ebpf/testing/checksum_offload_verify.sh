@@ -359,10 +359,21 @@ check_local_tcp_rewrite() {
 # a PASS. The send command's exit status is now kept only to explain a
 # genuinely empty receipt (which is what the loss-retry exists for); it is
 # never used by itself to skip inspecting what the receiver actually got.
-# Unreadable receiver evidence (the remote stat command itself failing) is
-# likewise never treated as an established empty receipt -- it is retried
-# the same as a confirmed empty one, but the report says plainly that the
-# receipt could not be read, not that it was confirmed empty.
+# Unreadable receiver evidence (the remote stat command itself failing, or
+# succeeding but not printing a plain byte count) is never treated as an
+# established empty receipt and never permitted to retry as if it were one
+# -- a fourth independent review found the bare `remote_size=$($SSH ...)`
+# assignment was itself unguarded under this script's `set -euo pipefail`,
+# so a nonzero exit from that SSH/stat call (a dropped connection, a
+# transient remote error) aborted the whole script before the emptiness
+# check downstream ever ran, silencing the rest of the offload matrix and
+# the final summary instead of recording a structured outcome for this
+# attempt. Retrieval is now guarded explicitly and its result validated as
+# a plain nonnegative integer; anything else -- a failed SSH call or
+# malformed output alike -- is recorded as an immediate FAIL naming the
+# evidence-read error, never silently retried as a fresh transfer attempt,
+# since only a successfully read, confirmed-zero size is genuine evidence
+# of total loss.
 check_local_udp_rewrite() {
 	local state_label="$1"
 	[[ -z "$REMOTE_PORT_UDP" ]] && return
@@ -378,10 +389,12 @@ check_local_udp_rewrite() {
 		send_status=0
 		nc -u -q1 -w2 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_UDP" < "$OUT_DIR/udp_sent.bin" || send_status=$?
 		wait "$remote_pid" 2>/dev/null || true
-		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp.bin" 2>/dev/null)
-		if [[ -z "$remote_size" ]]; then
-			echo "warning: could not read the receiver's file size on attempt $attempt/3 (local send command exit=$send_status); retrying, not treating unreadable evidence as a confirmed empty receipt" >&2
-			continue
+		if ! remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp.bin" 2>/dev/null); then
+			remote_size=""
+		fi
+		if [[ ! "$remote_size" =~ ^[0-9]+$ ]]; then
+			record "$state_label" local_shared_rewrite_udp FAIL "could not read the receiver's file size on attempt $attempt/3 (local send command exit=$send_status; stat result '$remote_size' is not a valid byte count) -- unreadable or invalid evidence is never treated as a confirmed empty receipt, so this attempt is not eligible for a fresh transfer retry"
+			return
 		fi
 		if [[ "$remote_size" == "0" ]]; then
 			if [[ "$send_status" -ne 0 ]]; then
@@ -507,10 +520,12 @@ check_shared_udp_rewrite() {
 		$DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
 			"nc -u -q1 -w2 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_UDP < /tmp/offload_check_udp_shared_sent.bin" || send_status=$?
 		wait "$remote_pid" 2>/dev/null || true
-		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp_shared.bin" 2>/dev/null)
-		if [[ -z "$remote_size" ]]; then
-			echo "warning: could not read the receiver's file size on attempt $attempt/3 (send command on $DOWNSTREAM_HOST exit=$send_status); retrying, not treating unreadable evidence as a confirmed empty receipt" >&2
-			continue
+		if ! remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp_shared.bin" 2>/dev/null); then
+			remote_size=""
+		fi
+		if [[ ! "$remote_size" =~ ^[0-9]+$ ]]; then
+			record "$state_label" shared_rewrite_udp FAIL "could not read the receiver's file size on attempt $attempt/3 (send command on $DOWNSTREAM_HOST exit=$send_status; stat result '$remote_size' is not a valid byte count) -- unreadable or invalid evidence is never treated as a confirmed empty receipt, so this attempt is not eligible for a fresh transfer retry"
+			return
 		fi
 		if [[ "$remote_size" == "0" ]]; then
 			if [[ "$send_status" -ne 0 ]]; then
