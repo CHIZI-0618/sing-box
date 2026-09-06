@@ -84,6 +84,7 @@ type Inbound struct {
 	sharedEnabled            bool
 	sharedDataPlane          string
 	sharedRewrite            *sharedRewrite
+	sharedRewriteAccess      sync.RWMutex
 	sharedIPv6               bool
 	sharedBypassPrivate      bool
 	localBypassPort          []commonEBPF.PortRange

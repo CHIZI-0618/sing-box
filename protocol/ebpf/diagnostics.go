@@ -265,8 +265,8 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	tcDataPlane := i.tcDataPlane
 	i.tcDataPlaneAccess.RUnlock()
 	diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.attachmentDiagnostics()...)
-	if i.sharedRewrite != nil {
-		diagnostics.Attachments = append(diagnostics.Attachments, i.sharedRewrite.dataPlane.attachmentDiagnostics()...)
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		diagnostics.Attachments = append(diagnostics.Attachments, shared.dataPlaneInstance().attachmentDiagnostics()...)
 	}
 	if i.localCgroupEnabled() {
 		if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {
@@ -334,7 +334,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	if i.cgroupBackendInstance() != nil {
 		backendState["cgroup"] = BypassRuleSetBackendState{Version: i.bypassRuleSetCgroup.version, Known: i.bypassRuleSetCgroup.known}
 	}
-	if i.sharedRewrite != nil && i.sharedRewrite.sharedBackendInstance() != nil {
+	if shared := i.sharedRewriteInstance(); shared != nil && shared.sharedBackendInstance() != nil {
 		backendState["shared"] = BypassRuleSetBackendState{Version: i.bypassRuleSetShared.version, Known: i.bypassRuleSetShared.known}
 	}
 	if len(backendState) > 0 {
@@ -347,8 +347,8 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 
 	diagnostics.Counters = i.counters.snapshot()
 	var sharedRewriteBackend *commonEBPF.SharedNetworkBackend
-	if i.sharedRewrite != nil {
-		sharedRewriteBackend = i.sharedRewrite.sharedBackendInstance()
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		sharedRewriteBackend = shared.sharedBackendInstance()
 	}
 	if sharedRewriteBackend != nil {
 		if failures, err := sharedRewriteBackend.TokenReservationFailures(); err == nil {

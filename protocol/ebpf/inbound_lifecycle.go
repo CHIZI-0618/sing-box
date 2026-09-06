@@ -169,8 +169,9 @@ func (i *Inbound) startInbound() error {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")
 	}
 	if sharedRewriteEnabled {
-		i.sharedRewrite = newSharedRewrite(i, i.sharedOptions)
-		if err = i.sharedRewrite.Start(sharedInterfaces, hostAddresses); err != nil {
+		shared := newSharedRewrite(i, i.sharedOptions)
+		i.setSharedRewrite(shared)
+		if err = shared.Start(sharedInterfaces, hostAddresses); err != nil {
 			return err
 		}
 	}
@@ -184,7 +185,7 @@ func (i *Inbound) startInbound() error {
 			return err
 		}
 	}
-	if backend != nil || i.cgroupBackendInstance() != nil || i.sharedRewrite != nil {
+	if backend != nil || i.cgroupBackendInstance() != nil || i.sharedRewriteInstance() != nil {
 		if err = i.startTCInterfaceMonitor(); err != nil {
 			return err
 		}
@@ -195,7 +196,7 @@ func (i *Inbound) startInbound() error {
 	} else if i.enableUDP {
 		network = "udp"
 	}
-	if dataPlane == nil && i.sharedRewrite == nil {
+	if dataPlane == nil && i.sharedRewriteInstance() == nil {
 		cgroupBackend := i.cgroupBackendInstance()
 		i.logger.Debug(
 			"eBPF cgroup active: network=", network,
@@ -259,17 +260,18 @@ func (i *Inbound) startInbound() error {
 			if dataPlane != nil {
 				attachments = append(attachments, dataPlane.attachmentDescriptions()...)
 			}
-			if i.sharedRewrite != nil && i.sharedRewrite.dataPlane != nil {
-				attachments = append(attachments, i.sharedRewrite.dataPlane.attachmentDescriptions()...)
+			if shared := i.sharedRewriteInstance(); shared != nil {
+				attachments = append(attachments, shared.dataPlaneInstance().attachmentDescriptions()...)
 			}
 			return strings.Join(attachments, ", ")
 		}(), "]",
 		", listeners=[", i.listeners.String(), "]",
 		", shared_rewrite_listeners=[", func() string {
-			if i.sharedRewrite == nil {
+			shared := i.sharedRewriteInstance()
+			if shared == nil {
 				return ""
 			}
-			return i.sharedRewrite.listeners.String()
+			return shared.listeners.String()
 		}(), "]",
 		", tcp_listener_lookup=", func() string {
 			if backend == nil {
@@ -441,9 +443,8 @@ func (i *Inbound) closeResources() error {
 	monitorErr := i.stopTCInterfaceMonitor()
 	i.stopBypassRuleSets()
 	sharedRewriteErr := error(nil)
-	if i.sharedRewrite != nil {
-		sharedRewriteErr = i.sharedRewrite.Close()
-		i.sharedRewrite = nil
+	if shared := i.takeSharedRewrite(); shared != nil {
+		sharedRewriteErr = shared.Close()
 	}
 	dataPlane := i.takeTCDataPlane()
 	disableErr := dataPlane.disable()
@@ -599,6 +600,32 @@ func (i *Inbound) isCgroupRedirectAddress(address netip.Addr) bool {
 		return i.redirectIPv4Prefix.IsValid() && i.redirectIPv4Prefix.Contains(address)
 	}
 	return address.Is6() && i.redirectIPv6Prefix.IsValid() && i.redirectIPv6Prefix.Contains(address)
+}
+
+// sharedRewriteInstance, setSharedRewrite, and takeSharedRewrite guard
+// i.sharedRewrite the same way tcDataPlaneAccess guards i.tcDataPlane below:
+// Diagnostics can be called at any time from an HTTP handler with no
+// relationship to this inbound's own lifecycle, so a plain field read there
+// races against closeResources' plain field write with nothing else
+// coincidentally serializing the two -- confirmed with go test -race.
+func (i *Inbound) sharedRewriteInstance() *sharedRewrite {
+	i.sharedRewriteAccess.RLock()
+	defer i.sharedRewriteAccess.RUnlock()
+	return i.sharedRewrite
+}
+
+func (i *Inbound) setSharedRewrite(shared *sharedRewrite) {
+	i.sharedRewriteAccess.Lock()
+	i.sharedRewrite = shared
+	i.sharedRewriteAccess.Unlock()
+}
+
+func (i *Inbound) takeSharedRewrite() *sharedRewrite {
+	i.sharedRewriteAccess.Lock()
+	shared := i.sharedRewrite
+	i.sharedRewrite = nil
+	i.sharedRewriteAccess.Unlock()
+	return shared
 }
 
 func (i *Inbound) setTCDataPlane(dataPlane *tcDataPlane) {

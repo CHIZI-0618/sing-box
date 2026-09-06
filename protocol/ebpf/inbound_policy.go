@@ -273,8 +273,8 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 			},
 		})
 	}
-	if i.sharedRewrite != nil {
-		if backend := i.sharedRewrite.sharedBackendInstance(); backend != nil {
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		if backend := shared.sharedBackendInstance(); backend != nil {
 			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
 				ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
 				if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
