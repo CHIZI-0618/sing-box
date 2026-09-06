@@ -10,11 +10,15 @@ from this branch; it is not part of the public documentation site under
 
 ## 1. Final commit
 
-```
-7ea0be0f9e7ef8456b4622e8c16c53d1a1a6e151
-```
+All code, test, and CI changes described in this document land at
+`7ea0be0f9e7ef8456b4622e8c16c53d1a1a6e151`. This document is committed
+immediately afterward as its own, single, documentation-only commit — since
+a file cannot record its own commit hash before that commit exists — so
+`git log` on this branch will show one more commit after `7ea0be0f` that
+adds only this file.
 
-Full commit range for this closing/acceptance work (oldest first):
+Full commit range for the code/test/CI work this document evidences (oldest
+first):
 
 ```
 8876b2d4 ebpf: fix three real integration-test bugs, not environment noise
