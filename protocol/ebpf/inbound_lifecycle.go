@@ -199,6 +199,8 @@ func (i *Inbound) startInbound() error {
 			", udp_cleanup=", cgroupBackend.UDPCleanupMode(),
 			", udp_time=", cgroupBackend.UDPTimeMode(),
 			", udp_storage=", cgroupBackend.UDPStorageMode(),
+			", local_uid_include=", formatUIDRanges(i.localPolicy.IncludeUID),
+			", local_uid_exclude=", formatUIDRanges(i.localPolicy.ExcludeUID),
 			", self_bypass=", i.selfBypassMode(),
 			", process_tracking=", i.processTrackingMode(),
 		)
@@ -258,6 +260,8 @@ func (i *Inbound) startInbound() error {
 			return strings.Join(attachments, ", ")
 		}(), "]",
 		", listeners=[", i.listeners.String(), "]",
+		", local_uid_include=", formatUIDRanges(i.localPolicy.IncludeUID),
+		", local_uid_exclude=", formatUIDRanges(i.localPolicy.ExcludeUID),
 		", shared_rewrite_listeners=[", func() string {
 			if i.sharedRewrite == nil {
 				return ""
