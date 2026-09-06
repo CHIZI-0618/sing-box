@@ -30,7 +30,7 @@ func TestFakeIPICMPPassThroughIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = backend.Close() })
-	program := backend.fakeIPICMPProgram(tcFakeIPICMPProgramLocalEthernet)
+	program := backend.FakeIPICMPLocalReplyProgram(TCLinkFramingEthernet)
 	if program == nil {
 		t.Fatal("fakeip_icmp local Ethernet program is unavailable")
 	}
@@ -76,7 +76,7 @@ func TestFakeIPICMPPassThroughIntegration(t *testing.T) {
 		})
 	}
 
-	controlMap := backend.fakeipICMPRuntime.maps["fakeip_icmp_control"]
+	controlMap := backend.fakeIPICMP.runtime.maps["fakeip_icmp_control"]
 	zero := uint32(0)
 	disabled := fakeIPICMPControl{}
 	if err = controlMap.Update(&zero, &disabled, 0); err != nil {

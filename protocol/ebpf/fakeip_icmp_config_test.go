@@ -32,13 +32,11 @@ func TestNormalizeFakeIPICMP(t *testing.T) {
 
 // TestValidateFakeIPICMP covers every branch of the eBPF-only half of the
 // fakeip_icmp=reply requirement: it needs a FakeIP prefix to answer for, and
-// it needs to land on a data plane that actually has a TC attachment for it
-// to ride — local.data_plane=tc or shared.data_plane=socket_assign. Both
-// local.data_plane=cgroup alone and shared.data_plane=packet_rewrite alone
-// are refused by name, not folded into one generic error, because each has
-// its own reason (no packet visibility at all; a different backend this
-// round does not attach to) that a caller fixing the configuration needs to
-// see.
+// it needs to land on a data plane that actually has an attachment for it to
+// ride — local.data_plane=tc or either shared.data_plane. Only
+// local.data_plane=cgroup has no attachment at all to answer from (its
+// connect()/sendmsg() hooks never see a packet), and is refused by name so a
+// caller fixing the configuration sees why.
 func TestValidateFakeIPICMP(t *testing.T) {
 	fakeIPv4 := netip.MustParsePrefix("198.18.0.0/15")
 	noPrefix := netip.Prefix{}
@@ -70,7 +68,7 @@ func TestValidateFakeIPICMP(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "reply on local TC plus shared packet_rewrite applies only to local TC", enabled: true, fakeIPIPv4: fakeIPv4,
+			name: "reply on local TC plus shared packet_rewrite covers both", enabled: true, fakeIPIPv4: fakeIPv4,
 			localEnabled: true, localDataPlane: localDataPlaneTC,
 			sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite,
 			wantErr: false,
@@ -81,14 +79,14 @@ func TestValidateFakeIPICMP(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "reply on shared packet_rewrite alone", enabled: true, fakeIPIPv4: fakeIPv4,
+			sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite,
+			wantErr: false,
+		},
+		{
 			name: "reply on local cgroup alone is refused by name", enabled: true, fakeIPIPv4: fakeIPv4,
 			localEnabled: true, localDataPlane: localDataPlaneCgroup,
 			wantErr: true, wantErrContains: "local.data_plane=cgroup",
-		},
-		{
-			name: "reply on shared packet_rewrite alone is refused by name", enabled: true, fakeIPIPv4: fakeIPv4,
-			sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite,
-			wantErr: true, wantErrContains: "shared.data_plane=packet_rewrite",
 		},
 		{
 			name: "reply on cgroup plus shared socket_assign applies only to the shared path", enabled: true, fakeIPIPv4: fakeIPv4,
@@ -97,14 +95,14 @@ func TestValidateFakeIPICMP(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "reply on cgroup plus shared packet_rewrite has no attachable path", enabled: true, fakeIPIPv4: fakeIPv4,
+			name: "reply on cgroup plus shared packet_rewrite applies only to the shared path", enabled: true, fakeIPIPv4: fakeIPv4,
 			localEnabled: true, localDataPlane: localDataPlaneCgroup,
 			sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite,
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "reply with nothing enabled at all", enabled: true, fakeIPIPv4: fakeIPv4,
-			wantErr: true, wantErrContains: "requires local.data_plane=tc or shared.data_plane=socket_assign",
+			wantErr: true, wantErrContains: "requires local.data_plane=tc or shared interception",
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

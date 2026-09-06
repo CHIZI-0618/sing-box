@@ -107,22 +107,22 @@ FakeIP 地址能够响应 `ping`，部分客户端以此判断目标是否可达
 | `local.data_plane: tc` | 支持 |
 | `local.data_plane: cgroup` | 不支持本机流量 |
 | `shared.data_plane: socket_assign` | 支持 shared 客户端 |
-| `shared.data_plane: packet_rewrite` | 不支持 shared 客户端 |
+| `shared.data_plane: packet_rewrite` | 支持 shared 客户端 |
 
 `local.data_plane: cgroup` 通过在报文构造之前改写 socket 目标地址来实现接管，
-不挂载在任何网络接口上，因此没有可用来响应的位置。`shared.data_plane:
-packet_rewrite` 使用独立的 `SharedNetworkBackend`，该后端不挂载 FakeIP ICMP
-responder。若启用的路径只有这些不支持路径，开启 `reply` 会在启动时报错。
+不挂载在任何网络接口上，因此没有可用来响应的位置——这是唯一被直接拒绝的组合。
+两种 shared 数据面都会在各自的接口上挂载同一个 responder 程序（分别通过各自的
+后端——`socket_assign` 用 `TCBackend`，`packet_rewrite` 用
+`SharedNetworkBackend`），因此任意一种都能单独响应 shared 客户端。
 
-同时启用本机和 shared 接管时，支持能力按路径分别计算：
+只有当启用组合中仍包含 `local.data_plane: cgroup` 时，支持能力才按路径分别
+计算：
 
-- `local: tc` + `shared: packet_rewrite` 可以启动，但只响应本机 TC 流量；shared
-  packet-rewrite 客户端不会收到 FakeIP ICMP 回复。
-- `local: cgroup` + `shared: socket_assign` 可以启动，但只响应 shared 客户端；
-  本机 cgroup 内进程产生的流量不会收到 FakeIP ICMP 回复。
+- `local: cgroup` + 任一 shared 路径可以启动，但只响应 shared 客户端；本机
+  cgroup 内进程产生的流量不会收到 FakeIP ICMP 回复。
 
-本机流量需要使用 `local.data_plane: tc`，shared 客户端需要使用
-`shared.data_plane: socket_assign`。只有同时启用这两条受支持路径，才能覆盖两者。
+本机流量需要使用 `local.data_plane: tc`。两种 shared 数据面都能响应 shared
+客户端；将 `local: tc` 与任一 shared 数据面组合即可覆盖两条路径。
 
 即使路径本身受支持，回复也只能送达客户端当下真正能收到的地址。`reply` 对 IPv6
 生效，依赖 `shared.ipv6`/`local.ipv6` 所指向的客户端在那一刻确实拥有可用的
@@ -332,7 +332,9 @@ FakeIP 和 DNS 的优先级与 `local.bypass_port` 相同，配置 53 端口时�
 
 接管从 `wlan1`（请替换为实际的热点/网络共享接口名）下游客户端到达的流量，不启用
 本机接管。`shared.data_plane` 默认是 `packet_rewrite`，要求以太网帧；对于
-PPP/PPPoE、raw-IP 或隧道接口，请改用 `socket_assign`。
+PPP/PPPoE、raw-IP 或隧道接口，请改用 `socket_assign`。两种 shared 数据面都
+支持为这些客户端启用 `fakeip_icmp: reply`（参见上文支持矩阵）——按下方组合
+示例的方式加上它和 FakeIP DNS 传输方式即可，无需其他改动。
 
 ```json
 {
@@ -347,11 +349,11 @@ PPP/PPPoE、raw-IP 或隧道接口，请改用 `socket_assign`。
 
 ##### 本机与热点组合
 
-两条路径同时启用，各自使用默认值。这里的 `fakeip_icmp: reply` 只覆盖使用
-`tc`/`socket_assign` 的那条路径——参见上文的支持矩阵；`local: tc` +
-`shared: socket_assign` 这一组合是唯一能同时覆盖两条路径的方式。
-`fakeip_icmp: reply` 要求 `dns.servers` 中配置了 FakeIP DNS 传输方式，因此
-以下示例给出了完整配置，因为缺少该项 `sing-box check` 会拒绝 `reply`。
+两条路径同时启用，各自使用默认值。`local: tc` 加任一 shared 数据面即可让
+`fakeip_icmp: reply` 同时覆盖两条路径——参见上文的支持矩阵；只有 `local: cgroup`
+会让本机流量得不到响应。`fakeip_icmp: reply` 要求 `dns.servers` 中配置了
+FakeIP DNS 传输方式，因此以下示例给出了完整配置，因为缺少该项 `sing-box check`
+会拒绝 `reply`。
 
 ```json
 {

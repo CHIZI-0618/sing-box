@@ -76,6 +76,9 @@ type SharedNetworkBackend struct {
 	excludeSourceIPv6   []netip.Prefix
 	includeSourceMAC    []MACAddress
 	excludeSourceMAC    []MACAddress
+	// fakeIPICMP is nil unless SharedNetworkConfig.FakeIPICMPReply was set;
+	// see fakeip_icmp_backend.go and tc_fakeip_icmp.go's TCBackend analog.
+	fakeIPICMP *FakeIPICMPBackend
 }
 
 func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConfig) (*SharedNetworkBackend, error) {
@@ -243,6 +246,15 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 	if err := backend.updateControl(); err != nil {
 		_ = backend.Close()
 		return nil, E.Cause(err, "initialize shared-network control")
+	}
+	if config.FakeIPICMPReply {
+		backend.fakeIPICMP, err = PrepareFakeIPICMP(
+			redirectIPv4.IsValid(), false, redirectIPv6.IsValid(), fakeIPIPv4, fakeIPIPv6,
+		)
+		if err != nil {
+			_ = backend.Close()
+			return nil, err
+		}
 	}
 	return backend, nil
 }
@@ -498,6 +510,8 @@ func (b *SharedNetworkBackend) Close() error {
 	_ = b.updateControl()
 	closeErr := closePrograms(b.runtime.programs)
 	closeErr = E.Errors(closeErr, closeMaps(b.runtime.maps))
+	closeErr = E.Errors(closeErr, b.fakeIPICMP.Close())
+	b.fakeIPICMP = nil
 	b.runtime = nil
 	b.hostIPv4 = nil
 	b.hostIPv6 = nil
@@ -536,4 +550,37 @@ func (b *SharedNetworkBackend) IsClosed() bool {
 	b.access.RLock()
 	defer b.access.RUnlock()
 	return b.runtime == nil
+}
+
+// FakeIPICMPEnabled reports whether this backend loaded the fakeip_icmp
+// object (SharedNetworkConfig.FakeIPICMPReply). protocol/ebpf's shared
+// packet-rewrite data plane uses this to decide whether to attach the
+// extra shared reply filter at all.
+func (b *SharedNetworkBackend) FakeIPICMPEnabled() bool {
+	if b == nil {
+		return false
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.fakeIPICMP != nil
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPSharedReplyProgramFD(framing TCLinkFraming) int {
+	if b == nil {
+		return -1
+	}
+	b.access.RLock()
+	backend := b.fakeIPICMP
+	b.access.RUnlock()
+	return backend.SharedReplyProgramFD(framing)
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPSharedReplyProgram(framing TCLinkFraming) *CiliumEBPF.Program {
+	if b == nil {
+		return nil
+	}
+	b.access.RLock()
+	backend := b.fakeIPICMP
+	b.access.RUnlock()
+	return backend.SharedReplyProgram(framing)
 }

@@ -192,6 +192,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	tcDataPlane := i.tcDataPlane
 	i.tcDataPlaneAccess.RUnlock()
 	diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.attachmentDiagnostics()...)
+	if i.sharedRewrite != nil {
+		diagnostics.Attachments = append(diagnostics.Attachments, i.sharedRewrite.dataPlane.attachmentDiagnostics()...)
+	}
 	if i.localCgroupEnabled() {
 		if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {
 			diagnostics.Attachments = append(diagnostics.Attachments, EBPFAttachmentDiagnostics{

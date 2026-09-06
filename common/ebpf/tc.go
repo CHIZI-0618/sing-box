@@ -141,10 +141,11 @@ type TCBackend struct {
 	bypassIPv6      []netip.Prefix
 	hostIPv4        [][4]byte
 	hostIPv6        [][16]byte
-	// fakeipICMPRuntime is nil unless TCConfig.FakeIPICMPReply was set; see
-	// tc_fakeip_icmp.go.
-	fakeipICMPRuntime   *tcRuntime
-	fakeipICMPControlFD int
+	// fakeIPICMP is nil unless TCConfig.FakeIPICMPReply was set; see
+	// tc_fakeip_icmp.go. It is a standalone backend (FakeIPICMPBackend) rather
+	// than fields inline here because shared.data_plane: packet_rewrite hosts
+	// the same native object with no TCBackend of its own to hold it in.
+	fakeIPICMP *FakeIPICMPBackend
 }
 
 func PrepareTC(config TCConfig) (*TCBackend, error) {
@@ -275,7 +276,10 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		return nil, E.Errors(err, backend.Close())
 	}
 	if config.FakeIPICMPReply {
-		if err = backend.enableFakeIPICMPLocked(config, fakeIPIPv4, fakeIPIPv6); err != nil {
+		backend.fakeIPICMP, err = PrepareFakeIPICMP(
+			config.EnableIPv4, config.EnableLocalIPv6, config.EnableSharedIPv6, fakeIPIPv4, fakeIPIPv6,
+		)
+		if err != nil {
 			return nil, E.Errors(err, backend.Close())
 		}
 	}
@@ -778,7 +782,8 @@ func (b *TCBackend) Close() error {
 		delete(b.runtime.maps, "tc_self_sockets")
 	}
 	closeErr = E.Errors(closeErr, closeMaps(b.runtime.maps))
-	closeErr = E.Errors(closeErr, b.closeFakeIPICMPLocked())
+	closeErr = E.Errors(closeErr, b.fakeIPICMP.Close())
+	b.fakeIPICMP = nil
 	b.runtime = nil
 	b.controlMapFD = -1
 	b.assignmentMapFD = -1

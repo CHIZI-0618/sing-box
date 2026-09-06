@@ -8,7 +8,7 @@ import (
 )
 
 // newTestFakeIPPolicy compiles a CompiledPolicy carrying only what
-// enableFakeIPICMPLocked needs: FakeIP prefixes and the protocol toggles
+// PrepareFakeIPICMP needs: FakeIP prefixes and the protocol toggles
 // prepareTC's own validation requires.
 func newTestFakeIPPolicy(t *testing.T, fakeIPv4, fakeIPv6 string) CompiledPolicy {
 	t.Helper()
