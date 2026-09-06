@@ -441,6 +441,13 @@ ICMP/ICMPv6 Echo Request（分片、带选项、类型/代码不符，或目的�
 - 已分片的 IPv4 和 IPv6 数据报绕过接管；IPv6 atomic fragment 作为普通 IPv6
   报文处理。
 - 网络变化后会自动恢复接管状态。
+- 每一个原地改写报文的 TC 程序（bypass_rule_set CIDR 匹配、
+  `shared.data_plane: packet_rewrite`、`fakeip_icmp: reply`）都已针对
+  network namespace 和 veth pair 测试验证过，但这两种环境都不会触发真实网卡
+  的校验和或分段卸载（veth 完全没有硬件卸载路径，软件回环无论网卡特性如何
+  声明，都会如实计算校验和）。在依赖此入站运行于尚未验证过硬件卸载与 eBPF
+  改写报文交互行为的实体机之前，请阅读
+  [eBPF 校验和/卸载验证](/zh/manual/misc/ebpf-checksum-offload-verification/)。
 
 在供应商内核或 Android 内核上启用前，请阅读
 [eBPF 内核要求](/zh/manual/misc/ebpf-kernel-requirements/)。

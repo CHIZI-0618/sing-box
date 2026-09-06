@@ -508,6 +508,15 @@ same interface.
 - Fragmented IPv4 and IPv6 datagrams bypass interception. IPv6 atomic fragments
   are processed as ordinary IPv6 packets.
 - Interception state is restored automatically after network changes.
+- Every TC program that rewrites a packet in place (bypass_rule_set CIDR
+  matching, `shared.data_plane: packet_rewrite`, `fakeip_icmp: reply`) has
+  been checked against network-namespace and veth-pair tests, but neither
+  exercises real NIC checksum or segmentation offload (veth has none, and a
+  software loopback always computes checksums honestly regardless of
+  advertised NIC features). See
+  [eBPF checksum/offload verification](/manual/misc/ebpf-checksum-offload-verification/)
+  before relying on this inbound on hardware whose offload behavior with
+  eBPF-rewritten packets has not been checked.
 
 See [eBPF kernel requirements](/manual/misc/ebpf-kernel-requirements/) before
 enabling this inbound on vendor or Android kernels.
