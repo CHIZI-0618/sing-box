@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cilium/ebpf/link"
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	udpnat "github.com/sagernet/sing/common/udpnat2"
@@ -30,6 +31,12 @@ func (r *tcRetryResource) Close() error {
 		return r.closer.Close()
 	}
 	return nil
+}
+
+// Info satisfies tcxAttachedLink; none of the tests using tcRetryResource as
+// an ICMP link call filtersAttached, so its content does not matter.
+func (r *tcRetryResource) Info() (*link.Info, error) {
+	return nil, errors.New("tcRetryResource has no real TCX link info")
 }
 
 func TestTCAttachmentCloseRetainsLockUntilDetachSucceeds(t *testing.T) {

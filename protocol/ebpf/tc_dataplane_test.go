@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	CiliumEBPF "github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"golang.org/x/sys/unix"
@@ -320,6 +321,12 @@ func (c *retryCloser) Close() error {
 		return errors.New("injected ICMP link close failure")
 	}
 	return nil
+}
+
+// Info satisfies tcxAttachedLink; the close-retention tests using
+// retryCloser never call filtersAttached, so its content does not matter.
+func (c *retryCloser) Info() (*link.Info, error) {
+	return nil, errors.New("retryCloser has no real TCX link info")
 }
 
 func TestCloseFakeIPICMPTCXLinkFailureRetainsOwnership(t *testing.T) {

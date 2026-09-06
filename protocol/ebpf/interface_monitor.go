@@ -574,7 +574,7 @@ func (d *tcDataPlane) attachmentStateChanged(localInterface string, sharedInterf
 			// a filter loss and repeatedly tearing down the active attachment.
 			continue
 		}
-		attached, err := attachment.filtersAttached(d.priority)
+		attached, err := attachment.filtersAttached(d.priority, d.backend)
 		if err != nil {
 			return false, err
 		}

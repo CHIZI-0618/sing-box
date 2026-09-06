@@ -46,6 +46,23 @@ type tcInterfaceRole struct {
 	shared bool
 }
 
+// tcxLinkInfo is the subset of cilium/ebpf's link.Link that tcxLinkAttached
+// actually calls. Narrower than link.Link so the same health-check helper
+// also accepts tcxAttachedLink below.
+type tcxLinkInfo interface {
+	Info() (*link.Info, error)
+}
+
+// tcxAttachedLink is the subset of link.Link the fakeip_icmp TCX link fields
+// use: closing it, and inspecting whether it is still live. Narrower than
+// link.Link (which cannot be implemented outside cilium/ebpf, so a test
+// double could never satisfy it anyway) so a test double only needs these
+// two methods.
+type tcxAttachedLink interface {
+	io.Closer
+	tcxLinkInfo
+}
+
 type tcInterfaceAttachment struct {
 	interfaceName  string
 	interfaceIndex int
@@ -66,8 +83,8 @@ type tcInterfaceAttachment struct {
 	// whenever its own role/attachment-type does not apply.
 	localICMPFilter  *netlink.BpfFilter
 	sharedICMPFilter *netlink.BpfFilter
-	localICMPLink    io.Closer
-	sharedICMPLink   io.Closer
+	localICMPLink    tcxAttachedLink
+	sharedICMPLink   tcxAttachedLink
 	// detachFilter is nil in production; tests inject detach failures per owner.
 	detachFilter func(*netlink.BpfFilter) error
 }
@@ -348,7 +365,7 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 		previous := current[interfaceName]
 		if previous != nil && previous.interfaceIndex == state.index &&
 			previous.framing == state.framing && previous.role == state.role {
-			attached, checkErr := previous.filtersAttached(d.priority)
+			attached, checkErr := previous.filtersAttached(d.priority, d.backend)
 			if checkErr != nil {
 				return rollback(E.Cause(checkErr, "inspect TC eBPF interface ", interfaceName))
 			}
@@ -357,9 +374,19 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 				delete(current, interfaceName)
 				continue
 			}
-			if err = previous.resetAttachment(); err != nil {
-				return rollback(E.Cause(err, "reset TC eBPF interface ", interfaceName))
-			}
+			// Deliberately not previous.resetAttachment() here: that would
+			// tear down every filter and link this attachment holds,
+			// including ones filtersAttached just confirmed are still
+			// healthy, only to have updateTCInterfaceAttachment recreate
+			// them from nothing a few lines below. updateTCInterfaceAttachment
+			// (and updateTCXInterfaceAttachment underneath it) already skip
+			// attaching whatever field is non-nil, so calling it directly on
+			// the drifted-but-not-reset attachment repairs only the part
+			// filtersAttached found missing — the surgical repair this
+			// health check exists for, not a full detach-and-reattach that
+			// would needlessly disturb an unrelated, still-working filter
+			// (or, if the repair itself then failed, leave that unrelated
+			// filter torn down too).
 		}
 		if previous != nil && previous.interfaceIndex == state.index && previous.framing == state.framing {
 			if err = updateTCInterfaceAttachment(
@@ -475,7 +502,18 @@ func tcAttachmentIndexClaimed(desired map[string]tcAttachmentState, interfaceNam
 	return false
 }
 
-func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {
+// filtersAttached reports whether this attachment's actual kernel state
+// still matches everything its role and backend configuration says should be
+// there. backend is consulted only for backend.FakeIPICMPEnabled(): when the
+// feature is off, the ICMP-specific checks below are skipped entirely (a nil
+// localICMPLink/sharedICMPLink/localICMPFilter/sharedICMPFilter is then
+// correct, not a fault), and when it is on, the corresponding fakeip_icmp
+// filter or link is required exactly like the ordinary one it rides
+// alongside — its absence must fail this check the same way a missing
+// sb_tc_local/sb_tc_shared would, so a reconcile pass actually notices and
+// repairs it instead of a health check that can only see half of what it
+// attached.
+func (a *tcInterfaceAttachment) filtersAttached(priority uint16, backend *commonEBPF.TCBackend) (bool, error) {
 	if a == nil {
 		return false, nil
 	}
@@ -489,6 +527,7 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {
 	if link.Attrs().Index != a.interfaceIndex {
 		return false, nil
 	}
+	fakeIPICMPEnabled := backend.FakeIPICMPEnabled()
 	if a.attachmentType == "tcx" {
 		if a.role.local {
 			attached, err := tcxLinkAttached(a.localLink, a.interfaceIndex, CiliumEBPF.AttachTCXEgress)
@@ -498,6 +537,15 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {
 			if !attached {
 				return false, nil
 			}
+			if fakeIPICMPEnabled {
+				attached, err = tcxLinkAttached(a.localICMPLink, a.interfaceIndex, CiliumEBPF.AttachTCXEgress)
+				if err != nil {
+					return false, E.Cause(err, "inspect TCX local fakeip_icmp attachment on interface ", a.interfaceName)
+				}
+				if !attached {
+					return false, nil
+				}
+			}
 		}
 		if a.role.shared {
 			attached, err := tcxLinkAttached(a.sharedLink, a.interfaceIndex, CiliumEBPF.AttachTCXIngress)
@@ -506,6 +554,15 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {
 			}
 			if !attached {
 				return false, nil
+			}
+			if fakeIPICMPEnabled {
+				attached, err = tcxLinkAttached(a.sharedICMPLink, a.interfaceIndex, CiliumEBPF.AttachTCXIngress)
+				if err != nil {
+					return false, E.Cause(err, "inspect TCX shared fakeip_icmp attachment on interface ", a.interfaceName)
+				}
+				if !attached {
+					return false, nil
+				}
 			}
 		}
 		return true, nil
@@ -527,6 +584,21 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {
 		if !attached {
 			return false, nil
 		}
+		if fakeIPICMPEnabled {
+			attached, err = tcFilterAttached(
+				link,
+				netlink.HANDLE_MIN_EGRESS,
+				"sb_icmp_local",
+				tcLocalICMPReplyFilterHandle,
+				priority,
+			)
+			if err != nil {
+				return false, E.Cause(err, "inspect fakeip_icmp local egress filter on interface ", a.interfaceName)
+			}
+			if !attached {
+				return false, nil
+			}
+		}
 	}
 	if a.role.shared {
 		attached, err := tcFilterAttached(
@@ -542,11 +614,26 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16) (bool, error) {
 		if !attached {
 			return false, nil
 		}
+		if fakeIPICMPEnabled {
+			attached, err = tcFilterAttached(
+				link,
+				netlink.HANDLE_MIN_INGRESS,
+				"sb_icmp_shared",
+				tcSharedICMPReplyFilterHandle,
+				priority,
+			)
+			if err != nil {
+				return false, E.Cause(err, "inspect fakeip_icmp shared ingress filter on interface ", a.interfaceName)
+			}
+			if !attached {
+				return false, nil
+			}
+		}
 	}
 	return true, nil
 }
 
-func tcxLinkAttached(current link.Link, interfaceIndex int, attachType CiliumEBPF.AttachType) (bool, error) {
+func tcxLinkAttached(current tcxLinkInfo, interfaceIndex int, attachType CiliumEBPF.AttachType) (bool, error) {
 	if current == nil {
 		return false, nil
 	}
@@ -1143,15 +1230,20 @@ func updateTCInterfaceAttachmentWithOps(
 	return nil
 }
 
+// updateTCXInterfaceAttachment reconciles a TCX attachment toward role.
+// There is deliberately no role == attachment.role fast return here: the
+// hasLocal/hasShared computation transitionTCXInterfaceRole receives below
+// folds fakeip_icmp link health into an unchanged role's own "is this role
+// actually fully attached" state specifically so a health-check-driven
+// repair (role never changes, only a link silently went missing) reaches
+// transitionTCXInterfaceRole's attach/detach logic instead of being told
+// there is nothing to do before that logic ever sees the gap.
 func updateTCXInterfaceAttachment(
 	linkDevice netlink.Link,
 	backend *commonEBPF.TCBackend,
 	attachment *tcInterfaceAttachment,
 	role tcInterfaceRole,
 ) error {
-	if role == attachment.role {
-		return nil
-	}
 	attach := func(local bool) error {
 		program := backend.SharedIngressProgram(attachment.framing)
 		attachType := CiliumEBPF.AttachTCXIngress
@@ -1257,6 +1349,17 @@ func updateTCXInterfaceAttachment(
 // transitionTCXInterfaceRole installs desired links before removing obsolete
 // links. This keeps at least one interception direction active throughout a
 // role change and rolls back links created by a failed update.
+//
+// It reconciles the attachment's actual link state (hasLocal/hasShared)
+// toward desired, attaching or detaching only what the two disagree on — or,
+// when the role itself is unchanged but hasLocal/hasShared says a role's
+// link is missing anyway (the caller folds fakeip_icmp link health into
+// these two booleans specifically for this), repairing just that gap. There
+// is deliberately no current == desired fast return before that: the four
+// branches below already no-op on their own when hasLocal/hasShared already
+// match what desired implies, so the only thing an early return before them
+// could add is skipping a repair a caller asked for by passing
+// hasLocal/hasShared false despite an unchanged role.
 func transitionTCXInterfaceRole(
 	current tcInterfaceRole,
 	desired tcInterfaceRole,
@@ -1265,9 +1368,6 @@ func transitionTCXInterfaceRole(
 	attach func(local bool) error,
 	detach func(local bool) error,
 ) error {
-	if current == desired {
-		return nil
-	}
 	created := make([]bool, 0, 2)
 	rollback := func(startErr error) error {
 		var rollbackErr error
@@ -1404,14 +1504,15 @@ func detachTCFilterOwnedWith(filter **netlink.BpfFilter, detach func(*netlink.Bp
 	return nil
 }
 
-func closeOwned(closer *io.Closer) error {
-	if closer == nil || *closer == nil {
+func closeOwned[T io.Closer](closer *T) error {
+	if closer == nil || any(*closer) == nil {
 		return nil
 	}
 	if err := (*closer).Close(); err != nil {
 		return err
 	}
-	*closer = nil
+	var zero T
+	*closer = zero
 	return nil
 }
 

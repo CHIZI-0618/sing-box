@@ -14,33 +14,24 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
-// TestFakeIPICMPLocalReplyAnswersARealPing is the end-to-end check the rest
-// of this feature's tests only approach: a real ICMP Echo Request, built by
-// the standard library's own ICMP encoder and sent through a real raw
-// socket, crossing a real veth with the real fakeip_icmp local_reply program
-// attached at egress, and a real Echo Reply read back on the same socket —
-// not an inspection of Go structs or a kernel-side filter list.
-//
-// The veth's peer is never touched: the request is answered on the egress
-// side before it would ever reach the peer, which is itself part of what
-// this test confirms (the request does not continue past this box).
-func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPBackend(t)
-	t.Cleanup(func() { _ = backend.Close() })
-
-	const fakeIPTarget = "198.18.0.1"
+// setupFakeIPICMPPingVeth builds a veth pair, an IPv4 FakeIP route through
+// it, a static neighbor entry for the FakeIP target, and clears rp_filter —
+// everything an IPv4 fakeip_icmp local_reply ping test needs before an
+// attachment is added, factored out so both the clsact and TCX real-ping
+// tests build the exact same network state.
+func setupFakeIPICMPPingVeth(t *testing.T, selfName, peerName, fakeIPTarget string) netlink.Link {
+	t.Helper()
 	attributes := netlink.NewLinkAttrs()
-	attributes.Name = "sbicmpr0"
-	veth := &netlink.Veth{LinkAttrs: attributes, PeerName: "sbicmpr1"}
+	attributes.Name = selfName
+	veth := &netlink.Veth{LinkAttrs: attributes, PeerName: peerName}
 	if err := netlink.LinkAdd(veth); err != nil {
 		t.Fatalf("create veth pair: %v", err)
 	}
-	self, err := netlink.LinkByName("sbicmpr0")
+	self, err := netlink.LinkByName(selfName)
 	if err != nil {
 		t.Fatalf("find veth: %v", err)
 	}
-	peer, err := netlink.LinkByName("sbicmpr1")
+	peer, err := netlink.LinkByName(peerName)
 	if err != nil {
 		t.Fatalf("find veth peer: %v", err)
 	}
@@ -88,44 +79,29 @@ func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
 	// exactly that basis, the same composition (max(conf.all, conf.<dev>))
 	// this whole series' rp_filter fixes exist for. Cleared on both for the
 	// same reason createTCDeliveryLink clears both on the real delivery veth.
-	for _, name := range []string{"all", "sbicmpr0"} {
+	for _, name := range []string{"all", selfName} {
 		if _, _, err = setTCSysctl(tcInterfaceSysctlPath(name, "rp_filter"), "0"); err != nil {
 			t.Fatalf("clear rp_filter for %s: %v", name, err)
 		}
 	}
+	return self
+}
 
-	const priority = 2 // force clsact; see TestAttachTCInterfaceAddsTheFakeIPICMPFilterWhenEnabled.
-	lock, err := acquireTCInterfaceLock("sbicmpr0", self.Attrs().Index)
-	if err != nil {
-		t.Fatalf("acquire the interface lock: %v", err)
-	}
-	attachment, err := attachTCInterfaceWithLock(
-		netlink.LinkByName,
-		backend,
-		"sbicmpr0",
-		tcAttachmentState{
-			index:   self.Attrs().Index,
-			framing: commonEBPF.TCLinkFramingEthernet,
-			role:    tcInterfaceRole{local: true},
-		},
-		false,
-		priority,
-		lock,
-		true,
-	)
-	if err != nil {
-		t.Fatalf("attach the interface: %v", err)
-	}
-	t.Cleanup(func() { _ = attachment.Close() })
-
+// pingFakeIPICMPTarget sends one real ICMP Echo Request to fakeIPTarget over
+// a fresh raw socket and asserts a real, correctly-formed, correctly-checksummed,
+// non-amplifying Echo Reply comes back from it. Returns a non-nil error
+// (never a fatal test failure) so callers can also assert the *absence* of a
+// reply, e.g. while an attachment is broken on purpose.
+func pingFakeIPICMPTarget(t *testing.T, fakeIPTarget string, deadline time.Duration) error {
+	t.Helper()
 	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
 		t.Fatalf("open a raw ICMP socket: %v", err)
 	}
 	defer conn.Close()
 
-	const identifier = 0x1234
-	const sequence = 7
+	identifier := 0x1234 + int(time.Now().UnixNano()&0xff)
+	sequence := 7
 	payload := []byte("fakeip-icmp-reply-test-payload")
 	request := icmp.Message{
 		Type: ipv4.ICMPTypeEcho, Code: 0,
@@ -136,7 +112,7 @@ func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
 		t.Fatalf("marshal the echo request: %v", err)
 	}
 
-	if err = conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err = conn.SetDeadline(time.Now().Add(deadline)); err != nil {
 		t.Fatalf("set a deadline: %v", err)
 	}
 	if _, err = conn.WriteTo(requestBytes, &net.IPAddr{IP: net.ParseIP(fakeIPTarget)}); err != nil {
@@ -146,7 +122,7 @@ func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
 	buffer := make([]byte, 1500)
 	replyLength, peerAddress, err := conn.ReadFrom(buffer)
 	if err != nil {
-		t.Fatalf("read a reply: %v (the request may have gone to the wire instead of being answered)", err)
+		return err
 	}
 	if replyLength > len(requestBytes) {
 		t.Fatalf("reply is %d bytes, longer than the %d-byte request — an amplification, not a reply",
@@ -178,6 +154,57 @@ func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
 	}
 	if checksum := icmpChecksum(buffer[:replyLength]); checksum != 0 {
 		t.Fatalf("reply ICMP checksum does not validate (residual %#04x)", checksum)
+	}
+	return nil
+}
+
+// TestFakeIPICMPLocalReplyAnswersARealPing is the end-to-end check the rest
+// of this feature's tests only approach: a real ICMP Echo Request, built by
+// the standard library's own ICMP encoder and sent through a real raw
+// socket, crossing a real veth with the real fakeip_icmp local_reply program
+// attached at egress, and a real Echo Reply read back on the same socket —
+// not an inspection of Go structs or a kernel-side filter list.
+//
+// The veth's peer is never touched: the request is answered on the egress
+// side before it would ever reach the peer, which is itself part of what
+// this test confirms (the request does not continue past this box).
+func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
+	enterTestNetworkNamespace(t)
+	backend := newRealFakeIPICMPBackend(t)
+	t.Cleanup(func() { _ = backend.Close() })
+
+	const fakeIPTarget = "198.18.0.1"
+	self := setupFakeIPICMPPingVeth(t, "sbicmpr0", "sbicmpr1", fakeIPTarget)
+
+	const priority = 2 // force clsact; see TestAttachTCInterfaceAddsTheFakeIPICMPFilterWhenEnabled.
+	lock, err := acquireTCInterfaceLock("sbicmpr0", self.Attrs().Index)
+	if err != nil {
+		t.Fatalf("acquire the interface lock: %v", err)
+	}
+	attachment, err := attachTCInterfaceWithLock(
+		netlink.LinkByName,
+		backend,
+		"sbicmpr0",
+		tcAttachmentState{
+			index:   self.Attrs().Index,
+			framing: commonEBPF.TCLinkFramingEthernet,
+			role:    tcInterfaceRole{local: true},
+		},
+		false,
+		priority,
+		lock,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("attach the interface: %v", err)
+	}
+	t.Cleanup(func() { _ = attachment.Close() })
+	if attachment.attachmentType != "clsact" {
+		t.Fatalf("attachmentType = %q, want clsact", attachment.attachmentType)
+	}
+
+	if err = pingFakeIPICMPTarget(t, fakeIPTarget, 5*time.Second); err != nil {
+		t.Fatalf("read a reply: %v (the request may have gone to the wire instead of being answered)", err)
 	}
 }
 
