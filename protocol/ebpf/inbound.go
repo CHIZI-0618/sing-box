@@ -89,6 +89,10 @@ type Inbound struct {
 	localBypassPort          []commonEBPF.PortRange
 	sharedBypassPort         []commonEBPF.PortRange
 	tcPriority               uint16
+	preMatch                 bool
+	preMatchController       *preMatchController
+	preMatchHostAccess       sync.RWMutex
+	preMatchHostAddresses    []netip.Addr
 	fakeIPIPv4Prefix         netip.Prefix
 	fakeIPIPv6Prefix         netip.Prefix
 	sharedIncludeMAC         []commonEBPF.MACAddress
@@ -196,7 +200,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, E.New("missing network manager")
 	}
 	var selfBypass *commonEBPF.SelfBypass
-	if localEnabled {
+	if localEnabled && !options.PreMatch {
 		provider, loaded := networkManager.(interface {
 			EBPFSelfBypass() *commonEBPF.SelfBypass
 		})
@@ -234,6 +238,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		localBypassPort:     localBypassPort,
 		sharedBypassPort:    sharedBypassPort,
 		tcPriority:          uint16(options.TCPriority),
+		preMatch:            options.PreMatch,
 		sharedIncludeMAC:    sharedIncludeMAC,
 		sharedExcludeMAC:    sharedExcludeMAC,
 		localPolicy: commonEBPF.LocalPolicy{

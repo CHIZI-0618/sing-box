@@ -44,6 +44,24 @@ func CompileBypassCIDRPolicy(prefixes []netip.Prefix) (BypassCIDRPolicy, error) 
 	return BypassCIDRPolicy{ipv4: ipv4, ipv6: ipv6}, err
 }
 
+func (p BypassCIDRPolicy) Contains(address netip.Addr) bool {
+	address = address.Unmap()
+	if address.Is4() {
+		for _, prefix := range p.ipv4 {
+			if prefix.Contains(address) {
+				return true
+			}
+		}
+	} else if address.Is6() {
+		for _, prefix := range p.ipv6 {
+			if prefix.Contains(address) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func compileUIDPolicy(policy LocalPolicy) ([]uidLPMKey, bool, error) {
 	for name, uidRanges := range map[string][]UIDRange{
 		"include_uid": policy.IncludeUID,

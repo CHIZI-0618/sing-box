@@ -15,12 +15,15 @@ import (
 func (i *Inbound) Start(stage adapter.StartStage) error {
 	switch stage {
 	case adapter.StartStateInitialize:
+		if i.preMatch {
+			return nil
+		}
 		if i.localCgroupEnabled() || i.sharedRewriteEnabled() {
 			if err := i.selectRedirectPrefixes(); err != nil {
 				return err
 			}
 		}
-		if i.localEnabled {
+		if i.localEnabled && !i.preMatch {
 			if err := i.startSelfBypass(); err != nil {
 				i.logger.Debug("eBPF cgroup self-bypass unavailable; using socket-cookie registration: ", err)
 			}
@@ -37,6 +40,9 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 }
 
 func (i *Inbound) startInbound() error {
+	if i.preMatch {
+		return i.startPreMatchInbound()
+	}
 	if i.localEnabled && i.androidUIDOptions != nil {
 		if err := i.resolveAndroidUIDPolicy(); err != nil {
 			return E.Cause(err, "resolve Android UID policy")
@@ -79,7 +85,7 @@ func (i *Inbound) startInbound() error {
 			i.logger.Warn("default interface unavailable; local TC eBPF interception is paused")
 		}
 	}
-	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
+	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface, i.localEnabled)
 	tcSharedInterfaces := []string(nil)
 	if sharedSocketAssignEnabled {
 		tcSharedInterfaces = sharedInterfaces
@@ -301,6 +307,83 @@ func (i *Inbound) startInbound() error {
 	return nil
 }
 
+func (i *Inbound) startPreMatchInbound() error {
+	if i.localEnabled && i.androidUIDOptions != nil {
+		if err := i.resolveAndroidUIDPolicy(); err != nil {
+			return E.Cause(err, "resolve Android UID policy")
+		}
+	}
+	i.updatePreMatchHostAddresses()
+	if i.localEnabled || i.sharedEnabled {
+		if err := i.startTCListeners(); err != nil {
+			return err
+		}
+	}
+	bypassMark, err := allocatePreMatchMark()
+	if err != nil {
+		return err
+	}
+	// Shared interception uses TPROXY and therefore needs the marked local
+	// routes. Local interception uses OUTPUT REDIRECT for both address
+	// families, so it does not need policy routing by itself.
+	needsRouting := i.sharedEnabled
+	var routing *tcPolicyRouting
+	var proxyMark uint32
+	if needsRouting {
+		routing, err = startTCPolicyRouting(i.sharedIPv6, bypassMark)
+		if err != nil {
+			return E.Cause(err, "configure eBPF pre-match policy routing")
+		}
+		proxyMark = routing.mark
+	} else {
+		proxyMark, err = allocatePreMatchMark(bypassMark)
+		if err != nil {
+			return err
+		}
+	}
+	controller, err := newPreMatchController(i, routing, proxyMark, bypassMark)
+	if err != nil {
+		if routing != nil {
+			_ = routing.Close()
+		}
+		return err
+	}
+	if err = i.startBypassRuleSets(); err != nil {
+		_ = controller.close()
+		return E.Cause(err, "initialize eBPF pre-match bypass_rule_set")
+	}
+	// pre-match handles local traffic in OUTPUT and shared traffic in
+	// PREROUTING, so a shared interface may safely be the current default
+	// interface as well (for example a combined Wi-Fi/hotspot interface).
+	if err = controller.start(i, i.localEnabled, activeSharedInterfaces(i.sharedOptions.Interface, i.currentDefaultInterfaceName(), false)); err != nil {
+		i.stopBypassRuleSets()
+		_ = controller.close()
+		return err
+	}
+	i.preMatchController = controller
+	if err = i.startTCInterfaceMonitor(); err != nil {
+		return err
+	}
+	i.logger.Debug(
+		"eBPF pre-match active: local=", i.localEnabled,
+		", shared=", i.sharedEnabled,
+		", local_ipv6=", i.localIPv6,
+		", shared_ipv6=", i.sharedIPv6,
+		", shared_interfaces=[", strings.Join(controller.shared, ", "), "]",
+		", listeners=[", i.listeners.String(), "]",
+		", nfqueue=", controller.queueNumber,
+		", bypass_mark=0x", strconv.FormatUint(uint64(controller.bypassMark), 16),
+		", proxy_mark=0x", strconv.FormatUint(uint64(controller.proxyMark), 16),
+		", routing_table=", func() string {
+			if controller.routing == nil {
+				return ""
+			}
+			return strconv.Itoa(controller.routing.table)
+		}(),
+	)
+	return nil
+}
+
 func (i *Inbound) startProcessTracker() {
 	if !i.localEnabled || !i.router.NeedFindProcess() || i.usePlatformProcessFinder || i.processTracker != nil {
 		return
@@ -430,6 +513,11 @@ func (i *Inbound) cleanupStartFailure() error {
 func (i *Inbound) closeResources() error {
 	monitorErr := i.stopTCInterfaceMonitor()
 	i.stopBypassRuleSets()
+	preMatchErr := error(nil)
+	if i.preMatchController != nil {
+		preMatchErr = i.preMatchController.close()
+		i.preMatchController = nil
+	}
 	sharedRewriteErr := error(nil)
 	if i.sharedRewrite != nil {
 		sharedRewriteErr = i.sharedRewrite.Close()
@@ -462,7 +550,7 @@ func (i *Inbound) closeResources() error {
 		processTrackerErr = i.processTracker.Close()
 		i.processTracker = nil
 	}
-	return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpReplySocketErr, dataPlaneErr, cgroupErr, routeErr, processTrackerErr, selfBypassErr)
+	return E.Errors(monitorErr, preMatchErr, sharedRewriteErr, disableErr, listenerErr, udpReplySocketErr, dataPlaneErr, cgroupErr, routeErr, processTrackerErr, selfBypassErr)
 }
 
 func (i *Inbound) prepareCgroupBackend() error {

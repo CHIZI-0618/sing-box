@@ -59,7 +59,7 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	}
 	err := i.refreshBypassRuleSetsLocked(false)
 	if err != nil {
-		i.policyWarnings.warn(i.logger, "refresh TC eBPF bypass_rule_set; keeping previous policy: ", err)
+		i.policyWarnings.warn(i.logger, "refresh eBPF bypass_rule_set; keeping previous policy: ", err)
 	}
 }
 
@@ -107,7 +107,7 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 func (i *Inbound) compileBypassCIDRPolicy(prefixes []netip.Prefix) (commonEBPF.BypassCIDRPolicy, error) {
 	policy, err := commonEBPF.CompileBypassCIDRPolicy(prefixes)
 	if err != nil {
-		return policy, E.Cause(err, "compile TC eBPF bypass CIDR policy")
+		return policy, E.Cause(err, "compile eBPF bypass CIDR policy")
 	}
 	return policy, nil
 }

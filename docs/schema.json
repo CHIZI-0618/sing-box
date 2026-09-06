@@ -6326,6 +6326,9 @@
               "minimum": 1,
               "maximum": 65535
             },
+            "pre_match": {
+              "type": "boolean"
+            },
             "bypass_rule_set": {
               "anyOf": [
                 {

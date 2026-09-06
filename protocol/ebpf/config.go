@@ -37,6 +37,9 @@ type normalizedDataPlanes struct {
 }
 
 func normalizeDataPlanes(options option.EBPFInboundOptions) (normalizedDataPlanes, error) {
+	if options.PreMatch && (options.Local.DataPlane != "" || options.Local.CgroupPath != "" || options.Shared.DataPlane != "") {
+		return normalizedDataPlanes{}, E.New("local.data_plane, local.cgroup_path, and shared.data_plane are not supported with pre_match")
+	}
 	localEnabled, sharedEnabled, err := normalizeEnablement(options.Local.Enabled, options.Shared.Enabled)
 	if err != nil {
 		return normalizedDataPlanes{}, err

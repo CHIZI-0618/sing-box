@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -32,6 +33,10 @@ func (i *Inbound) NewConnection(
 	metadata adapter.InboundContext,
 	onClose N.CloseHandlerFunc,
 ) {
+	if i.preMatch {
+		i.newPreMatchConnection(ctx, conn, metadata, onClose)
+		return
+	}
 	if i.localCgroupEnabled() && i.isCgroupRedirectAddress(M.SocksaddrFromNet(conn.LocalAddr()).AddrPort().Addr()) {
 		backend := i.cgroupBackendInstance()
 		if backend == nil {
@@ -64,6 +69,10 @@ func (i *Inbound) NewConnection(
 }
 
 func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
+	if i.preMatch {
+		i.newPreMatchPacket(buffer, oob, source)
+		return
+	}
 	if i.localCgroupEnabled() {
 		if redirectAddress, err := redirectAddressFromOOB(oob); err == nil && i.isCgroupRedirectAddress(redirectAddress) {
 			i.newCgroupPacket(buffer, oob, source)
@@ -75,6 +84,38 @@ func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) 
 		return
 	}
 	i.newTCPacket(backend, buffer, oob, source)
+}
+
+func (i *Inbound) newPreMatchConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	destination := M.SocksaddrFromNet(conn.LocalAddr())
+	original, originalErr := control.GetOriginalDestination(conn)
+	if originalErr == nil {
+		destination = M.SocksaddrFromNetIP(original)
+	} else if destination.Port == i.listeners.selectedPort() &&
+		(destination.Addr.IsLoopback() || destination.Addr.IsUnspecified()) {
+		i.tcpWarnings.errorContext(i.logger, ctx, "read eBPF pre-match original TCP destination: ", originalErr)
+		_ = conn.Close()
+		return
+	}
+	metadata.Inbound = i.Tag()
+	metadata.InboundType = i.Type()
+	metadata.Source = M.SocksaddrFromNet(conn.RemoteAddr())
+	metadata.Destination = destination
+	if destination.Port == 53 &&
+		((originalErr == nil && i.localDNSMode == dnsModeHijack) ||
+			(originalErr != nil && i.sharedDNSMode == dnsModeHijack)) {
+		metadata.Protocol = C.ProtocolDNS
+	}
+	i.router.RouteConnectionEx(ctx, conn, metadata, onClose)
+}
+
+func (i *Inbound) newPreMatchPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
+	_, original, _, err := packetDestinationsFromOOB(oob)
+	if err != nil || !original.IsValid() {
+		i.udpWarnings.originalDestination.warn(i.logger, "read eBPF pre-match UDP original destination: ", err)
+		return
+	}
+	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original), nil)
 }
 
 func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
@@ -176,7 +217,7 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 		if configureErr != nil {
 			return configureErr
 		}
-		if i.selfBypass == nil {
+		if i.preMatch || i.selfBypass == nil {
 			return nil
 		}
 		return i.selfBypass.RegisterSocket(rawConn)

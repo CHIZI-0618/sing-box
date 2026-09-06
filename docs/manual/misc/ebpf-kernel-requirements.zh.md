@@ -118,6 +118,21 @@ BTF 中确认存在修复后的 `bpf_lpm_trie_key_u8` 布局。若内核处于�
 运行时不依赖 `bpftool`、`tc` 或 `ip` 命令，sing-box 直接使用 BPF syscall 和
 netlink。
 
+## Pre-match 模式
+
+可选的 `pre_match` 是独立的防火墙数据面，不使用 eBPF TC 或 cgroup 程序。
+所用 iptables 必须提供 `NFQUEUE` 和 `CONNMARK` target 或模块。本机 pre-match
+还需要 `cgroup` match 和 `REDIRECT`；shared pre-match 还需要 `TPROXY` 和策略
+路由。本机接管还必须通过非根 cgroup v2 子树排除 sing-box 自身。进程还必须能够
+打开 NFQUEUE 并设置数据包 mark。
+
+首个 TCP SYN 或 UDP 数据报会进入用户态队列，并通过普通的
+`Router.PreMatch` 路径判定。结果保存到 conntrack mark，后续数据包无需再次进入
+NFQUEUE。本机 IPv4 和 IPv6 使用 `REDIRECT`；shared IPv4 和 IPv6 使用 `TPROXY`。
+无法解析的报文和分片报文直接放行。该模式需要 conntrack
+以及相应的 IPv4/IPv6 netfilter hook；`--queue-bypass` 会在用户态队列不可用时
+有意放行流量。
+
 ## 接口要求
 
 local TC 模式挂载到网络管理器当前的默认接口；shared 模式挂载到配置的下游接口。

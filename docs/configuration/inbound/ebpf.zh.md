@@ -23,6 +23,7 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
   "network": ["tcp", "udp"],
   "udp_timeout": "5m",
   "tc_priority": 1,
+  "pre_match": false,
   "bypass_rule_set": [],
   "local": {
     "enabled": true,
@@ -77,6 +78,16 @@ filter 协调顺序时修改。
 #### bypass_rule_set
 
 匹配这些规则集中目标 IP CIDR 的流量绕过此入站，非 IP 规则会被忽略。
+
+#### pre_match
+
+使用内核防火墙队列，在重定向首个 TCP 或 UDP 数据包前同步执行 sing-box
+路由规则。此模式需要 root 权限和支持 NFQUEUE 的 iptables；shared 接管另外需要
+策略路由，local 接管使用本机防火墙重定向。启用后，入站不再使用配置的 TC 或
+cgroup 数据面。无法解析的报文（包括分片报文）会绕过。
+local 路径要求 sing-box 运行在非根 cgroup v2 子树中，以便只排除自身流量而不捕获
+其他根 cgroup 进程。启用 `pre_match` 时必须省略 `local.data_plane`、
+`local.cgroup_path` 和 `shared.data_plane`。
 
 ### local
 

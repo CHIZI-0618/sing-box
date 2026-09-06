@@ -119,14 +119,17 @@ func TestTCAttachmentTopologyChanged(t *testing.T) {
 
 func TestActiveSharedInterfaces(t *testing.T) {
 	configured := []string{"wlan0", "rndis0"}
-	if active := activeSharedInterfaces(configured, "wlan0"); !slices.Equal(active, []string{"rndis0"}) {
+	if active := activeSharedInterfaces(configured, "wlan0", true); !slices.Equal(active, []string{"rndis0"}) {
 		t.Fatalf("default upstream was not excluded: %v", active)
 	}
-	if active := activeSharedInterfaces(configured, "rmnet_data2"); !slices.Equal(active, configured) {
+	if active := activeSharedInterfaces(configured, "rmnet_data2", true); !slices.Equal(active, configured) {
 		t.Fatalf("downstream interfaces changed unexpectedly: %v", active)
 	}
 	if !slices.Equal(configured, []string{"wlan0", "rndis0"}) {
 		t.Fatalf("configured interfaces were modified: %v", configured)
+	}
+	if active := activeSharedInterfaces([]string{"wlan0"}, "wlan0", false); !slices.Equal(active, []string{"wlan0"}) {
+		t.Fatalf("shared-only mode dropped the default interface: %v", active)
 	}
 }
 

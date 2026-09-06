@@ -219,6 +219,21 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		i.interfaceWarnings.inventory.warn(i.logger, "update interfaces for TC eBPF: ", err)
 	}
 	defaultInterface := i.monitoredDefaultInterfaceName()
+	if i.preMatch {
+		controller := i.preMatchController
+		if controller == nil {
+			return
+		}
+		if err := controller.ensureRouting(); err != nil {
+			i.interfaceWarnings.infrastructure.warn(i.logger, "repair eBPF pre-match policy routing: ", err)
+		}
+		i.updatePreMatchHostAddresses()
+		sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface, false)
+		if err := controller.updateShared(sharedInterfaces); err != nil {
+			i.interfaceWarnings.reconcile.warn(i.logger, "refresh eBPF pre-match shared interfaces: ", err)
+		}
+		return
+	}
 	localTCEnabled := i.localTCEnabled()
 	localInterface, err := availableLocalTCInterface(localTCEnabled, defaultInterface)
 	if err != nil {
@@ -228,7 +243,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 	if localTCEnabled && localInterface == "" {
 		i.interfaceWarnings.defaultInterface.warn(i.logger, "default interface unavailable; retaining previous local TC attachment")
 	}
-	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
+	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface, i.localEnabled)
 	tcSharedInterfaces := sharedInterfaces
 	if i.sharedRewriteEnabled() {
 		tcSharedInterfaces = nil
@@ -316,7 +331,10 @@ func availableLocalTCInterface(enabled bool, interfaceName string) (string, erro
 	return interfaceName, nil
 }
 
-func activeSharedInterfaces(configured []string, defaultInterface string) []string {
+func activeSharedInterfaces(configured []string, defaultInterface string, localEnabled bool) []string {
+	if !localEnabled {
+		return slices.Clone(configured)
+	}
 	return slices.DeleteFunc(slices.Clone(configured), func(interfaceName string) bool {
 		return interfaceName == defaultInterface
 	})

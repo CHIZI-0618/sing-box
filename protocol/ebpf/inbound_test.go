@@ -145,6 +145,18 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 	}
 }
 
+func TestPreMatchRejectsOverriddenDataPlanes(t *testing.T) {
+	for _, options := range []option.EBPFInboundOptions{
+		{PreMatch: true, Local: option.EBPFLocalOptions{DataPlane: localDataPlaneTC}},
+		{PreMatch: true, Local: option.EBPFLocalOptions{CgroupPath: "/sys/fs/cgroup/sing-box"}},
+		{PreMatch: true, Shared: option.EBPFSharedOptions{DataPlane: sharedDataPlaneSocketAssign}},
+	} {
+		if _, err := normalizeDataPlanes(options); err == nil {
+			t.Fatalf("expected pre_match data plane override to fail: %+v", options)
+		}
+	}
+}
+
 func TestEnabledByDefault(t *testing.T) {
 	if !enabledByDefault(nil) || !enabledByDefault(common.Ptr(true)) || enabledByDefault(common.Ptr(false)) {
 		t.Fatal("unexpected default-enabled boolean behavior")

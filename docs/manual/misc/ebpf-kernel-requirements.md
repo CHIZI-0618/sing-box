@@ -143,6 +143,24 @@ policy; they commonly require `CAP_NET_ADMIN`, `CAP_BPF`, and on older kernels
 No `bpftool`, `tc`, or `ip` executable is required at runtime. sing-box uses BPF
 syscalls and netlink directly.
 
+## Pre-match mode
+
+The optional `pre_match` mode is a separate firewall-based data path. It does
+not use the eBPF TC or cgroup programs. The selected iptables implementation
+must provide the `NFQUEUE` and `CONNMARK` targets/modules. Local pre-match
+additionally needs the `cgroup` match and `REDIRECT`, while shared pre-match
+additionally needs `TPROXY` and policy routing. Local interception also needs
+a non-root cgroup v2 subtree to exclude the sing-box process. The process must
+be able to open the configured NFQUEUE and set packet marks.
+
+The first TCP SYN or UDP datagram is queued to userspace and evaluated by the
+normal `Router.PreMatch` path. The result is stored in the conntrack mark so
+later packets avoid NFQUEUE. Local IPv4 and IPv6 use `REDIRECT`; shared IPv4 and
+IPv6 use `TPROXY`. Unparseable packets and
+fragments are accepted without pre-match. This mode requires conntrack and
+appropriate IPv4/IPv6 netfilter hooks; `--queue-bypass` intentionally permits
+traffic to continue if the userspace queue is unavailable.
+
 ## Interface requirements
 
 Local TC mode attaches to the network manager's current default interface.

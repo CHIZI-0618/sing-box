@@ -24,6 +24,7 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
   "network": ["tcp", "udp"],
   "udp_timeout": "5m",
   "tc_priority": 1,
+  "pre_match": false,
   "bypass_rule_set": [],
   "local": {
     "enabled": true,
@@ -79,6 +80,20 @@ keeps the traditional `clsact` attachment so its numeric ordering remains effect
 
 Traffic to destination IP CIDRs contained in these rule sets bypasses this
 inbound. Non-IP rules are ignored.
+
+#### pre_match
+
+Use the kernel firewall queue to synchronously evaluate the first TCP or UDP
+packet with sing-box routing rules before it is redirected. This requires root
+privileges and iptables with NFQUEUE support. Shared interception additionally
+requires policy routing; local interception uses the local firewall redirect.
+When enabled, the inbound uses this path instead of its configured TC or
+cgroup data planes.
+Packets that cannot be parsed, including fragments, are bypassed.
+The local path requires sing-box to run in a non-root cgroup v2 subtree so
+its own traffic can be excluded without capturing unrelated root processes.
+`local.data_plane`, `local.cgroup_path`, and `shared.data_plane` must be
+omitted when `pre_match` is enabled.
 
 ### local
 

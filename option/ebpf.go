@@ -11,6 +11,7 @@ type EBPFInboundOptions struct {
 	Network       NetworkList                `json:"network,omitempty"`
 	UDPTimeout    UDPTimeoutCompat           `json:"udp_timeout,omitempty"`
 	TCPriority    EBPFTCPriority             `json:"tc_priority,omitempty"`
+	PreMatch      bool                       `json:"pre_match,omitempty"`
 	BypassRuleSet badoption.Listable[string] `json:"bypass_rule_set,omitempty" reference:"rule_set"`
 	Local         EBPFLocalOptions           `json:"local,omitempty"`
 	Shared        EBPFSharedOptions          `json:"shared,omitempty"`
