@@ -144,8 +144,31 @@ func (t *udpClientTable) setCgroupReplyBinding(client netip.AddrPort, expected *
 }
 
 func (t *udpClientTable) clientShard(client netip.AddrPort) *udpClientShard {
-	port := client.Port()
-	return &t.clientShards[(port^port>>8)&(udpClientShardCount-1)]
+	return &t.clientShards[shardIndexForAddrPort(client, udpClientShardCount)]
+}
+
+// shardIndexForAddrPort spreads addr:port pairs evenly across shardCount
+// (a power of two) shards by hashing every address byte together with the
+// port, not the port alone. A port-only key collapses onto a single shard
+// whenever many distinct addresses happen to share one port -- exactly the
+// common case for both callers of this function: UDP destinations
+// overwhelmingly cluster on a handful of well-known ports (443, 53, ...)
+// while varying in address, and independent client hosts can coincidentally
+// reuse the same ephemeral source port for unrelated connections.
+func shardIndexForAddrPort(addrPort netip.AddrPort, shardCount int) int {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	hash := uint64(offset64)
+	for _, b := range addrPort.Addr().As16() {
+		hash ^= uint64(b)
+		hash *= prime64
+	}
+	port := addrPort.Port()
+	hash ^= uint64(port)
+	hash *= prime64
+	hash ^= uint64(port >> 8)
+	hash *= prime64
+	return int(hash & uint64(shardCount-1))
 }
 
 // count reports the number of tracked UDP clients, for diagnostics. It locks
@@ -384,8 +407,7 @@ func (p *udpReplySocketPool) evictOneIdleLocked(shard *udpReplySocketShard) bool
 }
 
 func (p *udpReplySocketPool) shardIndex(source netip.AddrPort) int {
-	port := source.Port()
-	return int((port ^ port>>8) & (udpClientShardCount - 1))
+	return shardIndexForAddrPort(source, udpClientShardCount)
 }
 
 // startSweeper starts the background idle-socket reclaim, tied to ctx so it
