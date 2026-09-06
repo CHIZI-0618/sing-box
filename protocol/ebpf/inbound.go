@@ -106,16 +106,26 @@ type Inbound struct {
 	bypassRuleSetPolicy       commonEBPF.BypassCIDRPolicy
 	bypassRuleSetNeedsRetry   bool
 	bypassRuleSetInconsistent bool
-	// bypassRuleSetVersion counts every applyBypassCIDRPolicyLocked attempt
-	// (successful or not, including retries of the same compiled policy);
-	// the three backend-specific versions below record the version each
-	// backend was last confirmed running -- see EBPFDiagnostics'
-	// BypassRuleSetExpectedVersion/BypassRuleSetBackendVersions doc comment
-	// for what these numbers do and do not promise.
-	bypassRuleSetVersion       uint64
-	bypassRuleSetTCVersion     uint64
-	bypassRuleSetCgroupVersion uint64
-	bypassRuleSetSharedVersion uint64
+	// bypassRuleSetPolicyVersion is the compiled bypass_rule_set policy's own
+	// content-based version: it advances only when a newly compiled policy
+	// actually differs (by value, via reflect.DeepEqual) from the one
+	// currently in effect, so it answers "which policy generation is this",
+	// not "how many times has an apply been attempted" -- retrying the same
+	// compiled content after a failure does not advance it.
+	// bypassRuleSetRetryCount is the latter, but scoped precisely to
+	// retries: retryBypassRuleSetIfNeededLocked is the only place that
+	// increments it, so it counts scheduler-driven retries of a
+	// previously-failed apply specifically, not the original attempt and
+	// not a fresh apply triggered by rule-set content actually changing.
+	// The three backend fields below record, per backend, its own
+	// confirmed position in the policy version sequence -- see
+	// bypassRuleSetBackendVersion's doc comment for what "confirmed" means
+	// and does not mean once a compensating revert has failed.
+	bypassRuleSetPolicyVersion uint64
+	bypassRuleSetRetryCount    uint64
+	bypassRuleSetTC            bypassRuleSetBackendVersion
+	bypassRuleSetCgroup        bypassRuleSetBackendVersion
+	bypassRuleSetShared        bypassRuleSetBackendVersion
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool

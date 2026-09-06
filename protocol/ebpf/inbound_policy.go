@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"net/netip"
+	"reflect"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -88,6 +89,12 @@ func (i *Inbound) retryBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
 	if !i.bypassRuleSetStarted || !i.bypassRuleSetNeedsRetry {
 		return tcSharedRewriteSettled
 	}
+	// Counted here, not inside applyBypassCIDRPolicyLocked, so it reflects
+	// only calls that are actually retries of a previously-failed apply --
+	// refreshBypassRuleSetsLocked's other two call sites (startup, and a
+	// rule-set update callback) are not retries even though they share the
+	// same underlying apply function.
+	i.bypassRuleSetRetryCount++
 	if err := i.refreshBypassRuleSetsLocked(false); err != nil {
 		// Same reasoning as updateBypassRuleSet's warning: refreshBypassRuleSetsLocked
 		// already reverted what it could, and reports what it couldn't separately.
@@ -105,6 +112,22 @@ func (i *Inbound) retryBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
 type bypassCIDRAppliedBackend struct {
 	name   string
 	revert func() error
+}
+
+// bypassRuleSetBackendVersion is one backend's own confirmed position in the
+// bypass_rule_set policy version sequence (Inbound.bypassRuleSetPolicyVersion).
+// version is the highest policy version this backend's own forward apply or
+// compensating revert last actually completed successfully. known is false
+// whenever the most recent operation attempted on this backend -- which, by
+// construction, is always a revert, since a backend whose forward apply
+// itself failed is never added to applied in the first place -- did not
+// complete successfully, leaving this backend's true state unconfirmed:
+// version then still names the last point it was confirmed at, not a claim
+// about what it is actually running now. A caller must treat known=false as
+// "unknown", not silently trust version as current.
+type bypassRuleSetBackendVersion struct {
+	version uint64
+	known   bool
 }
 
 // revertBypassCIDRBackends reverts every already-applied backend, most
@@ -164,9 +187,29 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 // anomaly for diagnostics until a later call applies cleanly everywhere.
 func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy) error {
 	previous := i.bypassRuleSetPolicy
-	previousVersion := i.bypassRuleSetVersion
-	version := previousVersion + 1
-	i.bypassRuleSetVersion = version
+	previousVersion := i.bypassRuleSetPolicyVersion
+	// version only advances when the compiled content actually differs --
+	// retrying the same policy after a failure re-applies at the same
+	// version, it does not mint a new one. BypassCIDRPolicy's fields are
+	// unexported outside common/ebpf, but reflect.DeepEqual compares them
+	// by value regardless of visibility (the same pattern the tests in
+	// inbound_policy_test.go already rely on).
+	//
+	// This local version is used for each backend's own per-backend
+	// bookkeeping as the loop below runs, since a backend that completes its
+	// own forward apply genuinely has moved to this content regardless of
+	// what a later backend does. i.bypassRuleSetPolicyVersion itself is only
+	// committed at the very end, alongside i.bypassRuleSetPolicy -- both
+	// describe "the policy this inbound is now considered to be on", and
+	// both must move together: a failed pass that gets fully reverted (or
+	// even one left partially inconsistent) never updates
+	// i.bypassRuleSetPolicy, so the version naming that policy must not
+	// advance either, or the two would disagree about which generation is
+	// current.
+	version := previousVersion
+	if !reflect.DeepEqual(previous, policy) {
+		version = previousVersion + 1
+	}
 	var applied []bypassCIDRAppliedBackend
 	fail := func(cause error) error {
 		failedPaths := revertBypassCIDRBackends(applied, func(name string, err error) {
@@ -183,13 +226,15 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
 			return fail(err)
 		}
-		i.bypassRuleSetTCVersion = version
+		i.bypassRuleSetTC = bypassRuleSetBackendVersion{version: version, known: true}
 		applied = append(applied, bypassCIDRAppliedBackend{
 			name: "TC",
 			revert: func() error {
 				_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
 				if revertErr == nil {
-					i.bypassRuleSetTCVersion = previousVersion
+					i.bypassRuleSetTC = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+				} else {
+					i.bypassRuleSetTC.known = false
 				}
 				return revertErr
 			},
@@ -199,13 +244,15 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
 			return fail(err)
 		}
-		i.bypassRuleSetCgroupVersion = version
+		i.bypassRuleSetCgroup = bypassRuleSetBackendVersion{version: version, known: true}
 		applied = append(applied, bypassCIDRAppliedBackend{
 			name: "cgroup",
 			revert: func() error {
 				_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
 				if revertErr == nil {
-					i.bypassRuleSetCgroupVersion = previousVersion
+					i.bypassRuleSetCgroup = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+				} else {
+					i.bypassRuleSetCgroup.known = false
 				}
 				return revertErr
 			},
@@ -218,14 +265,16 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 				if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
 					return fail(err)
 				}
-				i.bypassRuleSetSharedVersion = version
+				i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}
 				previousIPv4Count, previousIPv6Count := previous.Counts()
 				applied = append(applied, bypassCIDRAppliedBackend{
 					name: "shared",
 					revert: func() error {
 						revertErr := backend.SetBypassCIDRState(previousIPv4Count, previousIPv6Count)
 						if revertErr == nil {
-							i.bypassRuleSetSharedVersion = previousVersion
+							i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+						} else {
+							i.bypassRuleSetShared.known = false
 						}
 						return revertErr
 					},
@@ -233,13 +282,15 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 			} else if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
 				return fail(err)
 			} else {
-				i.bypassRuleSetSharedVersion = version
+				i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}
 				applied = append(applied, bypassCIDRAppliedBackend{
 					name: "shared",
 					revert: func() error {
 						_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
 						if revertErr == nil {
-							i.bypassRuleSetSharedVersion = previousVersion
+							i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+						} else {
+							i.bypassRuleSetShared.known = false
 						}
 						return revertErr
 					},
@@ -248,6 +299,7 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 		}
 	}
 	i.bypassRuleSetPolicy = policy
+	i.bypassRuleSetPolicyVersion = version
 	i.bypassRuleSetInconsistent = false
 	return nil
 }

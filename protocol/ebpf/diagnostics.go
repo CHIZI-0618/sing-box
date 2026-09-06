@@ -56,6 +56,14 @@ const (
 	EBPFDiagnosticsStateNeedsAttention = "needs_attention"
 )
 
+// BypassRuleSetBackendState is one backend's own confirmed position in the
+// bypass_rule_set policy version sequence -- see EBPFDiagnostics'
+// BypassRuleSetBackendState field doc comment for what Known=false means.
+type BypassRuleSetBackendState struct {
+	Version uint64 `json:"version"`
+	Known   bool   `json:"known"`
+}
+
 // EBPFDiagnostics is one running eBPF inbound's actual interception state,
 // as distinct from the static kernel-capability probe `sing-box tools ebpf
 // status` reports: answering "is this configured inbound intercepting
@@ -103,21 +111,35 @@ type EBPFDiagnostics struct {
 	// BypassRuleSetPending is whether a previously-failed bypass_rule_set
 	// refresh is still awaiting retry.
 	BypassRuleSetPending bool `json:"bypass_rule_set_pending"`
-	// BypassRuleSetExpectedVersion counts every attempt applyBypassCIDRPolicyLocked
-	// has made (successful or not) since this inbound started, including
-	// retries of the same compiled policy -- not the number of times the
-	// compiled policy's actual content changed. BypassRuleSetBackendVersions
-	// records the version each backend was last confirmed running (rolled
-	// back to the previous version number, not left at the new one, when a
-	// compensating revert for that backend succeeds); a backend missing from
-	// the map does not exist for this inbound. A backend's version lagging
-	// behind BypassRuleSetExpectedVersion means that backend has not yet
-	// converged to the latest attempt -- expected while BypassRuleSetPending
-	// is true, and exactly what BypassRuleSetConsistent=false means the
-	// process could not confirm one way or the other for at least one
-	// backend (see the revert-also-failed case in inbound_policy.go).
-	BypassRuleSetExpectedVersion uint64            `json:"bypass_rule_set_expected_version"`
-	BypassRuleSetBackendVersions map[string]uint64 `json:"bypass_rule_set_backend_versions,omitempty"`
+	// BypassRuleSetPolicyVersion is the compiled bypass_rule_set policy's own
+	// content-based version: it advances only when a newly compiled policy
+	// actually differs from the one currently in effect, so it names which
+	// policy generation is current, not how many times an apply has been
+	// attempted. Retrying the same compiled content after a failure re-applies
+	// at the same version; it does not mint a new one.
+	//
+	// BypassRuleSetRetryCount counts a different thing: how many times the TC
+	// recovery scheduler has actually retried a previously-failed apply. It
+	// does not include the original attempt for a policy version, and it does
+	// not include a fresh apply triggered by rule-set content actually
+	// changing -- both of those go through the same apply function but are
+	// not retries of anything.
+	BypassRuleSetPolicyVersion uint64 `json:"bypass_rule_set_policy_version"`
+	BypassRuleSetRetryCount    uint64 `json:"bypass_rule_set_retry_count"`
+	// BypassRuleSetBackendState records, per backend, the highest
+	// BypassRuleSetPolicyVersion that backend's own forward apply or
+	// compensating revert last actually completed successfully (Version), and
+	// whether that is still trustworthy (Known). Known=false means the most
+	// recent operation attempted on that backend -- always a compensating
+	// revert, since a backend whose forward apply itself failed is never
+	// considered "applied" in the first place -- did not complete
+	// successfully: Version then names the last point that backend was
+	// confirmed at, not a claim about what it is actually running now. Treat
+	// Known=false as genuinely unknown, not as "probably still at Version";
+	// this is exactly the condition BypassRuleSetConsistent=false reports at
+	// the whole-inbound level. A backend missing from the map does not exist
+	// for this inbound.
+	BypassRuleSetBackendState map[string]BypassRuleSetBackendState `json:"bypass_rule_set_backend_state,omitempty"`
 
 	UDPSessionCount int                        `json:"udp_session_count"`
 	UDPReplySockets udpReplySocketPoolSnapshot `json:"udp_reply_sockets"`
@@ -289,19 +311,20 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	i.bypassRuleSetAccess.Lock()
 	diagnostics.BypassRuleSetConsistent = !i.bypassRuleSetInconsistent
 	diagnostics.BypassRuleSetPending = i.bypassRuleSetNeedsRetry
-	diagnostics.BypassRuleSetExpectedVersion = i.bypassRuleSetVersion
-	versions := make(map[string]uint64, 3)
+	diagnostics.BypassRuleSetPolicyVersion = i.bypassRuleSetPolicyVersion
+	diagnostics.BypassRuleSetRetryCount = i.bypassRuleSetRetryCount
+	backendState := make(map[string]BypassRuleSetBackendState, 3)
 	if i.tcBackend() != nil {
-		versions["TC"] = i.bypassRuleSetTCVersion
+		backendState["TC"] = BypassRuleSetBackendState{Version: i.bypassRuleSetTC.version, Known: i.bypassRuleSetTC.known}
 	}
 	if i.cgroupBackendInstance() != nil {
-		versions["cgroup"] = i.bypassRuleSetCgroupVersion
+		backendState["cgroup"] = BypassRuleSetBackendState{Version: i.bypassRuleSetCgroup.version, Known: i.bypassRuleSetCgroup.known}
 	}
 	if i.sharedRewrite != nil && i.sharedRewrite.sharedBackendInstance() != nil {
-		versions["shared"] = i.bypassRuleSetSharedVersion
+		backendState["shared"] = BypassRuleSetBackendState{Version: i.bypassRuleSetShared.version, Known: i.bypassRuleSetShared.known}
 	}
-	if len(versions) > 0 {
-		diagnostics.BypassRuleSetBackendVersions = versions
+	if len(backendState) > 0 {
+		diagnostics.BypassRuleSetBackendState = backendState
 	}
 	i.bypassRuleSetAccess.Unlock()
 
