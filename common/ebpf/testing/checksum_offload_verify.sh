@@ -146,6 +146,28 @@ set -euo pipefail
 : "${OUT_DIR:=./checksum-offload-report}"
 : "${SSH:=ssh -o BatchMode=yes -o ConnectTimeout=5}"
 : "${DOWNSTREAM_SSH:=ssh -o BatchMode=yes -o ConnectTimeout=5}"
+# TEST_ROLE picks which of local.data_plane/shared.data_plane this run
+# checks: "local", "shared", or "both" (the default). A second independent
+# review found this run_one_combination previously ran the local checks
+# unconditionally regardless of TEST_ROLE's absence entirely -- a DUT
+# deliberately configured with only shared.data_plane enabled (exactly the
+# deployment this whole engagement has treated as a first-class
+# configuration) had no local responder for the local checks to reach, so
+# they would fail and take the whole run down with them even when
+# shared.data_plane's own checks passed cleanly. Every check the selected
+# role excludes is recorded NOT_TESTED, not silently omitted.
+: "${TEST_ROLE:=both}"
+case "$TEST_ROLE" in
+local | shared | both) ;;
+*)
+	echo "TEST_ROLE must be one of: local, shared, both (got '$TEST_ROLE')" >&2
+	exit 1
+	;;
+esac
+if [[ "$TEST_ROLE" != "local" && -z "$DOWNSTREAM_HOST" ]]; then
+	echo "TEST_ROLE=$TEST_ROLE requires DOWNSTREAM_HOST to be set (shared.data_plane can only be verified from a real downstream client)" >&2
+	exit 1
+fi
 
 RELEVANT_FEATURES=(rx-checksumming tx-checksumming generic-segmentation-offload tcp-segmentation-offload generic-receive-offload tx-udp-segmentation)
 
@@ -293,38 +315,70 @@ check_local_tcp_rewrite() {
 		"timeout 30 nc -l -p $REMOTE_PORT_TCP > /tmp/offload_check_tcp.bin" &
 	local remote_pid=$!
 	sleep 1
-	if head -c "$TRANSFER_BYTES" /dev/urandom | tee "$OUT_DIR/tcp_sent.bin" | \
-		timeout 25 nc -q1 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_TCP"; then
+	head -c "$TRANSFER_BYTES" /dev/urandom > "$OUT_DIR/tcp_sent.bin"
+	local sent_hash
+	sent_hash=$(sha256sum "$OUT_DIR/tcp_sent.bin" | cut -d' ' -f1)
+	if ! timeout 25 nc -q1 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_TCP" < "$OUT_DIR/tcp_sent.bin"; then
+		record "$state_label" local_shared_rewrite_tcp FAIL "the local nc transfer command itself failed or timed out"
 		wait "$remote_pid" 2>/dev/null || true
-		local remote_size
-		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_tcp.bin" 2>/dev/null || echo 0)
-		if [[ "$remote_size" == "$TRANSFER_BYTES" ]]; then
-			record "$state_label" local_shared_rewrite_tcp PASS "$remote_size bytes received intact, originated from the DUT itself"
-		else
-			record "$state_label" local_shared_rewrite_tcp FAIL "expected $TRANSFER_BYTES bytes, remote received $remote_size"
-		fi
+		return
+	fi
+	wait "$remote_pid" 2>/dev/null || true
+	local remote_hash
+	remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp.bin 2>/dev/null | cut -d' ' -f1")
+	if [[ -z "$remote_hash" ]]; then
+		record "$state_label" local_shared_rewrite_tcp FAIL "remote received no data at all (or sha256sum is unavailable there)"
+		return
+	fi
+	if [[ "$remote_hash" == "$sent_hash" ]]; then
+		record "$state_label" local_shared_rewrite_tcp PASS "SHA-256 of received data matches sent data ($TRANSFER_BYTES bytes, $sent_hash), originated from the DUT itself"
 	else
-		record "$state_label" local_shared_rewrite_tcp FAIL "local nc transfer failed or timed out"
+		record "$state_label" local_shared_rewrite_tcp FAIL "content mismatch: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not merely a byte-count difference"
 	fi
 }
 
+# check_local_udp_rewrite compares SHA-256 of the sent and received datagram
+# rather than treating any non-zero receipt as sufficient -- a second
+# independent review found the earlier byte-count-only check would record
+# PASS even for truncated or corrupted data, and even when the local send
+# command itself had already failed, as long as *something* non-zero showed
+# up in the remote file. UDP is genuinely best-effort, so total loss (an
+# empty remote file) is retried up to three times before being recorded as
+# a failure; a datagram that *did* arrive but does not match what was sent
+# is recorded as an immediate failure on its own attempt, never retried
+# away, since that is evidence of corruption, not merely of loss.
 check_local_udp_rewrite() {
 	local state_label="$1"
 	[[ -z "$REMOTE_PORT_UDP" ]] && return
-	$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
-		"timeout 15 nc -u -l -p $REMOTE_PORT_UDP -w 10 > /tmp/offload_check_udp.bin" &
-	local remote_pid=$!
-	sleep 1
 	head -c 65000 /dev/urandom > "$OUT_DIR/udp_sent.bin"
-	nc -u -q1 -w2 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_UDP" < "$OUT_DIR/udp_sent.bin" || true
-	wait "$remote_pid" 2>/dev/null || true
-	local remote_size
-	remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp.bin" 2>/dev/null || echo 0)
-	if [[ "$remote_size" != "0" ]]; then
-		record "$state_label" local_shared_rewrite_udp PASS "$remote_size bytes received (UDP is best-effort; a non-zero receipt with matching content, checked separately, is the real pass condition -- see the doc), originated from the DUT itself"
-	else
-		record "$state_label" local_shared_rewrite_udp FAIL "remote received nothing"
-	fi
+	local sent_hash
+	sent_hash=$(sha256sum "$OUT_DIR/udp_sent.bin" | cut -d' ' -f1)
+	local attempt remote_size remote_hash
+	for attempt in 1 2 3; do
+		$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
+			"timeout 15 nc -u -l -p $REMOTE_PORT_UDP -w 10 > /tmp/offload_check_udp.bin" &
+		local remote_pid=$!
+		sleep 1
+		if ! nc -u -q1 -w2 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_UDP" < "$OUT_DIR/udp_sent.bin"; then
+			echo "warning: the local UDP send command itself failed on attempt $attempt/3; retrying" >&2
+			wait "$remote_pid" 2>/dev/null || true
+			continue
+		fi
+		wait "$remote_pid" 2>/dev/null || true
+		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp.bin" 2>/dev/null || echo 0)
+		if [[ "$remote_size" == "0" ]]; then
+			echo "warning: no data received on attempt $attempt/3 (UDP is best-effort); retrying" >&2
+			continue
+		fi
+		remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp.bin 2>/dev/null | cut -d' ' -f1")
+		if [[ "$remote_hash" == "$sent_hash" ]]; then
+			record "$state_label" local_shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from the DUT itself"
+			return
+		fi
+		record "$state_label" local_shared_rewrite_udp FAIL "content mismatch on attempt $attempt: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not a total-loss condition eligible for retry"
+		return
+	done
+	record "$state_label" local_shared_rewrite_udp FAIL "no data received after 3 attempts -- UDP is best-effort, but total loss across 3 attempts on a real link during an offload check is itself worth investigating, not accepted silently"
 }
 
 # check_shared_fakeip_icmp is check_local_fakeip_icmp's shared.data_plane
@@ -374,47 +428,80 @@ check_shared_tcp_rewrite() {
 		"timeout 30 nc -l -p $REMOTE_PORT_TCP > /tmp/offload_check_tcp_shared.bin" &
 	local remote_pid=$!
 	sleep 1
-	local before after
+	local before after sent_hash
 	before=$(dut_counter .rewrite_failures)
-	if $DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
-		"head -c $TRANSFER_BYTES /dev/urandom > /tmp/offload_check_tcp_shared_sent.bin && timeout 25 nc -q1 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_TCP < /tmp/offload_check_tcp_shared_sent.bin"; then
+	sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+		"head -c $TRANSFER_BYTES /dev/urandom > /tmp/offload_check_tcp_shared_sent.bin && sha256sum /tmp/offload_check_tcp_shared_sent.bin | cut -d' ' -f1")
+	if [[ -z "$sent_hash" ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "could not prepare the send payload on $DOWNSTREAM_HOST"
 		wait "$remote_pid" 2>/dev/null || true
-		after=$(dut_counter .rewrite_failures)
-		local remote_size
-		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_tcp_shared.bin" 2>/dev/null || echo 0)
-		if [[ "$remote_size" != "$TRANSFER_BYTES" ]]; then
-			record "$state_label" shared_rewrite_tcp FAIL "expected $TRANSFER_BYTES bytes from $DOWNSTREAM_HOST via the DUT, remote received $remote_size"
-			return
-		fi
-		if [[ -n "$DUT_DIAGNOSTICS_URL" && -n "$before" && -n "$after" && "$after" -gt "$before" ]]; then
-			record "$state_label" shared_rewrite_tcp FAIL "$remote_size bytes arrived intact, but the DUT's rewrite_failures counter advanced ($before -> $after) during the transfer"
-			return
-		fi
-		record "$state_label" shared_rewrite_tcp PASS "$remote_size bytes received intact, originated from $DOWNSTREAM_HOST through the DUT"
-	else
-		record "$state_label" shared_rewrite_tcp FAIL "transfer from $DOWNSTREAM_HOST failed or timed out"
+		return
 	fi
+	if ! $DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+		"timeout 25 nc -q1 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_TCP < /tmp/offload_check_tcp_shared_sent.bin"; then
+		record "$state_label" shared_rewrite_tcp FAIL "the transfer command on $DOWNSTREAM_HOST itself failed or timed out"
+		wait "$remote_pid" 2>/dev/null || true
+		return
+	fi
+	wait "$remote_pid" 2>/dev/null || true
+	after=$(dut_counter .rewrite_failures)
+	local remote_hash
+	remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp_shared.bin 2>/dev/null | cut -d' ' -f1")
+	if [[ -z "$remote_hash" ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "remote received no data at all from $DOWNSTREAM_HOST via the DUT (or sha256sum is unavailable there)"
+		return
+	fi
+	if [[ "$remote_hash" != "$sent_hash" ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "content mismatch: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not merely a byte-count difference"
+		return
+	fi
+	if [[ -n "$DUT_DIAGNOSTICS_URL" && -n "$before" && -n "$after" && "$after" -gt "$before" ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "content arrived intact (SHA-256 $remote_hash), but the DUT's rewrite_failures counter advanced ($before -> $after) during the transfer"
+		return
+	fi
+	record "$state_label" shared_rewrite_tcp PASS "SHA-256 of received data matches sent data ($sent_hash), originated from $DOWNSTREAM_HOST through the DUT"
 }
 
 # check_shared_udp_rewrite is check_local_udp_rewrite's shared.data_plane
-# counterpart, driven from $DOWNSTREAM_HOST the same way.
+# counterpart, driven from $DOWNSTREAM_HOST the same way, with the same
+# SHA-256-comparison and retry-on-total-loss-only semantics.
 check_shared_udp_rewrite() {
 	local state_label="$1"
 	[[ -z "$DOWNSTREAM_HOST" || -z "$REMOTE_PORT_UDP" ]] && return
-	$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
-		"timeout 15 nc -u -l -p $REMOTE_PORT_UDP -w 10 > /tmp/offload_check_udp_shared.bin" &
-	local remote_pid=$!
-	sleep 1
-	$DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
-		"head -c 65000 /dev/urandom > /tmp/offload_check_udp_shared_sent.bin && nc -u -q1 -w2 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_UDP < /tmp/offload_check_udp_shared_sent.bin" || true
-	wait "$remote_pid" 2>/dev/null || true
-	local remote_size
-	remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp_shared.bin" 2>/dev/null || echo 0)
-	if [[ "$remote_size" != "0" ]]; then
-		record "$state_label" shared_rewrite_udp PASS "$remote_size bytes received (UDP is best-effort; a non-zero receipt with matching content, checked separately, is the real pass condition -- see the doc), originated from $DOWNSTREAM_HOST through the DUT"
-	else
-		record "$state_label" shared_rewrite_udp FAIL "remote received nothing from $DOWNSTREAM_HOST via the DUT"
+	local sent_hash
+	sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+		"head -c 65000 /dev/urandom > /tmp/offload_check_udp_shared_sent.bin && sha256sum /tmp/offload_check_udp_shared_sent.bin | cut -d' ' -f1")
+	if [[ -z "$sent_hash" ]]; then
+		record "$state_label" shared_rewrite_udp FAIL "could not prepare the send payload on $DOWNSTREAM_HOST"
+		return
 	fi
+	local attempt remote_size remote_hash
+	for attempt in 1 2 3; do
+		$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
+			"timeout 15 nc -u -l -p $REMOTE_PORT_UDP -w 10 > /tmp/offload_check_udp_shared.bin" &
+		local remote_pid=$!
+		sleep 1
+		if ! $DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+			"nc -u -q1 -w2 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_UDP < /tmp/offload_check_udp_shared_sent.bin"; then
+			echo "warning: the UDP send command on $DOWNSTREAM_HOST itself failed on attempt $attempt/3; retrying" >&2
+			wait "$remote_pid" 2>/dev/null || true
+			continue
+		fi
+		wait "$remote_pid" 2>/dev/null || true
+		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp_shared.bin" 2>/dev/null || echo 0)
+		if [[ "$remote_size" == "0" ]]; then
+			echo "warning: no data received on attempt $attempt/3 (UDP is best-effort); retrying" >&2
+			continue
+		fi
+		remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp_shared.bin 2>/dev/null | cut -d' ' -f1")
+		if [[ "$remote_hash" == "$sent_hash" ]]; then
+			record "$state_label" shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from $DOWNSTREAM_HOST through the DUT"
+			return
+		fi
+		record "$state_label" shared_rewrite_udp FAIL "content mismatch on attempt $attempt: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not a total-loss condition eligible for retry"
+		return
+	done
+	record "$state_label" shared_rewrite_udp FAIL "no data received from $DOWNSTREAM_HOST via the DUT after 3 attempts -- UDP is best-effort, but total loss across 3 attempts on a real link during an offload check is itself worth investigating, not accepted silently"
 }
 
 run_one_combination() {
@@ -434,16 +521,28 @@ run_one_combination() {
 	sleep 1
 
 	check_bypass_passthrough "$state_label"
-	check_local_fakeip_icmp "$state_label" 4 "$REMOTE_FAKEIP_TARGET"
-	check_shared_fakeip_icmp "$state_label" 4 "$REMOTE_FAKEIP_TARGET"
-	if [[ -n "$REMOTE_IPV6" ]]; then
-		check_local_fakeip_icmp "$state_label" 6 "$REMOTE_IPV6"
-		check_shared_fakeip_icmp "$state_label" 6 "$REMOTE_IPV6"
+
+	if [[ "$TEST_ROLE" == "local" || "$TEST_ROLE" == "both" ]]; then
+		check_local_fakeip_icmp "$state_label" 4 "$REMOTE_FAKEIP_TARGET"
+		if [[ -n "$REMOTE_IPV6" ]]; then
+			check_local_fakeip_icmp "$state_label" 6 "$REMOTE_IPV6"
+		fi
+		check_local_tcp_rewrite "$state_label"
+		check_local_udp_rewrite "$state_label"
+	else
+		record "$state_label" local_data_plane NOT_TESTED "TEST_ROLE=$TEST_ROLE excludes local.data_plane; its checks were deliberately not run for this combination"
 	fi
-	check_local_tcp_rewrite "$state_label"
-	check_local_udp_rewrite "$state_label"
-	check_shared_tcp_rewrite "$state_label"
-	check_shared_udp_rewrite "$state_label"
+
+	if [[ "$TEST_ROLE" == "shared" || "$TEST_ROLE" == "both" ]]; then
+		check_shared_fakeip_icmp "$state_label" 4 "$REMOTE_FAKEIP_TARGET"
+		if [[ -n "$REMOTE_IPV6" ]]; then
+			check_shared_fakeip_icmp "$state_label" 6 "$REMOTE_IPV6"
+		fi
+		check_shared_tcp_rewrite "$state_label"
+		check_shared_udp_rewrite "$state_label"
+	else
+		record "$state_label" shared_data_plane NOT_TESTED "TEST_ROLE=$TEST_ROLE excludes shared.data_plane; its checks were deliberately not run for this combination"
+	fi
 
 	kill "$tcpdump_pid" 2>/dev/null || true
 	wait "$tcpdump_pid" 2>/dev/null || true
@@ -484,8 +583,35 @@ for entry in "${OFFLOAD_MATRIX[@]}"; do
 done
 
 echo "report written to $REPORT" >&2
-if grep -q FAIL "$REPORT"; then
-	echo "at least one FAIL was recorded -- see $REPORT" >&2
+
+# A second independent review found that summing up to a bare "grep -q
+# FAIL" check meant a run in which every combination was UNSUPPORTED (no
+# ethtool support on this NIC, or the driver refusing every requested
+# state) still printed "all recorded checks PASSed" and exited 0 -- there
+# was no FAIL line to find, but nothing had actually been verified either.
+# This counts every outcome category from the report's own status column
+# (not a free-text search, which a detail message could coincidentally
+# match) and distinguishes a genuine, unambiguous pass from one that
+# verified nothing, or verified less than the full matrix, with a
+# different exit status for each so a caller (or a human) cannot mistake
+# one for the other from the exit code alone.
+PASS_COUNT=$(awk -F'\t' 'NR>1 && $3=="PASS"' "$REPORT" | wc -l)
+FAIL_COUNT=$(awk -F'\t' 'NR>1 && $3=="FAIL"' "$REPORT" | wc -l)
+UNSUPPORTED_COUNT=$(awk -F'\t' 'NR>1 && $3=="UNSUPPORTED"' "$REPORT" | wc -l)
+NOT_TESTED_COUNT=$(awk -F'\t' 'NR>1 && $3=="NOT_TESTED"' "$REPORT" | wc -l)
+
+echo "summary: $PASS_COUNT PASS, $FAIL_COUNT FAIL, $UNSUPPORTED_COUNT UNSUPPORTED, $NOT_TESTED_COUNT NOT_TESTED (TEST_ROLE=$TEST_ROLE)" >&2
+
+if [[ "$FAIL_COUNT" -gt 0 ]]; then
+	echo "FAIL: at least one check failed -- see $REPORT" >&2
 	exit 1
 fi
-echo "all recorded checks PASSed" >&2
+if [[ "$PASS_COUNT" -eq 0 ]]; then
+	echo "INCONCLUSIVE: no check actually passed in this run -- this environment verified nothing; do not read a lack of FAIL as evidence the eBPF rewrite is correct" >&2
+	exit 2
+fi
+if [[ "$UNSUPPORTED_COUNT" -gt 0 ]]; then
+	echo "PARTIAL: $PASS_COUNT check(s) passed, but $UNSUPPORTED_COUNT combination(s) were UNSUPPORTED on this NIC/driver and never verified -- see $REPORT for exactly which" >&2
+	exit 3
+fi
+echo "all recorded checks PASSed ($PASS_COUNT check(s); $NOT_TESTED_COUNT deliberately excluded by TEST_ROLE=$TEST_ROLE)" >&2

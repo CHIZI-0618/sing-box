@@ -48,6 +48,16 @@ SR-IOV/直通到虚拟机、背后是物理网卡的虚拟功能）才具备本�
 也附带说明了它自身的局限。如果这种归因很重要，请在 DUT 上只启用待测的
 那一个角色。
 
+早期版本的这套脚本无论文档要求 DUT 上禁用哪个角色，每次运行都会无条件
+同时执行由 DUT 自己发起的 (`local.data_plane`) 检查和由 `$DOWNSTREAM_HOST`
+发起的 (`shared.data_plane`) 检查——如果 DUT 按文档建议只启用了
+`shared.data_plane`（这本身是合法的、第一级支持的部署形态），本机到
+FakeIP 的 ping 根本没有 local responder 可用，无条件运行的本机检查就会
+失败，从而拖垮整次运行，即便 `shared.data_plane` 本身工作完全正常。
+`$TEST_ROLE`（见下文）现在用来选择这两者中实际运行哪一个，这样纯
+shared 部署的 DUT 就能被干净地验证，而不必为了迁就本脚本而额外启用
+`local.data_plane`。
+
 ## 所需环境
 
 - 两台由真实网卡连接的 Linux 主机（DUT 和 `$REMOTE_HOST`）——物理以太网
@@ -88,13 +98,26 @@ sudo LOCAL_IFACE=eth0 \
     REMOTE_IPV6=fdfe:dcba:9876::1 \
     REMOTE_PORT_TCP=15000 \
     REMOTE_PORT_UDP=15001 \
+    TEST_ROLE=both \
     common/ebpf/testing/checksum_offload_verify.sh
 ```
 
 只有 `LOCAL_IFACE`、`REMOTE_HOST`、`FAKEIP_PREFIX`、`REMOTE_FAKEIP_TARGET`
-是必需的；`DOWNSTREAM_HOST` 及其相关变量都是可选的——省略它们就只检查
-`local.data_plane`。其余变量用于收窄或扩大检查范围（完整列表及默认值见
-脚本自身的头部注释）。该脚本会：
+是必需的。`$TEST_ROLE` 决定本次运行实际检查哪个数据面，默认为 `both`：
+
+- `local` —— 只运行 `local.data_plane` 的检查，由 DUT 自己发起，
+  不需要 `$DOWNSTREAM_HOST`。
+- `shared` —— 只运行 `shared.data_plane` 的检查，由 `$DOWNSTREAM_HOST`
+  发起，此时必须设置该变量，脚本会在启动前直接拒绝缺少它的情况（如果
+  改由 DUT 自己发起 shared 检查，会在不知不觉中又测回
+  `local.data_plane` 的代码路径，这正是该选项要防止的错误）。
+- `both`（默认）—— 两个角色的检查都运行；同样要求设置
+  `$DOWNSTREAM_HOST`。
+
+被排除的角色会在报告里记为 `NOT_TESTED`，而不是被默默省略，因此一次
+只测 `local` 或只测 `shared` 的运行，其报告仍然会明确说明自己没有检查
+什么。其余变量用于收窄或扩大检查范围（完整列表及默认值见脚本自身的头部
+注释）。该脚本会：
 
 1. 通过 `ethtool -k` 读取并记录 `$LOCAL_IFACE` 当前的卸载特性标志，以便在
    退出时（包括 Ctrl-C 中断时）精确恢复。
@@ -119,33 +142,75 @@ sudo LOCAL_IFACE=eth0 \
    - 一次从 DUT 经普通 SSH 连接到 `$REMOTE_HOST` 的对照传输（完全不经过
      任何 eBPF 改写，只检验该网卡及其卸载设置本身——如果这一步失败，
      说明问题出在网卡/驱动组合本身，与本入站无关）。
-   - `local.data_plane` 自身的 FakeIP ICMP echo（IPv4，若设置了
-     `$REMOTE_IPV6` 则还有 IPv6），以及（若设置了 `$REMOTE_PORT_TCP` /
-     `$REMOTE_PORT_UDP`）TCP/UDP 传输——全部由 DUT 自己发起，朝向
-     `$REMOTE_FAKEIP_TARGET`。
-   - 如果设置了 `$DOWNSTREAM_HOST`，再做一遍同样的三项检查，但改为从
-     `$DOWNSTREAM_HOST` 经 SSH 发起，而不是从 DUT 发起——这才是真正
-     检验 `shared.data_plane` 的部分。如果同时设置了
+   - 如果 `$TEST_ROLE` 为 `local` 或 `both`：`local.data_plane` 自身的
+     FakeIP ICMP echo（IPv4，若设置了 `$REMOTE_IPV6` 则还有 IPv6），以及
+     （若设置了 `$REMOTE_PORT_TCP` / `$REMOTE_PORT_UDP`）TCP/UDP
+     传输——全部由 DUT 自己发起，朝向 `$REMOTE_FAKEIP_TARGET`。如果
+     `$TEST_ROLE` 为 `shared`，这些检查会被跳过并记为 `NOT_TESTED`。
+   - 如果 `$TEST_ROLE` 为 `shared` 或 `both`：再做一遍同样的三项检查，
+     但改为从 `$DOWNSTREAM_HOST` 经 SSH 发起，而不是从 DUT 发
+     起——这才是真正检验 `shared.data_plane` 的部分。如果 `$TEST_ROLE`
+     为 `local`，这些检查会被跳过并记为 `NOT_TESTED`。如果同时设置了
      `$DUT_DIAGNOSTICS_URL`，这几项检查还会额外要求 DUT 自身的对应
      计数器（ICMP 检查看 `fakeip_icmp_replies`，TCP 检查看
      `rewrite_failures` 保持不变）按真实、正确处理报文时应有的方式变化，
      而不只是 `$DOWNSTREAM_HOST` 收到了什么。
-5. 将 PASS/FAIL/UNSUPPORTED 记录到 `$OUT_DIR/report.tsv`，判定依据是
-   **接收端**主机内核实际接受了什么——ICMP 看丢包率，传输看字节数，能用
-   的话还看 DUT 自身的计数器——而不是发送端 `tcpdump` 自身给出的校验和
-   判定。在网卡自身的校验和引擎完成工作之前抓到的包，即使真实的接收方
+5. 将 PASS/FAIL/UNSUPPORTED/NOT_TESTED 记录到 `$OUT_DIR/report.tsv`，判定
+   依据是**接收端**主机内核实际接受了什么，以及对 TCP/UDP 传输而言是否
+   真正正确地收到了——而不是发送端 `tcpdump` 自身给出的校验和判定。TCP
+   和 UDP 检查会比较发送内容和接收端各自算出的 SHA-256，而不再只看
+   字节数：早期版本只要接收端收到任何非零字节就判为"received
+   intact"，独立审查指出这样即便传输被截断、被破坏，甚至发送命令自己
+   已经失败，只要另一端出现了"什么东西"，也会记为 PASS。UDP 本质上是
+   尽力而为的，因此一个报文完全没有到达（接收端文件始终为空）会在判为
+   失败前重试最多三次；但如果报文确实到达了，只是哈希对不上发送内容，
+   则在那一次尝试上立即判为 FAIL，绝不重试——因为这是数据损坏而不是
+   单纯丢失，重试掉它反而会掩盖本流程本来就是要抓的那个缺陷。这是对
+   整个 payload 的内容校验，而不是带独立丢失/乱序/损坏阈值的逐包序号
+   校验——它证明了到达的字节与发出的字节完全一致（或者不一致），这正是
+   这里"校验和/内容完整性"的含义；它并不额外刻画单次传输内部的乱序
+   情况。在网卡自身的校验和引擎完成工作之前抓到的包，即使真实的接收方
    完全正常接受，也常常被标为"incorrect"；这是"在 TX 卸载生效之前抓包"
    这件事本身的特性，并不是真实缺陷——如果把它当作缺陷来判定，无论 eBPF
    改写是否正确，每次运行都会被判为失败。这正是为什么本流程以接收端
-   自身的接受/丢弃行为和字节数为准，而完全不把 `tcpdump` 的内联校验和
+   自身的接受/丢弃行为和内容哈希为准，而完全不把 `tcpdump` 的内联校验和
    判定作为通过/失败信号——它只在其他判定已经失败时，作为附加在报告里
    的原始证据使用。
+6. 把报告自身的状态列读回来精确计数 `PASS`、`FAIL`、`UNSUPPORTED`、
+   `NOT_TESTED` 各有多少条——而不是在细节文字里搜索"FAIL"这个词——并打印
+   一行摘要，用四种不同的退出码之一：`0`（至少一条 `PASS`、零条
+   `FAIL`、零条 `UNSUPPORTED`——干净通过）、`1`（存在至少一条
+   `FAIL`，优先于其他所有情况被检查）、`2`（`INCONCLUSIVE`：整次运行
+   一条 `PASS` 都没有，意味着本次运行实际上什么都没有验证过——例如所有
+   组合都是 `UNSUPPORTED`，比如这块网卡/驱动组合根本不支持某个必需的
+   `ethtool` 特性）、或 `3`（`PARTIAL`：至少有一条 `PASS`，但同时至少
+   有一条 `UNSUPPORTED`，意味着预期的覆盖范围只跑了一部分）。早期版本
+   的这套脚本只在报告里搜索字面上的"FAIL"；如果所有组合都是
+   `UNSUPPORTED`（`ethtool` 不可用，或网卡缺少某个必需特性），报告里
+   根本没有 `FAIL` 这一行可找，脚本便打印"all recorded checks
+   PASSed"并以 `0` 退出，尽管实际上一个包都没有真正检查过。现在这个
+   脚本的退出码 `0` 专指"确实跑了真实流量检查，且全部通过"——绝不再是
+   "什么都没跑所以没有失败"。
 
 ## 如何解读失败
 
+- **运行以 `2`（`INCONCLUSIVE`）退出**：整次运行没有任何一项检查真正
+  通过——最可能的原因是所有组合都是 `UNSUPPORTED`。这不能作为 eBPF
+  改写正确的证据；因为什么都没有被验证过。先解决导致每个组合都无法
+  生效的问题（看 stderr 上的 `UNSUPPORTED` 警告），再重新运行后才能
+  下结论。
+- **运行以 `3`（`PARTIAL`）退出**：至少有一项检查通过了，但至少有一个
+  组合是 `UNSUPPORTED`，没有贡献任何结果。请查看摘要行和报告，确认
+  具体哪些组合从未运行，并把它们明确当作未验证处理——不要把某个已通过
+  组合的结果外推到一个从未真正测试过的网卡状态上。
 - **某个组合被记为 `UNSUPPORTED`**：网卡或驱动实际上没有真正进入该组合
   名称所声称的状态——具体是哪个特性，看脚本应用该组合时写到 stderr 的
   警告。这与 eBPF 改写本身无关，该组合下的检查也都没有运行。
+- **某项检查被记为 `NOT_TESTED`**：`$TEST_ROLE` 在本次运行中刻意排除
+  了它（只测 `local` 的运行会让每一条 `shared_*` 检查都是
+  `NOT_TESTED`，反之亦然）。这也不是一个发现——如果需要覆盖被排除的
+  角色，请设置 `TEST_ROLE=both`（并配好 `$DOWNSTREAM_HOST`）后重新
+  运行。
 - **对照传输在某个（已生效）组合下失败**：说明这块硬件上的网卡/驱动组合
   本身无法在该卸载组合下正常工作——与 eBPF 无关。应先修复该网卡/驱动
   固件组合（或直接排除该组合），再对 eBPF 改写路径下结论。

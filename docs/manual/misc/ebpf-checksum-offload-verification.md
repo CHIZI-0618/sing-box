@@ -59,6 +59,18 @@ below for the one thing that can actually distinguish this, and its own
 limits. Where that ambiguity matters, run the DUT with only the role under
 test enabled.
 
+An earlier version of this script always ran both the DUT-originated
+(`local.data_plane`) checks and the `$DOWNSTREAM_HOST`-originated
+(`shared.data_plane`) checks in every run, regardless of which of the two
+this documentation told you to disable on the DUT — a DUT deliberately
+configured with only `shared.data_plane` enabled (a legitimate, first-class
+deployment) had no local responder for the unconditional local checks to
+reach, so those checks would fail and take the whole run down even though
+`shared.data_plane` itself was working correctly. `$TEST_ROLE` (see below)
+now selects which of the two actually runs, so a shared-only DUT can be
+verified cleanly without also enabling `local.data_plane` just to satisfy
+this script.
+
 ## Required environment
 
 - Two real Linux hosts (DUT and `$REMOTE_HOST`) connected by a real NIC on
@@ -102,12 +114,27 @@ sudo LOCAL_IFACE=eth0 \
     REMOTE_IPV6=fdfe:dcba:9876::1 \
     REMOTE_PORT_TCP=15000 \
     REMOTE_PORT_UDP=15001 \
+    TEST_ROLE=both \
     common/ebpf/testing/checksum_offload_verify.sh
 ```
 
 Only `LOCAL_IFACE`, `REMOTE_HOST`, `FAKEIP_PREFIX`, and
-`REMOTE_FAKEIP_TARGET` are required; `DOWNSTREAM_HOST` and everything under
-it are optional — omit them to check only `local.data_plane`. The rest
+`REMOTE_FAKEIP_TARGET` are required. `$TEST_ROLE` picks which data plane this
+run actually checks and defaults to `both`:
+
+- `local` — only `local.data_plane`'s checks run, driven from the DUT
+  itself. `$DOWNSTREAM_HOST` is not required.
+- `shared` — only `shared.data_plane`'s checks run, driven from
+  `$DOWNSTREAM_HOST`, which is then required; the script refuses to start
+  without it (a shared check driven from the DUT itself would silently
+  re-test `local.data_plane`'s code path instead, which is exactly the
+  mistake this option exists to prevent).
+- `both` (the default) — both roles' checks run; `$DOWNSTREAM_HOST` is
+  required for the same reason.
+
+Whichever role is excluded is recorded `NOT_TESTED` in the report, not
+silently omitted, so a report from a `local`- or `shared`-only run still
+states plainly what it did not check. The rest of the environment variables
 narrow or widen what gets checked (see the script's own header comment for
 the full list and defaults). The script:
 
@@ -143,39 +170,92 @@ the full list and defaults). The script:
      `$REMOTE_HOST` (exercises the interface and its offload settings
      without going through any eBPF rewrite at all — a failure here means
      the NIC/driver combination itself is the problem, not this inbound).
-   - `local.data_plane`'s own FakeIP ICMP echo (IPv4, and IPv6 if
-     `$REMOTE_IPV6` is set) and, if `$REMOTE_PORT_TCP`/`$REMOTE_PORT_UDP`
-     are set, TCP/UDP transfers — all originated from the DUT itself,
-     toward `$REMOTE_FAKEIP_TARGET`.
-   - If `$DOWNSTREAM_HOST` is set, the same three checks again, but
+   - If `$TEST_ROLE` is `local` or `both`: `local.data_plane`'s own FakeIP
+     ICMP echo (IPv4, and IPv6 if `$REMOTE_IPV6` is set) and, if
+     `$REMOTE_PORT_TCP`/`$REMOTE_PORT_UDP` are set, TCP/UDP transfers — all
+     originated from the DUT itself, toward `$REMOTE_FAKEIP_TARGET`. If
+     `$TEST_ROLE` is `shared`, these are skipped and recorded `NOT_TESTED`
+     instead of running.
+   - If `$TEST_ROLE` is `shared` or `both`: the same three checks again, but
      originated from `$DOWNSTREAM_HOST` over ssh instead of from the DUT —
-     these are what actually exercises `shared.data_plane`. If
-     `$DUT_DIAGNOSTICS_URL` is also set, each of these additionally requires
-     the DUT's own counter (`fakeip_icmp_replies` for the ICMP check,
-     `rewrite_failures` staying flat for the TCP check) to move the way a
-     real, correctly-processed packet would, not just that
+     this is what actually exercises `shared.data_plane`. If `$TEST_ROLE` is
+     `local`, these are skipped and recorded `NOT_TESTED` instead of running.
+     If `$DUT_DIAGNOSTICS_URL` is also set, each of these additionally
+     requires the DUT's own counter (`fakeip_icmp_replies` for the ICMP
+     check, `rewrite_failures` staying flat for the TCP check) to move the
+     way a real, correctly-processed packet would, not just that
      `$DOWNSTREAM_HOST` received something.
-5. Records PASS/FAIL/UNSUPPORTED to `$OUT_DIR/report.tsv` based on what the
-   **receiving** side's kernel actually accepted — packet loss for ICMP,
-   byte count for the transfers, and the DUT's own counters where available
-   — never based on `tcpdump`'s own checksum annotation on the sending side.
+5. Records PASS/FAIL/UNSUPPORTED/NOT_TESTED to `$OUT_DIR/report.tsv` based on
+   what the **receiving** side's kernel actually accepted and, for the TCP
+   and UDP transfers, actually received correctly — never based on
+   `tcpdump`'s own checksum annotation on the sending side. TCP and UDP
+   checks compare a SHA-256 of the sent payload against a SHA-256 computed
+   on the receiving end, not merely a byte count: an earlier version of this
+   script treated any non-zero receipt as "received intact," which an
+   independent review found would record PASS for a transfer that arrived
+   truncated, corrupted, or even one whose own send command had already
+   failed, as long as *something* showed up on the other end. UDP is
+   genuinely best-effort, so a datagram that never arrives at all (the
+   receiving side's file stays empty) is retried up to three times before
+   being recorded a failure; a datagram that *did* arrive but hashes
+   differently from what was sent is recorded FAIL immediately, on that
+   attempt, never retried away, since that is corruption rather than mere
+   loss and retrying past it would hide the exact defect this procedure
+   exists to catch. This is a whole-payload content check, not a
+   sequenced-per-packet one with its own separate loss/reorder/corruption
+   thresholds — it proves the bytes that arrived are exactly the bytes that
+   were sent (or that they are not), which is what "checksum/content
+   integrity" means here; it does not additionally characterize reordering
+   within a single transfer.
    A capture taken before the NIC's own checksum engine runs routinely says
    "incorrect" even for packets a real receiver accepts without issue; that
    is a property of capturing before TX offload, not a real defect, and
    treating it as one would make every run fail regardless of whether the
    eBPF rewrite is actually correct. This is why the receiving side's own
-   accept/drop and byte-count behavior is authoritative and `tcpdump`'s
+   accept/drop and content-hash behavior is authoritative and `tcpdump`'s
    inline checksum verdict is not used as a pass/fail signal at all — only
    as raw evidence to attach to a report when something else already
    failed.
+6. Reads the report's own status column back — counting `PASS`, `FAIL`,
+   `UNSUPPORTED`, and `NOT_TESTED` rows exactly, not by searching detail
+   messages for the word "FAIL" — and prints a summary with one of four exit
+   codes: `0` (at least one `PASS`, zero `FAIL`, zero `UNSUPPORTED` — a clean
+   pass), `1` (at least one `FAIL`, checked first regardless of anything
+   else), `2` (`INCONCLUSIVE`: zero `PASS` rows at all, meaning nothing was
+   actually verified this run — every combination was `UNSUPPORTED`, for
+   example an unsupported `ethtool` feature on every NIC/driver combination
+   tried), or `3` (`PARTIAL`: at least one `PASS` but also at least one
+   `UNSUPPORTED`, meaning some but not all of the intended coverage actually
+   ran). An earlier version of this script only ever searched the report for
+   the literal word `FAIL`; if every combination came back `UNSUPPORTED`
+   (`ethtool` unavailable, or the NIC lacking a required feature) there was
+   no `FAIL` line to find, so the script printed "all recorded checks
+   PASSed" and exited `0` even though not one packet had actually been
+   checked. Exit code `0` from this script now specifically means real
+   traffic checks ran and every one of them passed — never "nothing failed
+   because nothing ran."
 
 ## Reading a failure
 
+- **The run exits `2` (`INCONCLUSIVE`)**: no check anywhere in this run
+  actually passed — most likely every combination came back `UNSUPPORTED`.
+  This is not evidence the eBPF rewrite is correct; nothing was verified.
+  Fix whatever kept every combination from applying (see the `UNSUPPORTED`
+  warnings on stderr) and re-run before drawing any conclusion.
+- **The run exits `3` (`PARTIAL`)**: at least one check passed, but at least
+  one combination was `UNSUPPORTED` and contributed nothing. Read the
+  summary line and the report for exactly which combinations never ran, and
+  treat those specifically as unverified — do not extrapolate a passing
+  combination's result to a NIC state that was never actually tested.
 - **A combination is recorded `UNSUPPORTED`**: the NIC or driver would not
   actually enter the state that combination's name claims — see the
   warnings the script printed to stderr while applying it for which
   specific feature. This is not a finding about the eBPF rewrite at all;
   none of that combination's checks ran.
+- **A check is recorded `NOT_TESTED`**: `$TEST_ROLE` deliberately excluded
+  it for this run (a `local`-only run leaves every `shared_*` check
+  `NOT_TESTED`, and vice versa). This is not a finding either — re-run with
+  `TEST_ROLE=both` (and `$DOWNSTREAM_HOST` set) to cover the excluded role.
 - **Control transfer fails on some (applied) combination**: the NIC/driver
   itself cannot run with that offload combination on this hardware — not an
   eBPF issue. Fix the driver/firmware combination (or exclude it on this
