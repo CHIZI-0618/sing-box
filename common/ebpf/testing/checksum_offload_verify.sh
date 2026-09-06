@@ -308,6 +308,22 @@ check_bypass_passthrough() {
 	fi
 }
 
+# check_local_tcp_rewrite (and every other hash-comparison check in this
+# file: check_local_udp_rewrite, check_shared_tcp_rewrite,
+# check_shared_udp_rewrite) guards each `_hash=$($SSH ...)` /
+# `_hash=$($DOWNSTREAM_SSH ...)` retrieval with an explicit
+# `if ! x=$(...); then x=""; fi` and then validates the result as a
+# 64-character lowercase hex SHA-256 digest -- a fifth independent review
+# found these assignments were still bare command substitutions under this
+# script's own `set -euo pipefail` (the same class of bug §15/round-4 fixed
+# for the UDP receipt-size read, at six more sites this file's hash
+# preparation and retrieval never got the same treatment): a failed SSH
+# call at any of them aborted the whole script instead of recording a
+# structured FAIL. A successful-but-malformed result (empty, truncated, or
+# not hex) is rejected the same way a failed call is, and is reported
+# explicitly as an evidence-read error rather than folded into a "content
+# mismatch" verdict, which would otherwise blame corruption for what is
+# actually an inability to read the evidence at all.
 check_local_tcp_rewrite() {
 	local state_label="$1"
 	[[ -z "$REMOTE_PORT_TCP" ]] && return
@@ -325,9 +341,11 @@ check_local_tcp_rewrite() {
 	fi
 	wait "$remote_pid" 2>/dev/null || true
 	local remote_hash
-	remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp.bin 2>/dev/null | cut -d' ' -f1")
-	if [[ -z "$remote_hash" ]]; then
-		record "$state_label" local_shared_rewrite_tcp FAIL "remote received no data at all (or sha256sum is unavailable there)"
+	if ! remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp.bin 2>/dev/null | cut -d' ' -f1"); then
+		remote_hash=""
+	fi
+	if [[ ! "$remote_hash" =~ ^[0-9a-f]{64}$ ]]; then
+		record "$state_label" local_shared_rewrite_tcp FAIL "could not read a valid SHA-256 from the remote (remote received no data at all, sha256sum is unavailable there, or the SSH call itself failed) -- evidence-read error, not a content judgment"
 		return
 	fi
 	if [[ "$remote_hash" == "$sent_hash" ]]; then
@@ -404,7 +422,13 @@ check_local_udp_rewrite() {
 			fi
 			continue
 		fi
-		remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp.bin 2>/dev/null | cut -d' ' -f1")
+		if ! remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp.bin 2>/dev/null | cut -d' ' -f1"); then
+			remote_hash=""
+		fi
+		if [[ ! "$remote_hash" =~ ^[0-9a-f]{64}$ ]]; then
+			record "$state_label" local_shared_rewrite_udp FAIL "could not read a valid SHA-256 from the remote on attempt $attempt/3 (sha256sum is unavailable there, or the SSH call itself failed) -- evidence-read error, not a content judgment"
+			return
+		fi
 		if [[ "$remote_hash" == "$sent_hash" ]]; then
 			record "$state_label" local_shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from the DUT itself (local send command exit=$send_status)"
 			return
@@ -464,10 +488,12 @@ check_shared_tcp_rewrite() {
 	sleep 1
 	local before after sent_hash
 	before=$(dut_counter .rewrite_failures)
-	sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
-		"head -c $TRANSFER_BYTES /dev/urandom > /tmp/offload_check_tcp_shared_sent.bin && sha256sum /tmp/offload_check_tcp_shared_sent.bin | cut -d' ' -f1")
-	if [[ -z "$sent_hash" ]]; then
-		record "$state_label" shared_rewrite_tcp FAIL "could not prepare the send payload on $DOWNSTREAM_HOST"
+	if ! sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+		"head -c $TRANSFER_BYTES /dev/urandom > /tmp/offload_check_tcp_shared_sent.bin && sha256sum /tmp/offload_check_tcp_shared_sent.bin | cut -d' ' -f1"); then
+		sent_hash=""
+	fi
+	if [[ ! "$sent_hash" =~ ^[0-9a-f]{64}$ ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "could not prepare a valid send payload/SHA-256 on $DOWNSTREAM_HOST (the SSH call itself may have failed) -- evidence-read error, not a content judgment"
 		wait "$remote_pid" 2>/dev/null || true
 		return
 	fi
@@ -480,9 +506,11 @@ check_shared_tcp_rewrite() {
 	wait "$remote_pid" 2>/dev/null || true
 	after=$(dut_counter .rewrite_failures)
 	local remote_hash
-	remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp_shared.bin 2>/dev/null | cut -d' ' -f1")
-	if [[ -z "$remote_hash" ]]; then
-		record "$state_label" shared_rewrite_tcp FAIL "remote received no data at all from $DOWNSTREAM_HOST via the DUT (or sha256sum is unavailable there)"
+	if ! remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp_shared.bin 2>/dev/null | cut -d' ' -f1"); then
+		remote_hash=""
+	fi
+	if [[ ! "$remote_hash" =~ ^[0-9a-f]{64}$ ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "could not read a valid SHA-256 from the remote (remote received no data at all from $DOWNSTREAM_HOST via the DUT, sha256sum is unavailable there, or the SSH call itself failed) -- evidence-read error, not a content judgment"
 		return
 	fi
 	if [[ "$remote_hash" != "$sent_hash" ]]; then
@@ -504,10 +532,12 @@ check_shared_udp_rewrite() {
 	local state_label="$1"
 	[[ -z "$DOWNSTREAM_HOST" || -z "$REMOTE_PORT_UDP" ]] && return
 	local sent_hash
-	sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
-		"head -c 65000 /dev/urandom > /tmp/offload_check_udp_shared_sent.bin && sha256sum /tmp/offload_check_udp_shared_sent.bin | cut -d' ' -f1")
-	if [[ -z "$sent_hash" ]]; then
-		record "$state_label" shared_rewrite_udp FAIL "could not prepare the send payload on $DOWNSTREAM_HOST"
+	if ! sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+		"head -c 65000 /dev/urandom > /tmp/offload_check_udp_shared_sent.bin && sha256sum /tmp/offload_check_udp_shared_sent.bin | cut -d' ' -f1"); then
+		sent_hash=""
+	fi
+	if [[ ! "$sent_hash" =~ ^[0-9a-f]{64}$ ]]; then
+		record "$state_label" shared_rewrite_udp FAIL "could not prepare a valid send payload/SHA-256 on $DOWNSTREAM_HOST (the SSH call itself may have failed) -- evidence-read error, not a content judgment"
 		return
 	fi
 	local attempt send_status remote_size remote_hash
@@ -535,7 +565,13 @@ check_shared_udp_rewrite() {
 			fi
 			continue
 		fi
-		remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp_shared.bin 2>/dev/null | cut -d' ' -f1")
+		if ! remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp_shared.bin 2>/dev/null | cut -d' ' -f1"); then
+			remote_hash=""
+		fi
+		if [[ ! "$remote_hash" =~ ^[0-9a-f]{64}$ ]]; then
+			record "$state_label" shared_rewrite_udp FAIL "could not read a valid SHA-256 from the remote on attempt $attempt/3 (sha256sum is unavailable there, or the SSH call itself failed) -- evidence-read error, not a content judgment"
+			return
+		fi
 		if [[ "$remote_hash" == "$sent_hash" ]]; then
 			record "$state_label" shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from $DOWNSTREAM_HOST through the DUT (send command exit=$send_status)"
 			return
