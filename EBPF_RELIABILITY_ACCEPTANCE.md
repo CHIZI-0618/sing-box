@@ -11,10 +11,11 @@ from this branch; it is not part of the public documentation site under
 ## 1. Final commit
 
 All code, test, and CI changes described in this document, including §12's
-response to an independent code review, land at
-`742772d1bb33bebc9d48d887a66cf5c3e51d5fab`. This section is updated in place
-each time this document itself is revised, rather than being re-derived —
-this document's own commit necessarily lands after the hash it names.
+response to the first independent code review and §13's response to a
+second one, land at `b1b7f4e77e7e15746ea176de178832a104ccfc84`. This section
+is updated in place each time this document itself is revised, rather than
+being re-derived — this document's own commit necessarily lands after the
+hash it names.
 
 Full commit range for the code/test/CI work this document evidences (oldest
 first):
@@ -39,12 +40,15 @@ ac03b48e ebpf: wake the retry scheduler when a rule-set update fails
 f04e0561 ebpf: count shared packet-rewrite UDP clients in UDPSessionCount too
 2e640950 ebpf: mark a backend unknown when its own forward apply wrecks it, too
 742772d1 ebpf: fix combination baseline drift and wrong traffic origin in offload script
+5569e0bb docs: record the independent review's eight findings and this round's fixes
+b1b7f4e7 ebpf: fix offload-verify script's coverage, content, and role checks
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
 (`.codex-remote-attachments/`, predating this work) and `outputs/` (the
-independent review's own artifact bundle, left exactly as delivered) — see
-§12 for how that review's findings were addressed.
+independent reviews' own artifact bundles — `outputs/ebpf-review/` and
+`outputs/ebpf-review-round2/` — left exactly as delivered) — see §12 and
+§13 for how those reviews' findings were addressed.
 
 ## 2. Environment
 
@@ -571,3 +575,186 @@ needs a third host this round never had.
 No production code outside what these eight findings named was touched.
 `outputs/ebpf-review/` (the review's own artifact bundle) was read for
 context and left completely untouched, uncommitted, exactly as delivered.
+
+## 13. Response to a second independent code review
+
+A second independent review of commit `5569e0bbf28300fff57f9ad9a1bf23552bb6bf6e`
+(this document's own previous revision, i.e. after §12's eight fixes landed)
+independently reproduced and confirmed findings #1–#5 above as closed, and
+accepted #6's `RequiresRebuild()` wiring as correctly directioned on static
+review, while explicitly noting that the accessor's own unit tests are not
+equivalent to an end-to-end proof of the double-BPF-syscall-failure path
+(§10 already carries this as an open item; this review did not close it,
+and neither does this section). It found no new core-code issues. It did
+find three P2 issues, all in `common/ebpf/testing/checksum_offload_verify.sh`
+(item 13's real-hardware verification tooling), each with its own concrete
+reproduction (its own review artifacts and script-regression driver are
+preserved, untouched, at `outputs/ebpf-review-round2/`; the first review's
+`outputs/ebpf-review/` was left untouched as well). All three are addressed
+below, in one combined commit — the three fixes touch overlapping sections
+of the same single script and interact with each other (the role selector
+in C gates the checks whose content-verification C's own summary in A now
+also has to count), the same reasoning that combined #7 and #8 above into
+one commit.
+
+### A. [P2] — the script declared success even when zero traffic checks ran
+
+**Finding**: the final summary only ever searched the report for the
+literal word `FAIL`. If every offload combination came back `UNSUPPORTED`
+(`ethtool` unavailable, or the NIC lacking a required feature such as
+`tx-udp-segmentation`), the report had no `FAIL` line and no valid `PASS`
+line either, and the script still printed "all recorded checks PASSed" and
+exited `0`. Reproduced with an all-local fake `ethtool`: four `UNSUPPORTED`
+lines, zero traffic tests, `script_exit=0`, "all passed" text.
+
+**Fix** (`b1b7f4e7`): the summary now counts `PASS`/`FAIL`/`UNSUPPORTED`/
+`NOT_TESTED` exactly from the report's own tab-separated status column
+(never a free-text substring search, which a detail message could
+coincidentally match) and exits `0` only when at least one check passed and
+none were `UNSUPPORTED`; `1` if any `FAIL` is present (checked first,
+regardless of the rest); `2` (`INCONCLUSIVE`) when the pass count is zero,
+meaning nothing was actually verified; `3` (`PARTIAL`) when the pass count
+is nonzero but at least one combination was `UNSUPPORTED`.
+
+**Verified**: an ad hoc, uncommitted scratchpad script exercised the exact
+awk-based counting/exit-code logic against five synthetic report
+compositions (all-`UNSUPPORTED`, mixed `PASS`+`UNSUPPORTED`, `FAIL` present
+alongside `PASS`, all-`PASS`, and `PASS`+`NOT_TESTED` under a role-restricted
+run) and got the intended exit code (2, 3, 1, 0, 0 respectively) in every
+case. Never run against real hardware.
+
+### B. [P2] — byte count was treated as content integrity
+
+**Finding**: the TCP check compared only the number of bytes received and
+called it "received intact"; the UDP check ignored the downstream send
+command's own failure and PASSed on any non-zero receipt. The "matching
+content, checked separately" language in the script's own log messages was
+prose only — nothing enforced it. Reproduced by making the downstream send
+command return failure while the received file held exactly one byte,
+yielding a recorded PASS.
+
+**Fix** (`b1b7f4e7`): all four transfer checks (local and shared, TCP and
+UDP) now compare a SHA-256 of the sent payload against a SHA-256 computed
+on the receiving end, and a failed send command is now itself an immediate
+FAIL rather than being ignored. UDP retries up to three times, but only on
+total loss (an empty received file) — inherent to UDP being best-effort;
+any receipt that does not hash-match the sent payload is recorded FAIL on
+that attempt immediately, never retried away, since that is evidence of
+corruption rather than mere loss.
+
+This intentionally implements whole-payload SHA-256 comparison rather than
+the review's literal suggestion of sequenced, content-verified packets with
+separate thresholds for loss, reorder, and corruption. The chosen approach
+does verify real content integrity — the core of the finding — with a
+clean binary correct/incorrect signal, but it does not characterize
+reordering or partial corruption within a single UDP transfer the way a
+sequence-numbered packet train would. This simplification is disclosed
+here rather than presented as satisfying the suggestion literally.
+
+**Verified**: the highest-fidelity ad hoc exercise in this engagement's
+history for a shell-script fix — `check_local_tcp_rewrite` and
+`check_local_udp_rewrite` were extracted verbatim via `awk`, sourced into a
+throwaway harness, and run against real `127.0.0.1` TCP/UDP sockets with a
+fake `ssh` that evaluates the "remote" command locally (standing in for a
+genuine remote host, not merely mocking the decision logic). Real TCP
+loopback with matching content: PASS with a genuine SHA-256. A remote
+listener that cannot bind (privileged port): FAIL, not a false PASS. Real
+UDP loopback with matching content: PASS. UDP total loss across three
+retries (privileged port): FAIL after exactly three attempts, not silently
+accepted. Critically, a same-byte-count, single-byte-corrupted transfer
+(via a second fake ssh that flips one byte of the file the real listener
+just wrote) now correctly produces FAIL on a genuine SHA-256 mismatch —
+this is the exact false-positive scenario the review's finding B
+describes, and it is now caught. The `sha256sum | cut` extraction idiom
+itself was checked separately: distinct content produces distinct hashes,
+identical content produces the identical hash across repeated computation,
+and the extracted string is a clean 64-character hex value. Never run
+against real hardware.
+
+### C. [P2] — a shared-only configuration could not be cleanly validated
+
+**Finding**: although `$DOWNSTREAM_HOST` had been added by the first
+review's #8 fix, `run_one_combination` always called both the
+local-origin and shared-origin checks unconditionally — there was no
+switch to run only one role. The documentation's own guidance to disable
+the role not under test for an unambiguous read was inconsistent with the
+script's unconditional behavior: a DUT configured, per that same guidance,
+with only `shared.data_plane` enabled had no local responder for the
+unconditional local ping to reach, so it would fail (or take an unrelated
+path) and take the whole run down even when the downstream shared
+verification succeeded completely — meaning a pure-shared deployment, a
+first-class configuration throughout this engagement, could not be cleanly
+validated by this script at all.
+
+**Fix** (`b1b7f4e7`): a new `TEST_ROLE` environment variable
+(`local`/`shared`/`both`, default `both`) is validated at startup — an
+unrecognized value, or `shared`/`both` without `$DOWNSTREAM_HOST` set,
+exits immediately with an explanatory error — and gates which of the two
+check blocks `run_one_combination` actually runs. The excluded role's
+checks are recorded `NOT_TESTED` in the report, not silently omitted, so a
+role-restricted run's own report states plainly what it did not check.
+Both verification-procedure docs (`.md` and `.zh.md`) now document
+`TEST_ROLE` and its validation rules directly, replacing the previous
+inconsistent "disable the untested role on the DUT" guidance for this
+specific ambiguity (that guidance still applies to the separate, narrower
+`$DUT_DIAGNOSTICS_URL` counter-attribution ambiguity documented in "What
+this does not cover").
+
+**Verified**: an ad hoc, uncommitted scratchpad script drove the extracted
+`TEST_ROLE` validation logic through six scenarios — an invalid role,
+`shared` and `both` without `$DOWNSTREAM_HOST`, `local` without it, and
+`shared`/`both` with it set — and every scenario was rejected or accepted
+exactly as intended. Never run against real hardware; the finding itself
+was confirmed by the reviewer via static control-flow reading, not a live
+reproduction, and this fix's verification is at the same level.
+
+### Regression check
+
+The full suite was re-run after all three fixes landed, as root under WSL
+Debian, the same invocation §3.1 uses:
+
+```
+ok  	github.com/sagernet/sing-box/protocol/ebpf	9.349s
+ok  	github.com/sagernet/sing-box/common/ebpf	2.005s
+```
+
+Only the shell script and its two verification docs changed in this round;
+this run is the standard full-suite sanity check this engagement performs
+before every commit, not evidence specific to any of the three findings
+themselves (which are shell-script-only and covered by the ad hoc
+exercises above).
+
+### What this round does not resolve
+
+- **Real hardware remains unexecuted.** Every verification above is a
+  logic-level or real-loopback exercise; none of it touches a physical NIC,
+  `ethtool`, or a genuine remote/downstream host. The procedure is still,
+  as documented, ready to run rather than a claim that hardware behavior
+  has been checked.
+- **`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing`'s earlier
+  disclosed flake stays "cause unconfirmed."** The second review's own full
+  regression pass did not encounter it, but explicitly declined to treat
+  that as evidence the flake is resolved — not having touched the test
+  file does not prove it is unrelated to other runtime changes either. Its
+  one offered hypothesis (the read function may strictly parse the first
+  received IPv6 frame without first filtering for the expected reply, so
+  unrelated IPv6 control traffic could trigger a false parse failure) is
+  named explicitly as an unverified direction to investigate, not a proven
+  root cause, and no work was done on it this round — it stays out of
+  scope until specifically taken up.
+- Real GitHub Actions execution, Android hardware, and TCX-specific offload
+  interaction on physical silicon remain unverified, unchanged from §10.
+
+### Summary
+
+| Finding | Severity | Status | Live-verified |
+|---|---|---|---|
+| A — false success on zero coverage | P2 | Fixed | Yes, exit-code logic against 5 synthetic reports |
+| B — byte count as content integrity | P2 | Fixed | Yes, real TCP/UDP loopback + deliberate corruption test |
+| C — cannot validate shared-only config | P2 | Fixed | Logic-level only (`TEST_ROLE` validation); no real hardware |
+
+No production code, existing Go tests, or the acceptance evidence above §13
+was modified by this round beyond what these three findings named. Both
+`outputs/ebpf-review/` and `outputs/ebpf-review-round2/` (each review's own
+artifact bundle) were read for context and left completely untouched,
+uncommitted, exactly as delivered.
