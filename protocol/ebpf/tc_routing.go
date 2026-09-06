@@ -289,7 +289,18 @@ func allocateTCPolicyIdentifiers(loopbackIndex int, families []int) (tcPolicyIde
 	var usedMarkBits uint32
 	allFamilies := []int{unix.AF_INET, unix.AF_INET6}
 	for _, family := range allFamilies {
-		routes, err := netlink.RouteList(nil, family)
+		// This has to see every table in use, not just the main one: the
+		// candidate table numbers this function picks from never include the
+		// main table, so a collision only ever exists in some other,
+		// already-used table. netlink.RouteList(nil, family) looks like it
+		// would show that, but two of its default behaviors work against it
+		// here: its filter mask always includes RT_FILTER_OIF even without a
+		// link argument, comparing against a zero LinkIndex and silently
+		// returning next to nothing; and even past that, its default scope is
+		// the main table only. RT_FILTER_TABLE with Table: RT_TABLE_UNSPEC
+		// asks for every table instead, and a non-nil empty filter avoids a
+		// nil-pointer panic routeHandle takes an actual nil filter into.
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_UNSPEC}, netlink.RT_FILTER_TABLE)
 		if err != nil {
 			if family == unix.AF_INET6 && (errors.Is(err, unix.EAFNOSUPPORT) || errors.Is(err, unix.EOPNOTSUPP)) {
 				continue
