@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/option"
 )
 
 // TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet covers
@@ -105,6 +107,72 @@ func TestDiagnosticsRecordsRecoveryTimeOnTransitionToSettled(t *testing.T) {
 	}
 	if diagnostics.LastRecoveryAt.Before(before) {
 		t.Fatalf("LastRecoveryAt = %v, want at or after %v", diagnostics.LastRecoveryAt, before)
+	}
+}
+
+// TestDiagnosticsReportsNeedsAttentionWhenUnrecoverable is an independent
+// review's finding: an Unrecoverable component (the backend reported
+// itself closed or requiring a rebuild the scheduler cannot perform on its
+// own) was not checked anywhere in deriveDiagnosticsState at all --
+// RecoveryPending only ever looked for Recoverable, so an Unrecoverable
+// shared packet-rewrite backend with its attachment record still present
+// (attachmentHasRole is satisfied, so waiting_for_interface never
+// triggers either) fell all the way through to State=normal, exactly the
+// state an operator would least expect for a backend that has given up.
+func TestDiagnosticsReportsNeedsAttentionWhenUnrecoverable(t *testing.T) {
+	inbound := &Inbound{sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite, udpTimeout: time.Minute}
+	shared := newSharedRewrite(inbound, option.EBPFSharedOptions{})
+	shared.setDataPlane(&sharedRewriteDataPlane{
+		attachments: map[string]*sharedRewriteAttachment{
+			"eth0": {interfaceName: "eth0", interfaceIndex: 2, attachmentType: "tcx"},
+		},
+	})
+	inbound.setSharedRewrite(shared)
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteUnrecoverable,
+		general:       tcSharedRewriteSettled,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	diagnostics := inbound.Diagnostics()
+	if !diagnostics.RecoveryUnrecoverable {
+		t.Fatal("RecoveryUnrecoverable = false, want true with an Unrecoverable shared-rewrite outcome")
+	}
+	if diagnostics.State != EBPFDiagnosticsStateNeedsAttention {
+		t.Fatalf("state = %q, want %q", diagnostics.State, EBPFDiagnosticsStateNeedsAttention)
+	}
+}
+
+// TestDiagnosticsUnrecoverableSurvivesAnUnknownRound proves the companion
+// gap the same review flagged: updateTCInterfaces can return before
+// re-evaluating every component this round (see its own doc comment,
+// e.g. an early return after a local-interface-topology failure leaves
+// sharedRewrite at its zero value, tcSharedRewriteUnknown, without having
+// touched it at all) -- and recordTCUpdateOutcome's plain overwrite of
+// lastOutcome would otherwise silently replace a genuinely still-broken
+// Unrecoverable component with "nothing is known", reporting normal/
+// recovering instead of needs_attention for a fault nothing has resolved.
+func TestDiagnosticsUnrecoverableSurvivesAnUnknownRound(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteUnrecoverable,
+		general:       tcSharedRewriteSettled,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if diagnostics := inbound.Diagnostics(); diagnostics.State != EBPFDiagnosticsStateNeedsAttention {
+		t.Fatalf("state after the Unrecoverable round = %q, want %q", diagnostics.State, EBPFDiagnosticsStateNeedsAttention)
+	}
+	// A later round that never re-evaluated sharedRewrite this time (its
+	// zero value, Unknown) must not be read as "settled".
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		general:       tcSharedRewriteRecoverable,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	diagnostics := inbound.Diagnostics()
+	if !diagnostics.RecoveryUnrecoverable {
+		t.Fatal("RecoveryUnrecoverable = false after an Unknown round, want the prior Unrecoverable result preserved")
+	}
+	if diagnostics.State != EBPFDiagnosticsStateNeedsAttention {
+		t.Fatalf("state after the Unknown round = %q, want %q (an Unknown round must not erase an unresolved fault)", diagnostics.State, EBPFDiagnosticsStateNeedsAttention)
 	}
 }
 

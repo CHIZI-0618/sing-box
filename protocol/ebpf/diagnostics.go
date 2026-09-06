@@ -95,6 +95,15 @@ type EBPFDiagnostics struct {
 	// RecoveryPending is whether interface_monitor.go's scheduler currently
 	// has an outstanding retry for general TC state or shared packet-rewrite.
 	RecoveryPending bool `json:"recovery_pending"`
+	// RecoveryUnrecoverable is whether general TC state or shared
+	// packet-rewrite last reported itself unrecoverable (closed, or
+	// requiring a rebuild the scheduler cannot perform on its own -- see
+	// tcSharedRewriteUnrecoverable). Unlike RecoveryPending, no retry is
+	// outstanding for this: State reports needs_attention for it
+	// unconditionally, including ahead of waiting_for_interface, since an
+	// attachment that still exists but is unrecoverable is not the same
+	// situation as one that simply has not been created yet.
+	RecoveryUnrecoverable bool `json:"recovery_unrecoverable"`
 	// NextRetryAt is when interface_monitor.go's single retry timer is next
 	// armed to fire, across all three of its components (shared
 	// packet-rewrite, general TC, bypass_rule_set) -- nil when nothing is
@@ -210,6 +219,7 @@ func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
 	}
 	recoveredThisRound := false
 	attemptedThisRound := false
+	stored := components
 	for index, current := range components {
 		if current == tcSharedRewriteRecoverable {
 			attemptedThisRound = true
@@ -222,6 +232,17 @@ func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
 			case previousComponents[index] != tcSharedRewriteUnrecoverable && current == tcSharedRewriteUnrecoverable:
 				i.counters.recoveryFailures.Add(1)
 			}
+			// tcSharedRewriteUnknown means this round never actually
+			// evaluated this component (updateTCInterfaces can return
+			// before reaching a later component's own check -- see its own
+			// doc comment), not that the component has settled. Storing it
+			// as-is would silently erase whatever the last round that DID
+			// evaluate this component actually found, including a still
+			// -unresolved Unrecoverable -- exactly what Diagnostics' state
+			// derivation needs to keep reporting needs_attention for.
+			if current == tcSharedRewriteUnknown {
+				stored[index] = previousComponents[index]
+			}
 		}
 	}
 	if attemptedThisRound {
@@ -230,7 +251,11 @@ func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
 	if recoveredThisRound {
 		i.diagnostics.lastRecoveryAt = now
 	}
-	i.diagnostics.lastOutcome = outcome
+	i.diagnostics.lastOutcome = tcUpdateOutcome{
+		sharedRewrite: stored[0],
+		general:       stored[1],
+		bypassRuleSet: stored[2],
+	}
 	i.diagnostics.lastOutcomeAt = now
 	i.diagnostics.haveOutcome = true
 }
@@ -310,6 +335,8 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	if i.diagnostics.haveOutcome {
 		diagnostics.RecoveryPending = i.diagnostics.lastOutcome.general == tcSharedRewriteRecoverable ||
 			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteRecoverable
+		diagnostics.RecoveryUnrecoverable = i.diagnostics.lastOutcome.general == tcSharedRewriteUnrecoverable ||
+			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteUnrecoverable
 	}
 	if !i.diagnostics.lastRecoveryAt.IsZero() {
 		recoveryAt := i.diagnostics.lastRecoveryAt
@@ -400,14 +427,22 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 // deriveDiagnosticsState computes EBPFDiagnostics.State from the rest of the
 // struct.
 func deriveDiagnosticsState(d EBPFDiagnostics) string {
+	// Checked first, ahead of waiting_for_interface: an unrecoverable
+	// component or an inconsistent bypass_rule_set both mean an operator
+	// has to act, regardless of whether every configured data plane
+	// happens to also have an attachment recorded right now. Reporting
+	// waiting_for_interface here (as an attachment lingering in
+	// EBPFDiagnostics.Attachments from before the backend gave up on it
+	// would otherwise let through) would suggest the fix is "wait", when it
+	// is not.
+	if d.RecoveryUnrecoverable || !d.BypassRuleSetConsistent {
+		return EBPFDiagnosticsStateNeedsAttention
+	}
 	if d.LocalEnabled && !attachmentHasRole(d.Attachments, "local") {
 		return EBPFDiagnosticsStateWaitingForInterface
 	}
 	if d.SharedEnabled && !attachmentHasRole(d.Attachments, "shared") {
 		return EBPFDiagnosticsStateWaitingForInterface
-	}
-	if !d.BypassRuleSetConsistent {
-		return EBPFDiagnosticsStateNeedsAttention
 	}
 	if d.RecoveryPending || d.BypassRuleSetPending {
 		return EBPFDiagnosticsStateRecovering
@@ -461,6 +496,9 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 		}
 	}
 	lines = append(lines, fmt.Sprintf("Recovery pending: %t", d.RecoveryPending))
+	if d.RecoveryUnrecoverable {
+		lines = append(lines, "Recovery unrecoverable: true")
+	}
 	if d.LastRecoveryAt != nil {
 		lines = append(lines, fmt.Sprintf("Last recovery: %s", d.LastRecoveryAt.Format(time.RFC3339)))
 	}
