@@ -65,6 +65,23 @@ jobs:
               -tags with_ebpf,ebpf_integration \
               ./common/ebpf 2>&1 | tee -a verifier.log
 
+      # protocol/ebpf's own real-kernel tests (network namespaces, real TC
+      # attachments, real packets) are gated at runtime by os.Geteuid() == 0,
+      # not by a build tag, so the unprivileged "Test sing-box integration"
+      # step above only ever exercises their skip path. Without a privileged
+      # run of this package specifically, netns/TCX/real-ping/real-repair
+      # coverage never actually executes in CI at all.
+      - name: Run protocol/ebpf real-kernel tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env \
+            "PATH=$PATH" \
+            SING_BOX_EBPF_INTEGRATION=1 \
+            go test -v -count=1 -race \
+              -tags with_ebpf,ebpf_integration \
+              ./protocol/ebpf 2>&1 | tee -a verifier.log
+
       - name: Upload verifier log
         if: always()
         uses: actions/upload-artifact@v7
