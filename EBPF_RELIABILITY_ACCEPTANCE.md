@@ -11,11 +11,11 @@ from this branch; it is not part of the public documentation site under
 ## 1. Final commit
 
 All code, test, and CI changes described in this document, including §12's
-response to the first independent code review and §13's response to a
-second one, land at `b1b7f4e77e7e15746ea176de178832a104ccfc84`. This section
-is updated in place each time this document itself is revised, rather than
-being re-derived — this document's own commit necessarily lands after the
-hash it names.
+response to the first independent code review, §13's response to a second
+one, and §14's response to a third, land at
+`600850181c923bed7e4cd022bbe7227f51d21047`. This section is updated in place
+each time this document itself is revised, rather than being re-derived —
+this document's own commit necessarily lands after the hash it names.
 
 Full commit range for the code/test/CI work this document evidences (oldest
 first):
@@ -42,13 +42,16 @@ f04e0561 ebpf: count shared packet-rewrite UDP clients in UDPSessionCount too
 742772d1 ebpf: fix combination baseline drift and wrong traffic origin in offload script
 5569e0bb docs: record the independent review's eight findings and this round's fixes
 b1b7f4e7 ebpf: fix offload-verify script's coverage, content, and role checks
+f05e751d docs: record the second independent review's three findings and this round's fix
+60085018 ebpf: never let a UDP send-command failure skip inspecting the receipt
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
 (`.codex-remote-attachments/`, predating this work) and `outputs/` (the
-independent reviews' own artifact bundles — `outputs/ebpf-review/` and
-`outputs/ebpf-review-round2/` — left exactly as delivered) — see §12 and
-§13 for how those reviews' findings were addressed.
+independent reviews' own artifact bundles — `outputs/ebpf-review/`,
+`outputs/ebpf-review-round2/`, and `outputs/ebpf-review-round3/` — left
+exactly as delivered) — see §12, §13, and §14 for how those reviews'
+findings were addressed.
 
 ## 2. Environment
 
@@ -758,3 +761,99 @@ was modified by this round beyond what these three findings named. Both
 `outputs/ebpf-review/` and `outputs/ebpf-review-round2/` (each review's own
 artifact bundle) were read for context and left completely untouched,
 uncommitted, exactly as delivered.
+
+## 14. Response to a third independent code review
+
+A third independent review of commits `b1b7f4e7` and `f05e751d` (HEAD at the
+time) reproduced §13's fixes A and C and accepted both as acceptable for
+their reviewed scope, and reproduced fix B's SHA-256 comparisons in all four
+transfer functions, confirming whole-payload verification is adequate for
+detecting the same-size/wrong-content false positive the second review
+found — when the comparison is actually reached. That qualifier is the
+finding: it found fix B's own retry loop had a gap the second review's
+verification exercise had not covered.
+
+### P2 — a UDP send failure skipped the receipt check instead of skipping only the retry decision
+
+**Finding**: both `check_local_udp_rewrite` and `check_shared_udp_rewrite`
+treated a nonzero exit from the send command as proof of total loss and
+`continue`d to the next attempt without ever inspecting that attempt's
+receipt. But a sender or its SSH connection can fail *after* already
+transmitting some or all of a datagram — a nonzero send exit does not
+establish that nothing arrived. The review's isolated regression harness
+supplied a nonzero first-attempt sender exit together with a genuinely
+received 65,000-byte datagram carrying the wrong hash, followed by a second
+attempt that would succeed with correct content; both production functions
+reported PASS on attempt 2, silently retrying past the corruption their own
+documented policy says should fail immediately. The review was explicit
+that this reproduces simulated command outcomes, not observed physical NIC
+corruption.
+
+**Fix** (`60085018`): both functions now capture the send command's exit
+status but always proceed to wait for the receiver and inspect its receipt
+— every attempt, regardless of that status. The send status is used only to
+explain *why* a receipt came back empty (which is what the retry-on-total-
+loss policy is for); it never again skips the receipt check by itself. A
+nonempty receipt that does not hash-match the sent payload is an immediate
+FAIL on that attempt, never retried away, whether or not the sender also
+reported failure. Separately, the review's own suggestion that "missing or
+unreadable receiver evidence must not be treated as an established
+zero-length receipt" was also applied: the previous `stat ... || echo 0`
+fallback folded a failed remote `stat` (evidence the check could not read)
+into the same code path as a confirmed empty file. The two are now
+distinguished — an unreadable receipt is retried with a warning that says
+plainly the evidence could not be read, not that zero bytes were confirmed
+received.
+
+This is the review's primary suggested correction ("preserve sender status,
+wait for the receiver, and inspect the receipt before deciding whether
+retry is permissible"), not its offered alternative of conservatively
+failing outright on any send-command failure. The primary fix was chosen
+because it keeps the existing retry-on-total-loss-only design intact rather
+than replacing it with a stricter policy the review only offered as a
+fallback, and because it still correctly retries a send failure that
+genuinely delivered nothing, which the alternative would fail immediately
+even though nothing about that case is actually a violation of the
+documented policy.
+
+**Verified**: an ad hoc, uncommitted scratchpad harness reproduced the
+review's own scenario against both `check_local_udp_rewrite` and
+`check_shared_udp_rewrite` directly (extracted verbatim via `awk`, per this
+engagement's established technique): attempt 1's send command fails while
+the "remote" side nonetheless receives a corrupted 65,000-byte datagram,
+and attempt 2 (were it reached) would succeed with correct content. Both
+functions now report FAIL with a genuine SHA-256 mismatch on attempt 1 and
+never reach attempt 2 — where the previous code retried past the corruption
+and reported a false PASS. The requested regression coverage ("failed
+sender plus corrupt receipt followed by a would-be successful retry, on
+both roles") is exactly what this harness exercises. The second review's
+own real-loopback regression harness (`test_offload_fixB.sh`: matching
+content over real TCP/UDP sockets, a remote listener that cannot bind,
+total loss retried three times, single-byte TCP corruption) was re-run
+unchanged against the fixed functions and still passes, confirming the fix
+did not regress any previously-verified behavior. `bash -n` and
+`shellcheck -x` both clean; the full `go test -race` suite for `common/ebpf`
+and `protocol/ebpf` still passes as root under WSL Debian, even though (as
+the review itself notes about its own pass) this change touches only the
+verification script, not the Go code the suite exercises. Never run against
+real hardware.
+
+### What this round does not resolve
+
+Unchanged from §13: real hardware remains unexecuted; the
+`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing` flake's root cause
+remains unconfirmed (this review did not re-run the Go suite and does not
+bear on it either way); real GitHub Actions, Android, and TCX-on-physical-
+silicon remain unverified; items 11 and 12 remain held.
+
+### Summary
+
+| Finding | Severity | Status | Live-verified |
+|---|---|---|---|
+| UDP send failure skipped the receipt check | P2 | Fixed | Yes, reproduces the review's own scenario for both roles |
+
+No production code, existing Go tests, or the acceptance evidence above §14
+was modified by this round beyond this one finding. `outputs/ebpf-review/`,
+`outputs/ebpf-review-round2/`, and `outputs/ebpf-review-round3/` (each
+review's own artifact bundle) were read for context and left completely
+untouched, uncommitted, exactly as delivered.
