@@ -59,11 +59,14 @@ func TestFakeIPICMPHealthCheckDetectsAndRepairsAMissingClsactFilter(t *testing.T
 
 	// Simulate the fakeip_icmp filter vanishing on its own — an external
 	// actor deleting it, or a kernel event this package never observed —
-	// while the ordinary local filter is left completely untouched.
+	// while the ordinary local filter is left completely untouched. The
+	// Go-side attachment.localICMPFilter pointer is deliberately left as it
+	// is: a real external deletion has no way to reach into this process
+	// and clear it, and reconcile()'s own clearStaleAttachments step is
+	// exactly what must discover and clear it instead.
 	if err = detachTCFilter(attachment.localICMPFilter); err != nil {
 		t.Fatalf("detach the fakeip_icmp filter to simulate drift: %v", err)
 	}
-	attachment.localICMPFilter = nil
 
 	attached, err := attachment.filtersAttached(priority, backend)
 	if err != nil {

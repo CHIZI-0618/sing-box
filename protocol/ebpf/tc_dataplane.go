@@ -387,6 +387,22 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 			// would needlessly disturb an unrelated, still-working filter
 			// (or, if the repair itself then failed, leave that unrelated
 			// filter torn down too).
+			//
+			// That "skip attaching whatever field is non-nil" behavior is
+			// exactly the gap clearStaleAttachments exists to close: an
+			// externally removed filter or link (a `tc filter del` or
+			// `bpftool link detach` run outside this process) is gone from
+			// the kernel but its Go-side pointer is untouched by that,
+			// so updateTCInterfaceAttachment would otherwise see a non-nil
+			// field and skip it, "repairing" nothing while still returning
+			// success. Clearing exactly the fields filtersAttached's own
+			// per-field checks (mirrored here individually rather than
+			// short-circuited) confirm are actually gone makes the repair
+			// below re-attach them, and leaves every other, still-healthy
+			// field's non-nil pointer alone.
+			if err = previous.clearStaleAttachments(d.priority, d.backend); err != nil {
+				return rollback(E.Cause(err, "inspect TC eBPF interface ", interfaceName, " for stale attachments"))
+			}
 		}
 		if previous != nil && previous.interfaceIndex == state.index && previous.framing == state.framing {
 			if err = updateTCInterfaceAttachment(
@@ -631,6 +647,154 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16, backend *common
 		}
 	}
 	return true, nil
+}
+
+// clearStaleAttachments checks each of this attachment's kernel-side
+// filters/links against its own role individually -- unlike filtersAttached,
+// which short-circuits on the first miss and never mutates anything -- and
+// discards the Go-side reference for any one that is no longer actually
+// present in the kernel (a `tc filter del` or `bpftool link detach` run
+// outside this process, for example).
+//
+// This exists because updateTCInterfaceAttachmentWithOps's own repair logic
+// only re-attaches a field whose Go pointer is nil; an externally-removed
+// filter or link leaves its Go-side reference non-nil (deleting a kernel
+// object does not reach back into this process and clear the struct that
+// described it), so that repair silently does nothing for it, and the
+// reconcile pass that called it reports success having repaired nothing.
+// reconcile() calls this, right before updateTCInterfaceAttachment, so that
+// repair's nil-checks see the true state instead.
+//
+// A stale TCX link is also best-effort closed before being discarded, to
+// release whatever local file descriptor it still holds -- the close error
+// is deliberately ignored, since by construction the kernel-side attachment
+// is already gone. A clsact filter's Go-side struct owns no such resource
+// and is simply discarded once found stale.
+func (a *tcInterfaceAttachment) clearStaleAttachments(priority uint16, backend *commonEBPF.TCBackend) error {
+	link, err := netlink.LinkByName(a.interfaceName)
+	if err != nil {
+		if tcLinkNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if link.Attrs().Index != a.interfaceIndex {
+		return nil
+	}
+	fakeIPICMPEnabled := backend.FakeIPICMPEnabled()
+	if a.attachmentType == "tcx" {
+		if a.role.local {
+			if err = clearStaleTCXRoleLink(a, true, CiliumEBPF.AttachTCXEgress); err != nil {
+				return E.Cause(err, "inspect TCX local egress attachment on interface ", a.interfaceName)
+			}
+			if fakeIPICMPEnabled {
+				if err = clearStaleTCXLink(&a.localICMPLink, a.interfaceIndex, CiliumEBPF.AttachTCXEgress); err != nil {
+					return E.Cause(err, "inspect TCX local fakeip_icmp attachment on interface ", a.interfaceName)
+				}
+			}
+		}
+		if a.role.shared {
+			if err = clearStaleTCXRoleLink(a, false, CiliumEBPF.AttachTCXIngress); err != nil {
+				return E.Cause(err, "inspect TCX shared ingress attachment on interface ", a.interfaceName)
+			}
+			if fakeIPICMPEnabled {
+				if err = clearStaleTCXLink(&a.sharedICMPLink, a.interfaceIndex, CiliumEBPF.AttachTCXIngress); err != nil {
+					return E.Cause(err, "inspect TCX shared fakeip_icmp attachment on interface ", a.interfaceName)
+				}
+			}
+		}
+		return nil
+	}
+	if a.attachmentType != "clsact" {
+		return nil
+	}
+	if a.role.local {
+		if err = clearStaleTCFilter(link, netlink.HANDLE_MIN_EGRESS, "sb_tc_local", tcLocalFilterHandle, priority, &a.localFilter); err != nil {
+			return E.Cause(err, "inspect TC local egress filter on interface ", a.interfaceName)
+		}
+		if fakeIPICMPEnabled {
+			if err = clearStaleTCFilter(link, netlink.HANDLE_MIN_EGRESS, "sb_icmp_local", tcLocalICMPReplyFilterHandle, priority, &a.localICMPFilter); err != nil {
+				return E.Cause(err, "inspect fakeip_icmp local egress filter on interface ", a.interfaceName)
+			}
+		}
+	}
+	if a.role.shared {
+		if err = clearStaleTCFilter(link, netlink.HANDLE_MIN_INGRESS, "sb_tc_shared", tcSharedFilterHandle, priority, &a.sharedFilter); err != nil {
+			return E.Cause(err, "inspect TC shared ingress filter on interface ", a.interfaceName)
+		}
+		if fakeIPICMPEnabled {
+			if err = clearStaleTCFilter(link, netlink.HANDLE_MIN_INGRESS, "sb_icmp_shared", tcSharedICMPReplyFilterHandle, priority, &a.sharedICMPFilter); err != nil {
+				return E.Cause(err, "inspect fakeip_icmp shared ingress filter on interface ", a.interfaceName)
+			}
+		}
+	}
+	return nil
+}
+
+// clearStaleTCFilter clears *filter if it is non-nil but the kernel no
+// longer actually has a filter matching it -- a no-op both when *filter is
+// already nil (the ordinary "not attached yet" case, which needs no kernel
+// query) and when the kernel confirms it is still there.
+func clearStaleTCFilter(link netlink.Link, parent uint32, filterName string, handle uint16, priority uint16, filter **netlink.BpfFilter) error {
+	if *filter == nil {
+		return nil
+	}
+	attached, err := tcFilterAttached(link, parent, filterName, handle, priority)
+	if err != nil {
+		return err
+	}
+	if !attached {
+		*filter = nil
+	}
+	return nil
+}
+
+// clearStaleTCXLink is clearStaleTCFilter's TCX counterpart: also
+// best-effort closes the stale link (ignoring the error) before discarding
+// it, since a link.Link/tcxAttachedLink owns a local file descriptor a bare
+// filter struct does not.
+func clearStaleTCXLink(link *tcxAttachedLink, interfaceIndex int, attachType CiliumEBPF.AttachType) error {
+	if *link == nil {
+		return nil
+	}
+	attached, err := tcxLinkAttached(*link, interfaceIndex, attachType)
+	if err != nil {
+		return err
+	}
+	if !attached {
+		_ = (*link).Close()
+		*link = nil
+	}
+	return nil
+}
+
+// clearStaleTCXRoleLink is clearStaleTCXLink for attachment.localLink /
+// attachment.sharedLink, which are typed link.Link rather than
+// tcxAttachedLink (see closeTCXRoleLink, which has the same local/shared
+// split for the same reason: assigning through a *link.Link is what needs
+// distinguishing by field, not the check itself).
+func clearStaleTCXRoleLink(attachment *tcInterfaceAttachment, local bool, attachType CiliumEBPF.AttachType) error {
+	current := attachment.sharedLink
+	if local {
+		current = attachment.localLink
+	}
+	if current == nil {
+		return nil
+	}
+	attached, err := tcxLinkAttached(current, attachment.interfaceIndex, attachType)
+	if err != nil {
+		return err
+	}
+	if attached {
+		return nil
+	}
+	_ = current.Close()
+	if local {
+		attachment.localLink = nil
+	} else {
+		attachment.sharedLink = nil
+	}
+	return nil
 }
 
 func tcxLinkAttached(current tcxLinkInfo, interfaceIndex int, attachType CiliumEBPF.AttachType) (bool, error) {

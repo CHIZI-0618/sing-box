@@ -220,11 +220,21 @@ func TestFakeIPICMPHealthCheckDetectsAndRepairsAMissingTCXLink(t *testing.T) {
 
 	// Simulate the fakeip_icmp TCX link vanishing on its own, exactly as the
 	// clsact test simulates a vanished filter, leaving the ordinary TCX link
-	// completely untouched.
-	if err := attachment.localICMPLink.Close(); err != nil {
-		t.Fatalf("close the fakeip_icmp TCX link to simulate drift: %v", err)
+	// and this process's own file descriptor for the ICMP one completely
+	// untouched: link.Link.Detach() issues BPF_LINK_DETACH without closing
+	// the link's FD, the same effect an external `bpftool net detach` (or
+	// equivalent) run outside this process would have -- unlike Close(),
+	// which would also invalidate the FD itself and is a materially
+	// different failure shape (Info() then fails outright with EBADF,
+	// rather than succeeding but reporting a link no longer actually
+	// attached to anything).
+	detachable, ok := attachment.localICMPLink.(interface{ Detach() error })
+	if !ok {
+		t.Fatalf("localICMPLink (%T) does not support Detach", attachment.localICMPLink)
 	}
-	attachment.localICMPLink = nil
+	if err := detachable.Detach(); err != nil {
+		t.Fatalf("detach the fakeip_icmp TCX link to simulate drift: %v", err)
+	}
 
 	attached, err := attachment.filtersAttached(priority, backend)
 	if err != nil {
