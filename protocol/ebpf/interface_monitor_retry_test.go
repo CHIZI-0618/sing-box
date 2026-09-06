@@ -117,10 +117,15 @@ func newRetryLoopHarness(t *testing.T) *retryLoopHarness {
 	}
 	go func() {
 		defer close(harness.finished)
-		runTCInterfaceUpdateLoop(ctx, harness.updates, func(context.Context) tcSharedRewriteOutcome {
+		// This harness and every existing test built on it only ever cares
+		// about the sharedRewrite component; general and bypassRuleSet are
+		// pinned to Settled so they never affect the arm/disarm sequence
+		// these tests assert on. interface_monitor_retry_components_test.go
+		// covers those two components' own independence directly.
+		runTCInterfaceUpdateLoop(ctx, harness.updates, func(context.Context) tcUpdateOutcome {
 			outcome := harness.update()
 			harness.ran <- struct{}{}
-			return outcome
+			return tcUpdateOutcome{sharedRewrite: outcome, general: tcSharedRewriteSettled, bypassRuleSet: tcSharedRewriteSettled}
 		})
 	}()
 	t.Cleanup(func() {

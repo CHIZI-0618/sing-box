@@ -60,7 +60,35 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	err := i.refreshBypassRuleSetsLocked(false)
 	if err != nil {
 		i.policyWarnings.warn(i.logger, "refresh TC eBPF bypass_rule_set; keeping previous policy: ", err)
+		// A rule-set update is the only thing that would otherwise ever ask
+		// for a retry: nothing about this ruleset is guaranteed to change
+		// again. retryBypassRuleSetIfNeededLocked, driven by the same
+		// scheduler that already retries other TC failures without needing
+		// a new event, picks this back up instead of leaving it to whatever
+		// the next unrelated rule-set change happens to be.
+		i.bypassRuleSetNeedsRetry = true
+		return
 	}
+	i.bypassRuleSetNeedsRetry = false
+}
+
+// retryBypassRuleSetIfNeededLocked is updateTCInterfaces' hook into the
+// bypass_rule_set half of this file: it does nothing (and reports settled)
+// unless a previous refreshBypassRuleSetsLocked call actually failed, so a
+// healthy bypass_rule_set costs this per-round pass nothing beyond the lock
+// acquisition and the boolean check.
+func (i *Inbound) retryBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
+	i.bypassRuleSetAccess.Lock()
+	defer i.bypassRuleSetAccess.Unlock()
+	if !i.bypassRuleSetStarted || !i.bypassRuleSetNeedsRetry {
+		return tcSharedRewriteSettled
+	}
+	if err := i.refreshBypassRuleSetsLocked(false); err != nil {
+		i.policyWarnings.warn(i.logger, "retry TC eBPF bypass_rule_set refresh; keeping previous policy: ", err)
+		return tcSharedRewriteRecoverable
+	}
+	i.bypassRuleSetNeedsRetry = false
+	return tcSharedRewriteSettled
 }
 
 func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {

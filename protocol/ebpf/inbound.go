@@ -99,11 +99,12 @@ type Inbound struct {
 	lifecycleAccess          sync.Mutex
 	interfaceMonitor         tcInterfaceMonitor
 
-	bypassRuleSetAccess    sync.Mutex
-	bypassRuleSet          []adapter.RuleSet
-	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
-	bypassRuleSetStarted   bool
-	bypassRuleSetPolicy    commonEBPF.BypassCIDRPolicy
+	bypassRuleSetAccess     sync.Mutex
+	bypassRuleSet           []adapter.RuleSet
+	bypassRuleSetCallbacks  []*list.Element[adapter.RuleSetUpdateCallback]
+	bypassRuleSetStarted    bool
+	bypassRuleSetPolicy     commonEBPF.BypassCIDRPolicy
+	bypassRuleSetNeedsRetry bool
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool
