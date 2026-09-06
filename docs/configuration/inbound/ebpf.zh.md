@@ -124,6 +124,17 @@ responder。若启用的路径只有这些不支持路径，开启 `reply` 会�
 本机流量需要使用 `local.data_plane: tc`，shared 客户端需要使用
 `shared.data_plane: socket_assign`。只有同时启用这两条受支持路径，才能覆盖两者。
 
+即使路径本身受支持，回复也只能送达客户端当下真正能收到的地址。`reply` 对 IPv6
+生效，依赖 `shared.ipv6`/`local.ipv6` 所指向的客户端在那一刻确实拥有可用的
+IPv6——以 Android 热点为例，客户端的 IPv6 来自 Android 从自身上游网络下发的前缀，
+一旦上游发生切换（例如在 Wi-Fi 和数据网络之间切换），Android 会撤销该前缀（先下发
+生命周期为 0 的 Router Advertisement，随后该地址逐渐失效），客户端的 IPv6 会随之
+不可用。在客户端地址处于弃用或已失效期间，一个构造完全正确的回复仍可能被客户端自身
+网络栈丢弃，或被 Android 的热点转发路径过滤——sing-box 无法区分这种情况和真正的
+功能缺陷，因为报文的目的地址本身不携带接收方地址生命周期的任何信息。这是平台网络
+能力发生了变化，不是 `fakeip_icmp` 的缺陷：客户端不依赖上游下发、始终可用的
+link-local IPv6 地址，在这种切换前后都不受影响。
+
 ### local
 
 #### local.enabled
@@ -239,6 +250,11 @@ UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 
 #### shared.ipv6
 
 启用 shared IPv6 接管，默认 `true`。禁用后，shared 接口上的 IPv6 流量绕过此入站。
+
+在 Android 上，热点客户端只有在 Android 确实从自身上游网络下发了前缀给它的时候，
+IPv6 才是可用的。上游一旦切换（例如在 Wi-Fi 和数据网络之间切换），Android 会撤销
+该前缀，客户端的 IPv6 会随之不可用，直到新的上游重新下发——这是 sing-box 观测不到
+的平台网络能力变化，不是 `shared.ipv6` 或 `fakeip_icmp`（见前文）能够弥补的。
 
 #### shared.bypass_private_address
 

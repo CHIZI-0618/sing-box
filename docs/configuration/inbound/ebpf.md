@@ -136,6 +136,22 @@ Use `local.data_plane: tc` for local replies and
 `shared.data_plane: socket_assign` for shared-client replies. Enabling both is
 the only supported combination that covers both paths.
 
+A supported path still answers only addresses the client itself can actually
+receive on. `reply` for IPv6 depends on `shared.ipv6`/`local.ipv6` reaching a
+client that genuinely has working IPv6 at the time — on Android, a hotspot
+client's IPv6 comes from prefixes Android delegates from its own upstream
+network, and Android revokes them (sending a Router Advertisement with a
+zero lifetime, then eventually letting the client's address expire) whenever
+that upstream changes, for example switching between Wi-Fi and mobile data.
+While a client address is being deprecated or has already expired, a
+correctly-built reply addressed to it can be dropped by the client's own
+network stack, or filtered by Android's own tethering path — sing-box cannot
+distinguish this from a genuine failure, because a packet's destination
+address carries no record of the receiving host's address lifecycle state.
+This is a platform network capability change, not a `fakeip_icmp` defect: a
+client's link-local IPv6 address, which does not depend on any upstream
+delegation, remains usable across such a switch.
+
 ### local
 
 #### local.enabled
@@ -269,6 +285,14 @@ when it becomes downstream again. Loopback is not accepted.
 
 Enable shared IPv6 interception. Default is `true`. When disabled, IPv6 traffic
 on shared interfaces bypasses this inbound.
+
+On Android, a hotspot client only has working IPv6 while Android is actually
+delegating a prefix to it from its own upstream network. Android revokes that
+prefix whenever the upstream changes (for example switching between Wi-Fi and
+mobile data), and the client's IPv6 becomes unusable until the new upstream
+delegates again — this is a platform network capability change outside
+sing-box's visibility, not something `shared.ipv6` or `fakeip_icmp` (see
+above) can compensate for.
 
 #### shared.bypass_private_address
 
