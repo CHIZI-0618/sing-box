@@ -166,10 +166,11 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	if w.clientState.isCgroupDataPlane() {
 		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.redirectAddress)
 	}
-	socket, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
+	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
 	if err != nil {
 		return err
 	}
+	defer release()
 	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.client)
 	return err
 }

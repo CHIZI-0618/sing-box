@@ -304,6 +304,7 @@ func (i *Inbound) startInbound() error {
 		", process_tracking=", i.processTrackingMode(),
 		", tc_priority=", i.tcPriority,
 	)
+	i.udpReplySockets.startSweeper(i.ctx)
 	return nil
 }
 
@@ -462,6 +463,7 @@ func (i *Inbound) closeResources() error {
 	}
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()
+	i.udpReplySockets.stopSweeper()
 	udpReplySocketErr := i.udpReplySockets.close()
 	dataPlaneErr := i.closeTakenTCDataPlane(dataPlane)
 	routeErr := i.removeLocalRoutes()

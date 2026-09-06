@@ -64,21 +64,23 @@ func TestUDPReplySocketLifecycle(t *testing.T) {
 		created++
 		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	}
-	first, err := pool.get(destination, create)
+	first, release1, err := pool.get(destination, create)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := pool.get(destination, create)
+	release1()
+	second, release2, err := pool.get(destination, create)
 	if err != nil {
 		t.Fatal(err)
 	}
+	release2()
 	if first != second || created != 1 {
 		t.Fatalf("reply socket was not reused: first=%p second=%p created=%d", first, second, created)
 	}
 	if err = pool.close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.get(destination, create); err == nil {
+	if _, _, err = pool.get(destination, create); err == nil {
 		t.Fatal("closed inbound accepted a reply socket")
 	}
 	if _, err = first.WriteToUDPAddrPort([]byte{1}, netip.MustParseAddrPort("127.0.0.1:9")); err == nil {
@@ -94,14 +96,16 @@ func TestUDPReplySocketPoolSharesAcrossClients(t *testing.T) {
 		created++
 		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	}
-	first, err := pool.get(destination, create)
+	first, release1, err := pool.get(destination, create)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := pool.get(destination, create)
+	release1()
+	second, release2, err := pool.get(destination, create)
 	if err != nil {
 		t.Fatal(err)
 	}
+	release2()
 	if first != second || created != 1 {
 		t.Fatalf("reply socket was not shared: first=%p second=%p created=%d", first, second, created)
 	}
@@ -116,17 +120,19 @@ func TestUDPReplySocketPoolResetsForNetworkChange(t *testing.T) {
 		created++
 		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	}
-	first, err := pool.get(destination, create)
+	first, release1, err := pool.get(destination, create)
 	if err != nil {
 		t.Fatal(err)
 	}
+	release1()
 	if err = pool.reset(); err != nil {
 		t.Fatal(err)
 	}
-	second, err := pool.get(destination, create)
+	second, release2, err := pool.get(destination, create)
 	if err != nil {
 		t.Fatal(err)
 	}
+	release2()
 	if first == second || created != 2 {
 		t.Fatalf("network reset did not replace the reply socket: first=%p second=%p created=%d", first, second, created)
 	}
