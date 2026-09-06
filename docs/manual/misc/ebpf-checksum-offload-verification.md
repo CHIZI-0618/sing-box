@@ -30,25 +30,63 @@ path this procedure is checking: an eBPF program changing header bytes
 in a packet the NIC's own silicon or firmware, not the kernel, will finish
 checksumming before it leaves the machine.
 
+## Roles
+
+An earlier version of this procedure drove every check from the DUT itself,
+which an independent review pointed out cannot actually verify
+`shared.data_plane` at all: traffic the DUT originates only ever exercises
+`local.data_plane`'s TC **egress** classifier, never `shared.data_plane`'s
+**ingress** one, which only ever sees traffic arriving from a real
+downstream client. This procedure now names three roles explicitly:
+
+- **DUT**: the host running the eBPF inbound under test, attached to
+  `$LOCAL_IFACE`. This script itself runs here.
+- **`$REMOTE_HOST`**: a real, non-FakeIP destination the DUT can reach,
+  reachable over ssh. Used for the `bypass_rule_set` control case (a flow
+  it is expected to leave completely untouched) and, when checking
+  `local.data_plane`, as what the DUT itself talks to through its own local
+  egress path.
+- **`$DOWNSTREAM_HOST`** (only needed to check `shared.data_plane`): a
+  separate host reachable from the DUT's shared-facing interface, standing
+  in for a real LAN client. Every `shared.data_plane` check is driven from
+  this host toward the FakeIP target, over ssh — never from the DUT, which
+  would silently re-test `local.data_plane`'s own code path instead.
+
+If both `local.data_plane` and `shared.data_plane` are enabled on the DUT at
+once, a downstream-originated reply passing is not, on its own, proof that
+`shared.data_plane` specifically answered it — see `$DUT_DIAGNOSTICS_URL`
+below for the one thing that can actually distinguish this, and its own
+limits. Where that ambiguity matters, run the DUT with only the role under
+test enabled.
+
 ## Required environment
 
-- Two real Linux hosts connected by a real NIC on each end — a physical
-  Ethernet link, or a datacenter NIC configured for SR-IOV passthrough into
-  a VM. Confirm with `ethtool -i <iface>` that the driver is a real hardware
-  driver (`ixgbe`, `i40e`, `mlx5_core`, `r8169`, `igc`, ... — not `veth`,
-  `virtio_net`, or `vmxnet3`).
-- Root on both hosts, and non-interactive (key-based) SSH from the host under
-  test to the peer.
-- `ethtool`, `tcpdump`, and `nc` (netcat) on both hosts.
-- sing-box built with the eBPF inbound already running on the host under
-  test, attached to the NIC named `$LOCAL_IFACE`, with a configuration that
-  exercises the paths this procedure checks:
+- Two real Linux hosts (DUT and `$REMOTE_HOST`) connected by a real NIC on
+  each end — a physical Ethernet link, or a datacenter NIC configured for
+  SR-IOV passthrough into a VM. Confirm with `ethtool -i <iface>` that the
+  driver is a real hardware driver (`ixgbe`, `i40e`, `mlx5_core`, `r8169`,
+  `igc`, ... — not `veth`, `virtio_net`, or `vmxnet3`). A third host,
+  `$DOWNSTREAM_HOST`, reachable from the DUT's shared-facing interface, is
+  additionally required to check `shared.data_plane` at all.
+- Root on every host involved, and non-interactive (key-based) SSH from the
+  DUT to `$REMOTE_HOST` and, if used, to `$DOWNSTREAM_HOST`.
+- `ethtool` and `tcpdump` on the DUT; `nc` (netcat) on every host involved.
+  `jq` and `curl` on the DUT if `$DUT_DIAGNOSTICS_URL` is set.
+- sing-box built with the eBPF inbound already running on the DUT, attached
+  to the NIC named `$LOCAL_IFACE`, with a configuration that exercises the
+  paths this procedure checks:
   - `fakeip_icmp: reply` enabled, with a FakeIP prefix that matches
     `$FAKEIP_PREFIX` below.
   - `shared.data_plane: packet_rewrite` enabled if `$REMOTE_PORT_TCP` /
-    `$REMOTE_PORT_UDP` are set (to exercise the NAT/flow-rewrite path).
-  - Route the peer host through this inbound so `bypass_rule_set` (if
+    `$REMOTE_PORT_UDP` are set together with `$DOWNSTREAM_HOST` (to exercise
+    the NAT/flow-rewrite path from a real downstream client).
+  - Route `$REMOTE_HOST` through this inbound so `bypass_rule_set` (if
     configured) has a real matched flow to evaluate.
+  - If checking `shared.data_plane`, optionally enable the Clash API server
+    and point `$DUT_DIAGNOSTICS_URL` at its `/ebpf` route (see
+    [eBPF inbound troubleshooting](/manual/misc/ebpf-troubleshooting/)) so
+    the script can confirm the DUT's own counters actually advanced, not
+    just that some reply arrived.
 
 ## Running it
 
@@ -56,6 +94,9 @@ checksumming before it leaves the machine.
 sudo LOCAL_IFACE=eth0 \
     REMOTE_HOST=192.0.2.10 \
     REMOTE_SSH_USER=root \
+    DOWNSTREAM_HOST=192.0.2.20 \
+    DOWNSTREAM_SSH_USER=root \
+    DUT_DIAGNOSTICS_URL=http://127.0.0.1:9090/ebpf \
     FAKEIP_PREFIX=198.18.0.0/15 \
     REMOTE_FAKEIP_TARGET=198.18.0.1 \
     REMOTE_IPV6=fdfe:dcba:9876::1 \
@@ -65,9 +106,10 @@ sudo LOCAL_IFACE=eth0 \
 ```
 
 Only `LOCAL_IFACE`, `REMOTE_HOST`, `FAKEIP_PREFIX`, and
-`REMOTE_FAKEIP_TARGET` are required; the rest narrow or widen what gets
-checked (see the script's own header comment for the full list and
-defaults). The script:
+`REMOTE_FAKEIP_TARGET` are required; `DOWNSTREAM_HOST` and everything under
+it are optional — omit them to check only `local.data_plane`. The rest
+narrow or widen what gets checked (see the script's own header comment for
+the full list and defaults). The script:
 
 1. Reads `$LOCAL_IFACE`'s current offload feature flags via `ethtool -k` and
    records them, to restore exactly on exit (including on Ctrl-C).
@@ -79,46 +121,79 @@ defaults). The script:
    cases isolate the specific offload most likely to interact badly with an
    in-place header rewrite (TX checksum insertion assumes the checksum field
    holds what software would have computed; segmentation offload assumes a
-   single logical packet the driver replicates headers for). Extend
-   `OFFLOAD_MATRIX` in the script if a specific NIC or driver needs finer
-   coverage — for example if `ethtool -k` reports offload features beyond
-   the six the script already recognizes.
-3. For each combination, runs and captures (via `tcpdump`, on both hosts):
-   - A control transfer over the plain SSH connection to `$REMOTE_HOST`
-     (exercises the interface and its offload settings without going
-     through any eBPF rewrite at all — a failure here means the NIC/driver
-     combination itself is the problem, not this inbound).
-   - A FakeIP ICMP echo to `$REMOTE_FAKEIP_TARGET` (IPv4), and to
-     `$REMOTE_IPV6` if set (IPv6).
-   - A TCP transfer through `$REMOTE_PORT_TCP` if set, and a UDP transfer
-     through `$REMOTE_PORT_UDP` if set (both exercise
-     `shared.data_plane: packet_rewrite`'s address/port rewrite).
-4. Records PASS/FAIL to `$OUT_DIR/report.tsv` based on what the **receiving**
-   host's kernel actually accepted — packet loss for ICMP, byte count for
-   the transfers — never based on `tcpdump`'s own checksum annotation on the
-   sending side. A capture taken before the NIC's own checksum engine runs
-   routinely says "incorrect" even for packets a real receiver accepts
-   without issue; that is a property of capturing before TX offload, not a
-   real defect, and treating it as one would make every run fail regardless
-   of whether the eBPF rewrite is actually correct. This is why the receiving
-   host's own accept/drop and byte-count behavior is authoritative and
-   `tcpdump`'s inline checksum verdict is not used as a pass/fail signal at
-   all — only as raw evidence to attach to a report when something else
-   already failed.
+   single logical packet the driver replicates headers for). Every
+   combination names every one of the six recognized features explicitly —
+   an earlier version let a combination that only named the features it
+   cared about silently inherit whatever the *previous* combination left
+   every other feature at, so "TX checksum off, everything else on" and "TX
+   checksum off, everything else however the last run left it" were
+   impossible to tell apart from the report. Extend `OFFLOAD_MATRIX` in the
+   script if a specific NIC or driver needs finer coverage, keeping every
+   entry complete the same way.
+3. Reads every feature back with `ethtool -k` after attempting to set it. If
+   the interface did not actually end up in the state a combination's name
+   claims — a feature this NIC does not support, or the driver silently
+   refusing or ignoring a change — that whole combination is recorded
+   `UNSUPPORTED` in the report and none of its traffic checks run, rather
+   than running them under a label that no longer describes the interface's
+   real state (an earlier version of this script did exactly that).
+4. For each combination that was actually applied, runs and captures (via
+   `tcpdump`, on the DUT and `$REMOTE_HOST`):
+   - A control transfer over the plain SSH connection from the DUT to
+     `$REMOTE_HOST` (exercises the interface and its offload settings
+     without going through any eBPF rewrite at all — a failure here means
+     the NIC/driver combination itself is the problem, not this inbound).
+   - `local.data_plane`'s own FakeIP ICMP echo (IPv4, and IPv6 if
+     `$REMOTE_IPV6` is set) and, if `$REMOTE_PORT_TCP`/`$REMOTE_PORT_UDP`
+     are set, TCP/UDP transfers — all originated from the DUT itself,
+     toward `$REMOTE_FAKEIP_TARGET`.
+   - If `$DOWNSTREAM_HOST` is set, the same three checks again, but
+     originated from `$DOWNSTREAM_HOST` over ssh instead of from the DUT —
+     these are what actually exercises `shared.data_plane`. If
+     `$DUT_DIAGNOSTICS_URL` is also set, each of these additionally requires
+     the DUT's own counter (`fakeip_icmp_replies` for the ICMP check,
+     `rewrite_failures` staying flat for the TCP check) to move the way a
+     real, correctly-processed packet would, not just that
+     `$DOWNSTREAM_HOST` received something.
+5. Records PASS/FAIL/UNSUPPORTED to `$OUT_DIR/report.tsv` based on what the
+   **receiving** side's kernel actually accepted — packet loss for ICMP,
+   byte count for the transfers, and the DUT's own counters where available
+   — never based on `tcpdump`'s own checksum annotation on the sending side.
+   A capture taken before the NIC's own checksum engine runs routinely says
+   "incorrect" even for packets a real receiver accepts without issue; that
+   is a property of capturing before TX offload, not a real defect, and
+   treating it as one would make every run fail regardless of whether the
+   eBPF rewrite is actually correct. This is why the receiving side's own
+   accept/drop and byte-count behavior is authoritative and `tcpdump`'s
+   inline checksum verdict is not used as a pass/fail signal at all — only
+   as raw evidence to attach to a report when something else already
+   failed.
 
 ## Reading a failure
 
-- **Control transfer fails on some combination**: the NIC/driver itself
-  cannot run with that offload combination on this hardware — not an eBPF
-  issue. Fix the driver/firmware combination (or exclude that combination on
-  this hardware) before drawing any conclusion about the eBPF rewrite paths.
-- **Control transfer passes but FakeIP ICMP or the rewrite transfers fail on
-  the same combination**: this is the actual finding this procedure exists
-  to catch — an eBPF-rewritten packet is wire-incorrect specifically under
-  that offload combination. Attach both hosts' `.pcap` files from
-  `$OUT_DIR` to the report; the receiving host's capture (not the sending
-  host's) is the one to inspect first, since it is the one downstream of any
-  real offload computation.
+- **A combination is recorded `UNSUPPORTED`**: the NIC or driver would not
+  actually enter the state that combination's name claims — see the
+  warnings the script printed to stderr while applying it for which
+  specific feature. This is not a finding about the eBPF rewrite at all;
+  none of that combination's checks ran.
+- **Control transfer fails on some (applied) combination**: the NIC/driver
+  itself cannot run with that offload combination on this hardware — not an
+  eBPF issue. Fix the driver/firmware combination (or exclude it on this
+  hardware) before drawing any conclusion about the eBPF rewrite paths.
+- **Control transfer passes but a `local_*` or `shared_*` check fails on the
+  same combination**: this is the actual finding this procedure exists to
+  catch — an eBPF-rewritten packet is wire-incorrect specifically under that
+  offload combination, in the specific data plane the failing check names.
+  Attach the DUT's and `$REMOTE_HOST`'s `.pcap` files from `$OUT_DIR` to the
+  report; the receiving side's capture (not the sending side's) is the one
+  to inspect first, since it is the one downstream of any real offload
+  computation.
+- **A `shared_fakeip_icmp` check fails specifically because the DUT's
+  counter did not advance**, while `$DOWNSTREAM_HOST` itself saw a correct
+  reply: something other than this inbound's `shared.data_plane` answered
+  the ping (another device on the segment, or `local.data_plane` if it is
+  also enabled — see Roles above). This is a test-setup problem to fix, not
+  evidence about the eBPF rewrite either way.
 - **Everything passes with all offload features on and off**: the code
   checked in this round does not depend on this NIC's offload behavior in a
   way this procedure can detect. Record the NIC model, driver, and firmware
@@ -127,19 +202,24 @@ defaults). The script:
 
 ## What this does not cover
 
-- Android hardware. This procedure is written for the two-Linux-host case;
+- Android hardware. This procedure is written for the Linux-host case;
   Android's networking stack, driver model, and available tooling (`nc`,
   `tcpdump` availability, `ethtool` support) differ enough that it needs its
   own pass on a real device, not an adaptation of this script.
 - TCX-specific offload interaction. The script does not select attachment
   mechanism (TCX vs `clsact`) — that is controlled by the sing-box
-  configuration already running on the host under test, not by this script.
-  Run the procedure once per mechanism if both need checking on the same
-  hardware.
+  configuration already running on the DUT, not by this script. Run the
+  procedure once per mechanism if both need checking on the same hardware.
 - Any offload feature `ethtool -k` does not report as one of the six the
   script recognizes (`rx-checksumming`, `tx-checksumming`,
   `generic-segmentation-offload`, `tcp-segmentation-offload`,
   `generic-receive-offload`, `tx-udp-segmentation`). Extend
   `RELEVANT_FEATURES` and `OFFLOAD_MATRIX` in the script for a NIC that
   exposes something else relevant (for example a vendor-specific
-  `rx-udp-gro-forwarding` or `tx-checksum-ip-generic` flag).
+  `rx-udp-gro-forwarding` or `tx-checksum-ip-generic` flag) — every
+  `OFFLOAD_MATRIX` entry has to keep naming every entry in
+  `RELEVANT_FEATURES` explicitly once it changes.
+- Full attribution when `local.data_plane` and `shared.data_plane` are both
+  enabled on the DUT: `$DUT_DIAGNOSTICS_URL`'s counters are summed across
+  every data plane hosting `fakeip_icmp`, not broken down per role. Disable
+  the role not under test on the DUT for an unambiguous read.
