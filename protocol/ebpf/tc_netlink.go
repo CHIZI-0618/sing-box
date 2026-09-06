@@ -113,6 +113,20 @@ func detachTCFilter(filter *netlink.BpfFilter) error {
 	if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENODEV) || errors.Is(err, unix.ESRCH) {
 		return nil
 	}
+	if errors.Is(err, unix.EINVAL) {
+		// The kernel returns EINVAL instead of ENOENT when the parent clsact
+		// qdisc is already gone (netd flushes it on interface refreshes).
+		// The filter cannot survive its qdisc, so treat the deletion as done
+		// once a fresh filter listing confirms it is absent.
+		link, linkErr := netlink.LinkByIndex(filter.LinkIndex)
+		if linkErr != nil {
+			return nil
+		}
+		attached, checkErr := tcFilterAttached(link, filter.Parent, filter.Name, uint16(filter.Handle&0xffff), filter.Priority)
+		if checkErr != nil || !attached {
+			return nil
+		}
+	}
 	return err
 }
 
