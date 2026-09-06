@@ -130,6 +130,8 @@ func TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails(t *testi
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 	inbound.bypassRuleSetPolicy = previous
 	inbound.bypassRuleSetPolicyVersion = 5
+	inbound.bypassRuleSetExpectedPolicy = previous
+	inbound.bypassRuleSetExpectedVersion = 5
 	inbound.bypassRuleSetTC = bypassRuleSetBackendVersion{version: 5, known: true}
 
 	err := inbound.applyBypassCIDRPolicyLocked(next)
@@ -193,6 +195,8 @@ func TestApplyBypassCIDRPolicyLeavesBackendVersionOnFailedRevert(t *testing.T) {
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 	inbound.bypassRuleSetPolicy = previous
 	inbound.bypassRuleSetPolicyVersion = 5
+	inbound.bypassRuleSetExpectedPolicy = previous
+	inbound.bypassRuleSetExpectedVersion = 5
 	inbound.bypassRuleSetTC = bypassRuleSetBackendVersion{version: 5, known: true}
 
 	err := inbound.applyBypassCIDRPolicyLocked(next)
@@ -334,6 +338,7 @@ func TestApplyBypassCIDRPolicySucceedsAcrossRealBackends(t *testing.T) {
 	inbound := &Inbound{}
 	inbound.tcDataPlane = &tcDataPlane{backend: tc}
 	inbound.bypassRuleSetPolicyVersion = 5
+	inbound.bypassRuleSetExpectedVersion = 5
 	inbound.bypassRuleSetTC = bypassRuleSetBackendVersion{version: 5, known: true}
 
 	if err := inbound.applyBypassCIDRPolicyLocked(next); err != nil {
@@ -350,5 +355,84 @@ func TestApplyBypassCIDRPolicySucceedsAcrossRealBackends(t *testing.T) {
 	}
 	if inbound.bypassRuleSetTC != (bypassRuleSetBackendVersion{version: 6, known: true}) {
 		t.Fatalf("bypassRuleSetTC = %+v, want {version:6 known:true} (TC caught up to the new version on a successful apply)", inbound.bypassRuleSetTC)
+	}
+}
+
+// TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure proves
+// the distinction EBPFDiagnostics' BypassRuleSetExpectedPolicyVersion exists
+// for: bypassRuleSetPolicyVersion only ever names the last successfully
+// applied content, but a diagnostics reader watching while a retry is
+// outstanding needs to see what this inbound is currently trying to
+// converge to, which a failed attempt must expose immediately -- not only
+// once some later retry happens to succeed.
+//
+// It also proves the retry path actually chases the latest content, not a
+// stale snapshot of whichever attempt first failed: a second, different
+// failed attempt must move the expected version again immediately
+// (superseding the first), and the retry that finally succeeds must land on
+// that latest content, catching bypassRuleSetPolicyVersion up to
+// bypassRuleSetExpectedVersion exactly -- never on the first, now-superseded
+// attempt.
+func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *testing.T) {
+	tc := newLoopbackTestTCBackend(t)
+	inbound := &Inbound{}
+	inbound.logger = log.NewNOPFactory().Logger()
+	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
+
+	first := bypassPolicyFor(t, netip.MustParsePrefix("10.0.0.0/8"))
+	if err := inbound.applyBypassCIDRPolicyLocked(first); err == nil {
+		t.Fatal("apply succeeded despite the cgroup backend being permanently unusable")
+	}
+	if inbound.bypassRuleSetExpectedVersion != 1 {
+		t.Fatalf(
+			"bypassRuleSetExpectedVersion = %d, want 1 immediately after the first (failed) attempt -- "+
+				"a diagnostics reader during the pending-retry window must see the target, not a stale value",
+			inbound.bypassRuleSetExpectedVersion,
+		)
+	}
+	if inbound.bypassRuleSetPolicyVersion != 0 {
+		t.Fatalf("bypassRuleSetPolicyVersion = %d, want 0: nothing has actually succeeded yet", inbound.bypassRuleSetPolicyVersion)
+	}
+
+	// A second, different failed attempt -- e.g. a further rule-set change
+	// arriving before the first attempt's own retry ever fires -- must move
+	// the expected version again right away, proving a retry firing after
+	// this point would chase this newer content, not the first attempt's.
+	second := bypassPolicyFor(t, netip.MustParsePrefix("172.16.0.0/12"))
+	if err := inbound.applyBypassCIDRPolicyLocked(second); err == nil {
+		t.Fatal("apply succeeded despite the cgroup backend being permanently unusable")
+	}
+	if inbound.bypassRuleSetExpectedVersion != 2 {
+		t.Fatalf(
+			"bypassRuleSetExpectedVersion = %d, want 2: a second, different failed attempt must supersede the first immediately",
+			inbound.bypassRuleSetExpectedVersion,
+		)
+	}
+	if inbound.bypassRuleSetPolicyVersion != 0 {
+		t.Fatalf("bypassRuleSetPolicyVersion = %d, want still 0: still nothing has actually succeeded", inbound.bypassRuleSetPolicyVersion)
+	}
+
+	// The retry that finally succeeds -- simulated here by removing the
+	// failure source and re-attempting the latest (second) content, the
+	// same content a real retryBypassRuleSetIfNeededLocked call would
+	// recompute from the live rule sets at this point -- must land on that
+	// latest content, not the first, now-superseded one, and must catch
+	// bypassRuleSetPolicyVersion up to bypassRuleSetExpectedVersion exactly.
+	inbound.setCgroupBackend(nil)
+	if err := inbound.applyBypassCIDRPolicyLocked(second); err != nil {
+		t.Fatalf("retry of the latest expected content: %v", err)
+	}
+	if inbound.bypassRuleSetPolicyVersion != inbound.bypassRuleSetExpectedVersion {
+		t.Fatalf(
+			"bypassRuleSetPolicyVersion = %d, bypassRuleSetExpectedVersion = %d, want them equal once the retry succeeds",
+			inbound.bypassRuleSetPolicyVersion, inbound.bypassRuleSetExpectedVersion,
+		)
+	}
+	if inbound.bypassRuleSetPolicyVersion != 2 {
+		t.Fatalf("bypassRuleSetPolicyVersion = %d, want 2 (the second attempt's version, not the first's)", inbound.bypassRuleSetPolicyVersion)
+	}
+	if !reflect.DeepEqual(inbound.bypassRuleSetPolicy, second) {
+		t.Fatalf("bypassRuleSetPolicy = %+v, want the second (latest expected) policy, not the first", inbound.bypassRuleSetPolicy)
 	}
 }

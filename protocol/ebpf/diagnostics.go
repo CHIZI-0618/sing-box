@@ -112,20 +112,33 @@ type EBPFDiagnostics struct {
 	// refresh is still awaiting retry.
 	BypassRuleSetPending bool `json:"bypass_rule_set_pending"`
 	// BypassRuleSetPolicyVersion is the compiled bypass_rule_set policy's own
-	// content-based version: it advances only when a newly compiled policy
-	// actually differs from the one currently in effect, so it names which
-	// policy generation is current, not how many times an apply has been
-	// attempted. Retrying the same compiled content after a failure re-applies
-	// at the same version; it does not mint a new one.
+	// content-based version, naming the policy this inbound has last
+	// CONFIRMED applying: it advances only when a fully successful apply's
+	// content actually differs from what was in effect before it, so it
+	// names which policy generation is current, not how many times an apply
+	// has been attempted.
 	//
-	// BypassRuleSetRetryCount counts a different thing: how many times the TC
-	// recovery scheduler has actually retried a previously-failed apply. It
-	// does not include the original attempt for a policy version, and it does
-	// not include a fresh apply triggered by rule-set content actually
-	// changing -- both of those go through the same apply function but are
-	// not retries of anything.
-	BypassRuleSetPolicyVersion uint64 `json:"bypass_rule_set_policy_version"`
-	BypassRuleSetRetryCount    uint64 `json:"bypass_rule_set_retry_count"`
+	// BypassRuleSetExpectedPolicyVersion is the different thing a reader
+	// needs while BypassRuleSetPending is true: the version of the most
+	// recently ATTEMPTED policy, updated on every apply attempt regardless
+	// of whether it succeeded -- "what this inbound is currently trying to
+	// converge to". The two fields coincide exactly when nothing is
+	// outstanding (BypassRuleSetPending=false and BypassRuleSetConsistent=true);
+	// while a retry is pending, BypassRuleSetExpectedPolicyVersion names the
+	// target a later retry is chasing, and BypassRuleSetPolicyVersion still
+	// names whatever was last actually confirmed, lagging behind it by
+	// construction -- neither value is wrong, they answer different
+	// questions ("what do we want" vs. "what do we know we have").
+	//
+	// BypassRuleSetRetryCount counts a third, unrelated thing: how many
+	// times the TC recovery scheduler has actually retried a
+	// previously-failed apply. It does not include the original attempt for
+	// a policy version, and it does not include a fresh apply triggered by
+	// rule-set content actually changing -- both of those go through the
+	// same apply function but are not retries of anything.
+	BypassRuleSetPolicyVersion         uint64 `json:"bypass_rule_set_policy_version"`
+	BypassRuleSetExpectedPolicyVersion uint64 `json:"bypass_rule_set_expected_policy_version"`
+	BypassRuleSetRetryCount            uint64 `json:"bypass_rule_set_retry_count"`
 	// BypassRuleSetBackendState records, per backend, the highest
 	// BypassRuleSetPolicyVersion that backend's own forward apply or
 	// compensating revert last actually completed successfully (Version), and
@@ -312,6 +325,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	diagnostics.BypassRuleSetConsistent = !i.bypassRuleSetInconsistent
 	diagnostics.BypassRuleSetPending = i.bypassRuleSetNeedsRetry
 	diagnostics.BypassRuleSetPolicyVersion = i.bypassRuleSetPolicyVersion
+	diagnostics.BypassRuleSetExpectedPolicyVersion = i.bypassRuleSetExpectedVersion
 	diagnostics.BypassRuleSetRetryCount = i.bypassRuleSetRetryCount
 	backendState := make(map[string]BypassRuleSetBackendState, 3)
 	if i.tcBackend() != nil {

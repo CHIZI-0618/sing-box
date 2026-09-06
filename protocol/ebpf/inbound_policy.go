@@ -188,28 +188,43 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy) error {
 	previous := i.bypassRuleSetPolicy
 	previousVersion := i.bypassRuleSetPolicyVersion
-	// version only advances when the compiled content actually differs --
-	// retrying the same policy after a failure re-applies at the same
-	// version, it does not mint a new one. BypassCIDRPolicy's fields are
-	// unexported outside common/ebpf, but reflect.DeepEqual compares them
-	// by value regardless of visibility (the same pattern the tests in
-	// inbound_policy_test.go already rely on).
-	//
+	// version identifies this call's own content, computed against the
+	// most recently ATTEMPTED policy (i.bypassRuleSetExpectedPolicy),
+	// not the last successfully CONFIRMED one (previous, above). Comparing
+	// against the confirmed baseline instead would assign the same version
+	// number to two attempts with genuinely different content as long as
+	// neither had yet succeeded -- confirmed state only advances on
+	// success, so it can lag behind an arbitrary number of distinct failed
+	// attempts, each of which still needs its own, distinguishable version.
+	// BypassCIDRPolicy's fields are unexported outside common/ebpf, but
+	// reflect.DeepEqual compares them by value regardless of visibility
+	// (the same pattern the tests in inbound_policy_test.go already rely
+	// on).
+	previousExpected := i.bypassRuleSetExpectedPolicy
+	previousExpectedVersion := i.bypassRuleSetExpectedVersion
+	version := previousExpectedVersion
+	if !reflect.DeepEqual(previousExpected, policy) {
+		version = previousExpectedVersion + 1
+	}
+	// Committed unconditionally, before any backend is even attempted: a
+	// diagnostics reader watching while this very attempt is in flight (or
+	// after it has already failed) must see what this call is trying to
+	// converge to, not whatever the last successful attempt happened to be,
+	// and a later call (whether a fresh apply or a retry) must compare
+	// against THIS content, not go on comparing against a stale one.
+	i.bypassRuleSetExpectedPolicy = policy
+	i.bypassRuleSetExpectedVersion = version
 	// This local version is used for each backend's own per-backend
 	// bookkeeping as the loop below runs, since a backend that completes its
 	// own forward apply genuinely has moved to this content regardless of
 	// what a later backend does. i.bypassRuleSetPolicyVersion itself is only
 	// committed at the very end, alongside i.bypassRuleSetPolicy -- both
-	// describe "the policy this inbound is now considered to be on", and
-	// both must move together: a failed pass that gets fully reverted (or
-	// even one left partially inconsistent) never updates
+	// describe "the policy this inbound has actually confirmed applying",
+	// and both must move together: a failed pass that gets fully reverted
+	// (or even one left partially inconsistent) never updates
 	// i.bypassRuleSetPolicy, so the version naming that policy must not
 	// advance either, or the two would disagree about which generation is
 	// current.
-	version := previousVersion
-	if !reflect.DeepEqual(previous, policy) {
-		version = previousVersion + 1
-	}
 	var applied []bypassCIDRAppliedBackend
 	fail := func(cause error) error {
 		failedPaths := revertBypassCIDRBackends(applied, func(name string, err error) {
