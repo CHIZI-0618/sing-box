@@ -85,6 +85,16 @@ jobs:
       # step above only ever exercises their skip path. Without a privileged
       # run of this package specifically, netns/TCX/real-ping/real-repair
       # coverage never actually executes in CI at all.
+      #
+      # SING_BOX_EBPF_REQUIRE_TCX=1 turns every TCX attachment test's
+      # fallback-to-clsact-or-skip path into a hard failure instead (see
+      # requireOrSkipTCX in tc_fakeip_icmp_tcx_netns_test.go). ubuntu-24.04's
+      # kernel (6.8+, TCX has shipped since 6.6) is expected to support TCX,
+      # so on this specific runner a TCX test quietly degrading to clsact --
+      # or skipping outright -- is a regression to catch, not a legitimate
+      # environment limitation to route around. This is deliberately not set
+      # for any environment whose kernel is not already known to support
+      # TCX; those still skip cleanly with the variable unset.
       - name: Run protocol/ebpf real-kernel tests
         shell: bash
         run: |
@@ -92,6 +102,7 @@ jobs:
           sudo env \
             "PATH=$PATH" \
             SING_BOX_EBPF_INTEGRATION=1 \
+            SING_BOX_EBPF_REQUIRE_TCX=1 \
             go test -v -count=1 -race \
               -tags with_ebpf,ebpf_integration \
               ./protocol/ebpf 2>&1 | tee -a verifier.log

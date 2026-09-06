@@ -5,6 +5,7 @@ package ebpf
 import (
 	"net"
 	"net/netip"
+	"os"
 	"testing"
 	"time"
 
@@ -15,6 +16,89 @@ import (
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
 )
+
+// tcxStrictModeEnv, when set to "1", turns a TCX attachment falling back to
+// clsact (or otherwise not being granted) from a skip into a hard failure.
+// Set this in a CI environment already known to support TCX (see
+// ebpf-verifier.yml, which sets it for GitHub Actions' ubuntu-24.04
+// runners) so a regression that silently degrades every TCX test in this
+// package to clsact-only coverage is caught, instead of being masked by
+// every affected test quietly skipping -- a skip and a "TCX regressed to
+// clsact everywhere" both look identical in a test summary otherwise.
+// Left unset, an environment genuinely without TCX support (an older
+// kernel, a constrained container) still skips these tests cleanly, which
+// remains correct for a general contributor machine never expected to have
+// TCX in the first place.
+const tcxStrictModeEnv = "SING_BOX_EBPF_REQUIRE_TCX"
+
+// requireOrSkipTCX is the shared decision behind every TCX "OrSkip"
+// attachment helper in this package (attachFakeIPICMPOrSkip,
+// attachSharedRewriteOrSkip): attachmentType == "tcx" is always fine;
+// anything else either fails (tcxStrictModeEnv set) or skips (unset), so a
+// caller reads as "this attempted TCX and did not get it" without
+// duplicating the environment check at every call site.
+// tcxAttachmentOutcome is requireOrSkipTCX's decision, factored out as a
+// pure function so it can be unit-tested directly. A subtest's t.Fatal
+// marks every ancestor test as failed too, automatically -- there is no way
+// to unit-test "this correctly calls t.Fatal under these conditions" via a
+// nested t.Run without the enclosing test itself reporting FAIL, which
+// would be indistinguishable from the check actually being broken. Testing
+// the decision as an ordinary pure function sidesteps that entirely, and
+// leaves requireOrSkipTCX itself as a thin, obviously-correct wrapper that
+// every real attachment test already exercises via its "tcx" (ok=true)
+// path on this environment, which does have TCX support.
+func tcxAttachmentOutcome(strictMode bool, attachmentType string) (ok, fatal bool) {
+	if attachmentType == "tcx" {
+		return true, false
+	}
+	return false, strictMode
+}
+
+func requireOrSkipTCX(t *testing.T, attachmentType string) {
+	t.Helper()
+	ok, fatal := tcxAttachmentOutcome(os.Getenv(tcxStrictModeEnv) == "1", attachmentType)
+	if ok {
+		return
+	}
+	if fatal {
+		t.Fatalf(
+			"%s=1 (this environment is configured to require TCX) but attachmentType=%q: "+
+				"TCX attachment fell back to clsact or was otherwise unavailable, which this mode "+
+				"treats as a regression to investigate, not an environment limitation to skip past",
+			tcxStrictModeEnv, attachmentType,
+		)
+	}
+	t.Skipf("this kernel did not grant a TCX attachment (attachmentType=%q); TCX is not available here", attachmentType)
+}
+
+// TestTCXAttachmentOutcome is a plain, no-root, no-kernel unit test of
+// requireOrSkipTCX's decision logic across all four (strictMode,
+// attachmentType) combinations that matter.
+func TestTCXAttachmentOutcome(t *testing.T) {
+	cases := []struct {
+		name           string
+		strictMode     bool
+		attachmentType string
+		wantOK         bool
+		wantFatal      bool
+	}{
+		{"tcx granted, strict mode off", false, "tcx", true, false},
+		{"tcx granted, strict mode on", true, "tcx", true, false},
+		{"clsact fallback, strict mode off: skip, not fail", false, "clsact", false, false},
+		{"clsact fallback, strict mode on: fail, not skip", true, "clsact", false, true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ok, fatal := tcxAttachmentOutcome(testCase.strictMode, testCase.attachmentType)
+			if ok != testCase.wantOK || fatal != testCase.wantFatal {
+				t.Fatalf(
+					"tcxAttachmentOutcome(%v, %q) = (ok=%v, fatal=%v), want (ok=%v, fatal=%v)",
+					testCase.strictMode, testCase.attachmentType, ok, fatal, testCase.wantOK, testCase.wantFatal,
+				)
+			}
+		})
+	}
+}
 
 // newRealFakeIPICMPBackendWithIPv6 is newRealFakeIPICMPBackend plus a FakeIP
 // IPv6 range and local/shared IPv6 interception, for the IPv6 real-ping
@@ -48,10 +132,12 @@ func newRealFakeIPICMPBackendWithIPv6(t *testing.T) *commonEBPF.TCBackend {
 }
 
 // attachFakeIPICMPOrSkip attaches with the given priority and, when priority
-// requests TCX (1), skips the test rather than failing it if this kernel
-// does not actually grant a TCX attachment — attachTCInterfaceWithLock falls
-// back to clsact silently, and a test that claims to cover TCX must not
-// pass having silently exercised clsact instead.
+// requests TCX (1) but this kernel does not actually grant a TCX
+// attachment, defers to requireOrSkipTCX -- skip on a general environment,
+// fail on one configured via tcxStrictModeEnv to require TCX -- since
+// attachTCInterfaceWithLock falls back to clsact silently, and a test that
+// claims to cover TCX must not pass having silently exercised clsact
+// instead.
 func attachFakeIPICMPOrSkip(
 	t *testing.T,
 	backend *commonEBPF.TCBackend,
@@ -80,7 +166,7 @@ func attachFakeIPICMPOrSkip(
 	}
 	if priority == 1 && attachment.attachmentType != "tcx" {
 		_ = attachment.Close()
-		t.Skipf("this kernel did not grant a TCX attachment (attachmentType=%q); TCX is not available here", attachment.attachmentType)
+		requireOrSkipTCX(t, attachment.attachmentType)
 	}
 	return attachment
 }

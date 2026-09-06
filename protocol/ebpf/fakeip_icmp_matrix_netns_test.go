@@ -340,11 +340,13 @@ func newRealFakeIPICMPSharedNetworkBackendWithIPv6(t *testing.T) *commonEBPF.Sha
 }
 
 // attachSharedRewriteOrSkip is attachFakeIPICMPOrSkip's counterpart for the
-// shared packet-rewrite data plane's own attach function: skips (does not
-// fail) when priority requests TCX (defaultTCPriority) but this kernel did
-// not actually grant a TCX attachment, since attachSharedRewriteInterface
-// falls back to clsact silently and a test claiming TCX coverage must not
-// pass having silently exercised clsact instead.
+// shared packet-rewrite data plane's own attach function: when priority
+// requests TCX (defaultTCPriority) but this kernel did not actually grant a
+// TCX attachment, it defers to requireOrSkipTCX -- skip on a general
+// environment, fail on one configured via tcxStrictModeEnv to require TCX
+// -- since attachSharedRewriteInterface falls back to clsact silently and a
+// test claiming TCX coverage must not pass having silently exercised
+// clsact instead.
 func attachSharedRewriteOrSkip(
 	t *testing.T,
 	device netlink.Link,
@@ -358,7 +360,7 @@ func attachSharedRewriteOrSkip(
 	}
 	if priority == defaultTCPriority && attachment.attachmentType != "tcx" {
 		_ = attachment.Close()
-		t.Skipf("this kernel did not grant a TCX attachment (attachmentType=%q); TCX is not available here", attachment.attachmentType)
+		requireOrSkipTCX(t, attachment.attachmentType)
 	}
 	return attachment
 }
