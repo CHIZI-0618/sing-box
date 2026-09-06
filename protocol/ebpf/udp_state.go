@@ -147,14 +147,33 @@ func (t *udpClientTable) clientShard(client netip.AddrPort) *udpClientShard {
 	return &t.clientShards[shardIndexForAddrPort(client, udpClientShardCount)]
 }
 
-// shardIndexForAddrPort spreads addr:port pairs evenly across shardCount
-// (a power of two) shards by hashing every address byte together with the
+// shardIndexForAddrPort distributes addr:port pairs across shardCount (a
+// power of two) shards by hashing every address byte together with the
 // port, not the port alone. A port-only key collapses onto a single shard
 // whenever many distinct addresses happen to share one port -- exactly the
 // common case for both callers of this function: UDP destinations
 // overwhelmingly cluster on a handful of well-known ports (443, 53, ...)
 // while varying in address, and independent client hosts can coincidentally
 // reuse the same ephemeral source port for unrelated connections.
+//
+// This is a statistical improvement over the port-only key for realistic,
+// naturally-varying traffic (see the package's shard-distribution tests),
+// not a guarantee of even placement for every possible input set: FNV-1a is
+// not a cryptographic hash, so a party able to choose destination addresses
+// specifically to collide under it could still concentrate them onto one
+// shard. This function only changes how inputs are distributed across
+// shards; it does not change what happens once a shard fills. Of this
+// function's two callers, only udpReplySocketPool enforces a per-shard
+// capacity at all (udpReplySocketShardCapacity, with capacity-triggered
+// eviction and rejection in get()) -- the client tables
+// (udpClientTable/sharedUDPClientTable) have no capacity bound on a shard's
+// map and grow with however many sessions are actually active. For the
+// reply socket pool specifically: its usable total capacity before any
+// single destination pattern hits a capacity rejection on its own shard
+// still depends on how evenly that traffic happens to hash, not simply on
+// udpClientShardCount * udpReplySocketShardCapacity -- that product is the
+// pool's absolute ceiling under perfectly even placement, not a promised
+// floor for every traffic shape.
 func shardIndexForAddrPort(addrPort netip.AddrPort, shardCount int) int {
 	const offset64 = 14695981039346656037
 	const prime64 = 1099511628211
