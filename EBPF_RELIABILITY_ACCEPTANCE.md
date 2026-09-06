@@ -10,12 +10,11 @@ from this branch; it is not part of the public documentation site under
 
 ## 1. Final commit
 
-All code, test, and CI changes described in this document land at
-`7ea0be0f9e7ef8456b4622e8c16c53d1a1a6e151`. This document is committed
-immediately afterward as its own, single, documentation-only commit — since
-a file cannot record its own commit hash before that commit exists — so
-`git log` on this branch will show one more commit after `7ea0be0f` that
-adds only this file.
+All code, test, and CI changes described in this document, including §12's
+response to an independent code review, land at
+`742772d1bb33bebc9d48d887a66cf5c3e51d5fab`. This section is updated in place
+each time this document itself is revised, rather than being re-derived —
+this document's own commit necessarily lands after the hash it names.
 
 Full commit range for the code/test/CI work this document evidences (oldest
 first):
@@ -31,11 +30,21 @@ b119971b ebpf: cover the seven remaining real ICMP send/receive combinations
 b25760aa ci: run every common/ebpf real-kernel integration test, not four by name
 e56f9386 ebpf: distinguish bypass_rule_set's expected policy from its confirmed one
 7ea0be0f ebpf: add a strict mode so CI catches TCX silently degrading to clsact
+4ff0a17c docs: add acceptance evidence for the eBPF reliability closing round
+de7bf15f docs: clarify the acceptance report's own commit is not in its hash list
+c0296e8e ebpf: clear stale filter/link references so external deletion self-heals
+1a35d559 ebpf: fix a real data race between Diagnostics and shared-rewrite Close
+698f43c8 ebpf: report needs_attention for an unrecoverable component, not normal
+ac03b48e ebpf: wake the retry scheduler when a rule-set update fails
+f04e0561 ebpf: count shared packet-rewrite UDP clients in UDPSessionCount too
+2e640950 ebpf: mark a backend unknown when its own forward apply wrecks it, too
+742772d1 ebpf: fix combination baseline drift and wrong traffic origin in offload script
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
-(`.codex-remote-attachments/`) that predates this work and was never staged
-or touched.
+(`.codex-remote-attachments/`, predating this work) and `outputs/` (the
+independent review's own artifact bundle, left exactly as delivered) — see
+§12 for how that review's findings were addressed.
 
 ## 2. Environment
 
@@ -62,21 +71,30 @@ SING_BOX_EBPF_INTEGRATION=1 SING_BOX_EBPF_REQUIRE_TCX=1 \
   ./common/ebpf/... ./protocol/ebpf/...
 ```
 
-Result:
+Result (re-run after §12's review-response commits; see that section):
 
 ```
-ok  	github.com/sagernet/sing-box/common/ebpf	2.001s
-ok  	github.com/sagernet/sing-box/protocol/ebpf	9.267s
+ok  	github.com/sagernet/sing-box/common/ebpf	2.029s
+ok  	github.com/sagernet/sing-box/protocol/ebpf	9.430s
 ```
 
-**287 PASS / 0 FAIL / 0 SKIP** across both packages combined. `SING_BOX_EBPF_REQUIRE_TCX=1`
+**295 PASS / 0 FAIL / 0 SKIP** across both packages combined. `SING_BOX_EBPF_REQUIRE_TCX=1`
 being set and producing zero skips/failures confirms every TCX-attachment
 test in this run actually obtained a real TCX attachment on this kernel,
 not a silent clsact fallback.
 
+One test (`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing`) was
+observed to fail once, with `IPv6 next header = 0, want ICMPv6`, in a single
+full-suite run during this round, and passed on three immediate repeats in
+isolation and on an immediate full-suite re-run. This reads as a timing
+-sensitive flake in the netns test harness under full-suite load, not a
+regression from anything in §12 — it is not touched by any of that section's
+commits. Not root-caused further this round; flagged here rather than
+silently reported as "285 PASS" from the clean re-run alone.
+
 ### 3.2 Full suite, non-root (same command, ordinary user, `SING_BOX_EBPF_REQUIRE_TCX` unset)
 
-**226 PASS / 9 FAIL / 52 SKIP** (226+9+52 = 287, matching the root run's total exactly).
+**233 PASS / 9 FAIL / 53 SKIP** (233+9+53 = 295, matching the root run's total exactly).
 
 The 9 FAIL are all the same, pre-existing cause — these tests call
 `t.Fatal("eBPF integration test requires root")` directly (not `t.Skip`)
@@ -107,8 +125,8 @@ for pair in "linux amd64" "linux arm64" "linux 386" "linux arm" "android arm64";
 done
 ```
 
-All five platforms: no output (clean), for every file touched across all
-ten commits in this closing round.
+All five platforms: no output (clean), for every file touched across every
+commit in this closing round, including §12's review-response commits.
 
 ### 3.4 `gofmt`
 
@@ -325,6 +343,20 @@ kernel has TCX, so every real attachment test here takes the ordinary
   (§9): only the decision function is unit-tested; the end-to-end failure
   path through a real attachment test has not been observed, because this
   session's kernel has TCX.
+- **The exact double-BPF-syscall failure in §12 finding #6** (a forward
+  policy apply failing AND its own internal rollback also failing): fixed
+  and covered by unit tests of the new `RequiresRebuild()` accessors
+  themselves (forced into that state directly, bypassing the kernel), but
+  the coordinator-level wiring in `inbound_policy.go` that reads
+  `RequiresRebuild()` after a real `UpdateCompiledBypassCIDR` call has no
+  live end-to-end test — reproducing the actual double failure needs a real
+  eBPF map operation to fail partway and its own rollback to also fail,
+  which is not practically triggerable through the public API in this
+  environment. The reviewer's own finding disclosed the identical
+  limitation.
+- **One observed test flake** (§3.1): `TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing`
+  failed once under full-suite load and passed on every repeat; not
+  root-caused further this round, and not touched by any §12 commit.
 
 ## 11. Scope discipline
 
@@ -336,3 +368,206 @@ fixed (rather than being folded in silently) is noted here for the record:
 a pure CI-configuration gap, not application code — fixed in its own commit
 (`b25760aa`) rather than bundled into any of the application-code commits
 above.
+
+## 12. Response to an independent code review
+
+An independent review of commit `de7bf15f` (this document's own previous
+revision) found eight issues, one P1 and seven P2, each with a concrete
+reproduction (its own overlay test bundle is preserved, untouched, at
+`outputs/ebpf-review/`). All eight are addressed below, each in its own
+commit, each reverse-verified against the review's own reported symptom
+where a live reproduction was practical.
+
+### #1 [P1] — reconcile() returned success after repairing nothing
+
+**Finding**: `filtersAttached` correctly detects an externally deleted
+filter or externally detached TCX link, but `updateTCInterfaceAttachmentWithOps`'s
+repair logic only re-attaches a field whose Go-side pointer is `nil` —
+deleting a kernel object has no way to reach into this process and clear
+the struct that described it, so the existing health-check tests only
+passed because they manually nil'd the pointer right after simulating the
+deletion, which is not what a real external deletion leaves behind.
+
+**Fix** (`c0296e8e`): `tcInterfaceAttachment.clearStaleAttachments`, called
+by `reconcile()` right before the repair attempt, checks each filter/link
+individually (unlike `filtersAttached`, which short-circuits) and discards
+the Go-side reference for any one the kernel no longer actually has. Both
+existing health-check tests had their artificial pointer-nil removed and
+now pass against the real repair path; the TCX test additionally switched
+from `Close()` (which also invalidates the FD — a materially different
+failure shape) to `link.Link.Detach()` (a real `BPF_LINK_DETACH`, FD left
+open, matching the review's own raw-syscall reproduction). A new test
+(`TestTCLocalFilterHealthCheckDetectsAndRepairsExternalDeletion`) proves
+the fix also covers the ordinary local egress filter, not only the
+fakeip_icmp filter attached alongside it, since the review named that as a
+symmetric, unverified risk.
+
+**Reverse-verified**: removing the `clearStaleAttachments` call reproduces
+the review's exact reported symptom (`filtersAttached still reports
+unhealthy immediately after repair`) in all three tests.
+
+### #2 [P2] — data race between Diagnostics and shared-rewrite Close
+
+**Finding**: `Diagnostics()` read `i.sharedRewrite` and
+`i.sharedRewrite.dataPlane` with no lock, while `closeResources`' plain
+field write and `sharedRewrite.Close`'s own `dataPlane` write (under
+`lifecycleAccess`) happen with nothing serializing the two — confirmed with
+`go test -race`.
+
+**Fix** (`1a35d559`): extends this codebase's own existing pattern
+(`tcDataPlaneAccess`/`cgroupBackendAccess` on `Inbound`, `backendAccess` on
+`sharedRewrite` for `sharedBackend`) to the two fields that were missing
+it — `sharedRewriteAccess` and `dataPlaneAccess`, each its own small
+`RWMutex` with a getter/setter/take trio — rather than one broader lock
+that risks the reentrancy/reverse-ordering the review specifically warned
+against. Every existing caller now goes through the safe accessor.
+
+**Reverse-verified**: `TestSharedRewriteDiagnosticsDoesNotRaceWithClose`
+drives 2000 concurrent `Diagnostics()` calls against a real `Close()`;
+temporarily reverting `dataPlaneInstance`/`takeDataPlane` to plain field
+access reproduces a real `WARNING: DATA RACE` at the exact call site the
+review reported.
+
+### #3 [P2] — an unrecoverable component reported State=normal
+
+**Finding**: `deriveDiagnosticsState` never checked for
+`tcSharedRewriteUnrecoverable` at all; an unrecoverable backend with its
+attachment record still present fell through every check to `normal`.
+
+**Fix** (`698f43c8`): adds `EBPFDiagnostics.RecoveryUnrecoverable`, checked
+first in `deriveDiagnosticsState` — ahead of the `waiting_for_interface`
+checks, since an attachment that still exists but is unrecoverable needs
+attention regardless. Writing the test for this surfaced a second,
+related gap: `recordTCUpdateOutcome` overwrites `lastOutcome` wholesale
+every round, and `updateTCInterfaces` can legitimately return before
+re-evaluating a later component at all (an early return after a
+local-interface-topology failure leaves it at `tcSharedRewriteUnknown`,
+not `Settled`) — silently erasing a still-Unrecoverable result one round
+later. Fixed by preserving the previous round's value for any component
+that comes back `Unknown`.
+
+**Reverse-verified**: removing the `RecoveryUnrecoverable` check reproduces
+the exact reported `normal` state; removing the `Unknown`-preservation
+reproduces the fault silently clearing itself on the following round.
+
+### #4 [P2] — a failed rule-set update left the scheduler asleep
+
+**Finding**: `updateBypassRuleSet`'s failure path set
+`bypassRuleSetNeedsRetry` but never woke the scheduler, despite its own
+comment claiming the scheduler would "pick this back up" — the scheduler
+only runs a round on a network event or its ten-minute health-check tick.
+
+**Fix** (`ac03b48e`): calls this package's own existing
+`notifyTCInterfaceUpdate` (the same non-blocking wake the interface and
+default-interface change handlers already use) from the failure path.
+
+**Reverse-verified**: `TestUpdateBypassRuleSetWakesTheSchedulerOnFailure`;
+removing the notification call reproduces the review's exact reported
+symptom (nothing sent on the update channel).
+
+### #5 [P2] — UDPSessionCount undercounted shared packet-rewrite clients
+
+**Finding**: `UDPSessionCount` only ever read `i.udpClientTable` (local/TC),
+never `sharedRewrite.sharedUDPClientTable` — a `packet_rewrite`-only
+inbound with no local role reported 0 regardless of active clients.
+
+**Fix** (`f04e0561`): adds `sharedUDPClientTable.count()` (mirroring
+`udpClientTable.count()`'s shard-locking pattern) and sums both into one
+field, documented as counting distinct clients, not bindings or flows.
+
+**Reverse-verified**: `TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients`;
+removing the shared-table addition reproduces the exact reported
+`udp_session_count=0`.
+
+### #6 [P2] — a backend's own forward-apply failure left it known=true
+
+**Finding**: the bypass_rule_set coordinator only revised a backend's
+`known`/the whole-inbound `bypassRuleSetInconsistent` when a *later*
+backend's compensating revert failed — never when a backend's own forward
+`UpdateCompiledBypassCIDR` failed with its **internal** rollback also
+failing, which the backend's own code marks by invalidating itself
+(requiring a rebuild). That backend was never in `applied` in the first
+place, so the revert pass never reached it either.
+
+**Fix** (`2e640950`): `TCBackend` and `CgroupBackend` gain a
+`RequiresRebuild() bool` accessor, mirroring `SharedNetworkBackend`'s
+existing one exactly. The coordinator checks it at each forward-apply
+failure site (not the `SetBypassCIDRState` path, which only touches
+in-memory counters and cannot itself require a rebuild) and marks that
+backend `known=false` plus the whole inbound `bypassRuleSetInconsistent=true`.
+
+**Verified**: `TestTCBackendRequiresRebuild`/`TestCgroupBackendRequiresRebuild`
+cover the new accessors directly and are reverse-verified. **Not
+independently live-tested**: the coordinator-level wiring itself — see §10.
+Reproducing the actual double failure needs a real eBPF map update to fail
+partway and its own rollback to also fail, which the review's own finding
+already disclosed as impractical to trigger through the public API; this
+round reached the same conclusion rather than working around it with a
+mock.
+
+### #7 [P2] — offload script combinations inherited leftover state
+
+**Finding**: `OFFLOAD_MATRIX` entries naming only the features they cared
+about silently inherited whatever the previous combination left every
+other feature at; a driver-refused or unsupported feature was still
+recorded as a mere warning, with the combination then possibly reporting
+PASS under a label no longer matching the interface's real state.
+
+**Fix** (`742772d1`): every `OFFLOAD_MATRIX` entry now names every one of
+the six recognized features explicitly (`require_complete_combination`
+fails loudly at definition time if a future entry omits one), and
+`set_features` reads every feature back afterward, recording the whole
+combination `UNSUPPORTED` (no traffic checks run) if the interface did not
+actually reach the requested state.
+
+**Verified**: by ad hoc extraction of the affected shell functions against
+a faked `ethtool` (ordinary command substitution, not committed) —
+`require_complete_combination` correctly rejects an incomplete entry and
+accepts a complete one; `set_features` correctly distinguishes a
+driver-refused feature, a silently-ignored one, and a combination that
+genuinely applies. That exercise caught a real bug in this fix's own first
+draft — the four real `OFFLOAD_MATRIX` entries did not mention
+`tx-udp-segmentation` at all, which `require_complete_combination` would
+have rejected outright — fixed before commit. Never run against real
+hardware, unchanged from before.
+
+### #8 [P2] — offload script could not actually verify shared.data_plane
+
+**Finding**: every check sent traffic from the DUT itself, which only ever
+exercises `local.data_plane`'s TC **egress** classifier —
+`shared.data_plane`'s **ingress** classifier only sees traffic from a real
+downstream client, so nothing in the script could verify it; worse, if
+both roles were enabled, a DUT-originated "shared" check could report PASS
+by way of `local.data_plane` silently answering it instead.
+
+**Fix** (`742772d1`, same commit as #7): the script now names three roles
+explicitly (DUT, `$REMOTE_HOST`, and a new `$DOWNSTREAM_HOST`) and adds a
+parallel set of shared-role checks driven from `$DOWNSTREAM_HOST` over ssh.
+A new `$DUT_DIAGNOSTICS_URL`, when set, additionally requires the DUT's own
+`/ebpf` counters (`fakeip_icmp_replies`, `rewrite_failures`) to move the
+way a genuinely-processed packet would. The doc states plainly that those
+counters sum across every data plane hosting `fakeip_icmp`, not broken
+down per role, and recommends disabling the role not under test for an
+unambiguous read rather than claiming the script can disambiguate a
+combined counter after the fact.
+
+**Verified**: same ad hoc logic exercise as #7 (this is the same commit and
+the same script). Never run against real hardware — this specifically
+needs a third host this round never had.
+
+### Summary
+
+| # | Severity | Status | Live-verified |
+|---|---|---|---|
+| 1 | P1 | Fixed | Yes, 3 tests, reverse-verified |
+| 2 | P2 | Fixed | Yes, race test, reverse-verified |
+| 3 | P2 | Fixed | Yes, 2 tests, reverse-verified |
+| 4 | P2 | Fixed | Yes, 1 test, reverse-verified |
+| 5 | P2 | Fixed | Yes, 1 test, reverse-verified |
+| 6 | P2 | Fixed | Accessor only; coordinator wiring not live-tested (§10) |
+| 7 | P2 | Fixed | Logic-level only (faked `ethtool`); no real hardware |
+| 8 | P2 | Fixed | Logic-level only (faked `ethtool`); no real hardware |
+
+No production code outside what these eight findings named was touched.
+`outputs/ebpf-review/` (the review's own artifact bundle) was read for
+context and left completely untouched, uncommitted, exactly as delivered.
