@@ -224,16 +224,11 @@ func processTrackerInstructions(ownerMapFD, policyUIDMapFD, metadataMapFD int, d
 		asm.FnMapLookupElem.Call(),
 		asm.JEq.Imm(asm.R0, 0, "policy_unmatched"),
 		asm.LoadMem(asm.R0, asm.RFP, -28, asm.Word),
-		asm.Or.Imm(asm.R0, socketMetadataPolicyIntercept),
+		asm.Or.Imm(asm.R0, processTrackerPolicyMetadata(defaultBypass, true)),
 		asm.StoreMem(asm.RFP, -28, asm.R0, asm.Word),
 		asm.Ja.Label("policy_update"),
 		asm.LoadMem(asm.R0, asm.RFP, -28, asm.Word).WithSymbol("policy_unmatched"),
-		asm.Or.Imm(asm.R0, int32(func() int64 {
-			if defaultBypass {
-				return socketMetadataPolicyBypass
-			}
-			return 0
-		}())),
+		asm.Or.Imm(asm.R0, processTrackerPolicyMetadata(defaultBypass, false)),
 		asm.StoreMem(asm.RFP, -28, asm.R0, asm.Word),
 		asm.LoadMapPtr(asm.R1, metadataMapFD).WithSymbol("policy_update"),
 		asm.Mov.Reg(asm.R2, asm.RFP),
@@ -246,6 +241,13 @@ func processTrackerInstructions(ownerMapFD, policyUIDMapFD, metadataMapFD int, d
 		asm.Return(),
 	)
 	return instructions
+}
+
+func processTrackerPolicyMetadata(defaultBypass bool, matched bool) int32 {
+	if matched == defaultBypass {
+		return socketMetadataPolicyIntercept
+	}
+	return socketMetadataPolicyBypass
 }
 
 func (t *ProcessTracker) policyUIDFD() int {
