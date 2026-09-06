@@ -141,7 +141,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPing(t *testing.T) {
 		identifier, sequence, payload,
 	)
 
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, 5*time.Second)
+	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 5*time.Second)
 	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestFakeIPICMPSharedRewriteIgnoresNonICMPToFakeIPTarget(t *testing.T) {
 		40000, 53, []byte("not-icmp"),
 	)
 
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, 500*time.Millisecond)
+	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 500*time.Millisecond)
 	if _, err = unix.Write(peerSocket, udpFrame); err != nil {
 		t.Fatalf("transmit the UDP packet onto the peer interface: %v", err)
 	}

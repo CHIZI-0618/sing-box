@@ -137,17 +137,18 @@ func parseEthernetIPv4ICMP(t *testing.T, frame []byte) *parsedICMPEchoReply {
 }
 
 // openRawLinkLayerSocket opens an AF_PACKET/SOCK_RAW socket bound to
-// interfaceIndex, restricted to IPv4 EtherType frames, with a receive
-// timeout so a missing reply fails the test instead of hanging it.
-func openRawLinkLayerSocket(t *testing.T, interfaceIndex int, timeout time.Duration) int {
+// interfaceIndex, restricted to etherType frames (unix.ETH_P_IP or
+// unix.ETH_P_IPV6), with a receive timeout so a missing reply fails the
+// test instead of hanging it.
+func openRawLinkLayerSocket(t *testing.T, interfaceIndex int, etherType uint16, timeout time.Duration) int {
 	t.Helper()
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons16(unix.ETH_P_IP)))
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons16(etherType)))
 	if err != nil {
 		t.Fatalf("open a raw link-layer socket: %v", err)
 	}
 	t.Cleanup(func() { _ = unix.Close(fd) })
 	if err = unix.Bind(fd, &unix.SockaddrLinklayer{
-		Protocol: htons16(unix.ETH_P_IP),
+		Protocol: htons16(etherType),
 		Ifindex:  interfaceIndex,
 	}); err != nil {
 		t.Fatalf("bind the raw link-layer socket to interface index %d: %v", interfaceIndex, err)
@@ -240,7 +241,7 @@ func TestFakeIPICMPSharedReplyAnswersARealClientPing(t *testing.T) {
 		identifier, sequence, payload,
 	)
 
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, 5*time.Second)
+	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 5*time.Second)
 	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}

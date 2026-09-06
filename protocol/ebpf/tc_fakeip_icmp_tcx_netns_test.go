@@ -31,14 +31,15 @@ func newRealFakeIPICMPBackendWithIPv6(t *testing.T) *commonEBPF.TCBackend {
 		t.Fatalf("compile policy: %v", err)
 	}
 	backend, err := commonEBPF.PrepareTC(commonEBPF.TCConfig{
-		ListenerPort:    23457,
-		EnableLocal:     true,
-		EnableShared:    true,
-		EnableIPv4:      true,
-		EnableLocalIPv6: true,
-		EnableTCP:       true,
-		Policy:          policy,
-		FakeIPICMPReply: true,
+		ListenerPort:     23457,
+		EnableLocal:      true,
+		EnableShared:     true,
+		EnableIPv4:       true,
+		EnableLocalIPv6:  true,
+		EnableSharedIPv6: true,
+		EnableTCP:        true,
+		Policy:           policy,
+		FakeIPICMPReply:  true,
 	})
 	if err != nil {
 		t.Skipf("cannot prepare a real TC eBPF backend in this environment: %v", err)
