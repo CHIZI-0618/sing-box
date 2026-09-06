@@ -5,6 +5,7 @@ package ebpf
 import (
 	"bytes"
 	"encoding/json"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +174,25 @@ func TestDiagnosticsUnrecoverableSurvivesAnUnknownRound(t *testing.T) {
 	}
 	if diagnostics.State != EBPFDiagnosticsStateNeedsAttention {
 		t.Fatalf("state after the Unknown round = %q, want %q (an Unknown round must not erase an unresolved fault)", diagnostics.State, EBPFDiagnosticsStateNeedsAttention)
+	}
+}
+
+// TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients is an
+// independent review's finding: UDPSessionCount only ever read
+// i.udpClientTable (the local/TC path's own client table), never
+// sharedRewrite.sharedUDPClientTable -- a shared.data_plane: packet_rewrite
+// inbound with no local role at all keeps its live UDP clients exclusively
+// in the latter table, so this metric read 0 for it no matter how many
+// clients were actually active.
+func TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients(t *testing.T) {
+	inbound := &Inbound{udpTimeout: time.Minute}
+	shared := newSharedRewrite(inbound, option.EBPFSharedOptions{})
+	inbound.setSharedRewrite(shared)
+	shared.sharedUDPClientTable.loadOrCreate(netip.MustParseAddrPort("192.0.2.1:12345"))
+
+	diagnostics := inbound.Diagnostics()
+	if diagnostics.UDPSessionCount != 1 {
+		t.Fatalf("UDPSessionCount = %d, want 1 with one live shared packet-rewrite UDP client and no local clients", diagnostics.UDPSessionCount)
 	}
 }
 

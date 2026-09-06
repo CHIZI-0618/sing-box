@@ -163,6 +163,16 @@ type EBPFDiagnostics struct {
 	// for this inbound.
 	BypassRuleSetBackendState map[string]BypassRuleSetBackendState `json:"bypass_rule_set_backend_state,omitempty"`
 
+	// UDPSessionCount is the number of distinct UDP clients (by source
+	// address:port) this inbound is currently tracking state for, summed
+	// across every data plane that keeps its own client table: the local/TC
+	// path and shared.data_plane: packet_rewrite, which are independent
+	// tables and can each have their own, non-overlapping set of clients --
+	// a packet_rewrite-only inbound with no local role at all previously
+	// read 0 here regardless of how many clients were actually active,
+	// since only the local/TC table was ever counted. This counts distinct
+	// clients, not the number of destination bindings or flows any one
+	// client may have open (a single client can hold several of those).
 	UDPSessionCount int                        `json:"udp_session_count"`
 	UDPReplySockets udpReplySocketPoolSnapshot `json:"udp_reply_sockets"`
 
@@ -370,6 +380,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	i.bypassRuleSetAccess.Unlock()
 
 	diagnostics.UDPSessionCount = i.udpClientTable.count()
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		diagnostics.UDPSessionCount += shared.sharedUDPClientTable.count()
+	}
 	diagnostics.UDPReplySockets = i.udpReplySockets.snapshot()
 
 	diagnostics.Counters = i.counters.snapshot()
