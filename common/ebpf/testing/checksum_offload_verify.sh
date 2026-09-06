@@ -347,35 +347,56 @@ check_local_tcp_rewrite() {
 # a failure; a datagram that *did* arrive but does not match what was sent
 # is recorded as an immediate failure on its own attempt, never retried
 # away, since that is evidence of corruption, not merely of loss.
+#
+# A third independent review found that a nonzero exit from the send command
+# was itself being treated as proof of total loss: the receipt was never
+# inspected on that attempt at all, it was just retried. But a sender or its
+# connection can fail *after* already transmitting some or all of a
+# datagram, so a nonzero send exit does not establish that nothing arrived --
+# an attempt whose send command failed yet whose receiver actually got a
+# nonempty, non-matching datagram is real evidence of corruption that a
+# later, coincidentally successful retry must not be allowed to hide behind
+# a PASS. The send command's exit status is now kept only to explain a
+# genuinely empty receipt (which is what the loss-retry exists for); it is
+# never used by itself to skip inspecting what the receiver actually got.
+# Unreadable receiver evidence (the remote stat command itself failing) is
+# likewise never treated as an established empty receipt -- it is retried
+# the same as a confirmed empty one, but the report says plainly that the
+# receipt could not be read, not that it was confirmed empty.
 check_local_udp_rewrite() {
 	local state_label="$1"
 	[[ -z "$REMOTE_PORT_UDP" ]] && return
 	head -c 65000 /dev/urandom > "$OUT_DIR/udp_sent.bin"
 	local sent_hash
 	sent_hash=$(sha256sum "$OUT_DIR/udp_sent.bin" | cut -d' ' -f1)
-	local attempt remote_size remote_hash
+	local attempt send_status remote_size remote_hash
 	for attempt in 1 2 3; do
 		$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
 			"timeout 15 nc -u -l -p $REMOTE_PORT_UDP -w 10 > /tmp/offload_check_udp.bin" &
 		local remote_pid=$!
 		sleep 1
-		if ! nc -u -q1 -w2 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_UDP" < "$OUT_DIR/udp_sent.bin"; then
-			echo "warning: the local UDP send command itself failed on attempt $attempt/3; retrying" >&2
-			wait "$remote_pid" 2>/dev/null || true
+		send_status=0
+		nc -u -q1 -w2 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_UDP" < "$OUT_DIR/udp_sent.bin" || send_status=$?
+		wait "$remote_pid" 2>/dev/null || true
+		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp.bin" 2>/dev/null)
+		if [[ -z "$remote_size" ]]; then
+			echo "warning: could not read the receiver's file size on attempt $attempt/3 (local send command exit=$send_status); retrying, not treating unreadable evidence as a confirmed empty receipt" >&2
 			continue
 		fi
-		wait "$remote_pid" 2>/dev/null || true
-		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp.bin" 2>/dev/null || echo 0)
 		if [[ "$remote_size" == "0" ]]; then
-			echo "warning: no data received on attempt $attempt/3 (UDP is best-effort); retrying" >&2
+			if [[ "$send_status" -ne 0 ]]; then
+				echo "warning: no data received on attempt $attempt/3, consistent with the local send command's own failure (exit=$send_status); retrying" >&2
+			else
+				echo "warning: no data received on attempt $attempt/3 (UDP is best-effort); retrying" >&2
+			fi
 			continue
 		fi
 		remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp.bin 2>/dev/null | cut -d' ' -f1")
 		if [[ "$remote_hash" == "$sent_hash" ]]; then
-			record "$state_label" local_shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from the DUT itself"
+			record "$state_label" local_shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from the DUT itself (local send command exit=$send_status)"
 			return
 		fi
-		record "$state_label" local_shared_rewrite_udp FAIL "content mismatch on attempt $attempt: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not a total-loss condition eligible for retry"
+		record "$state_label" local_shared_rewrite_udp FAIL "content mismatch on attempt $attempt (local send command exit=$send_status): sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not a total-loss condition eligible for retry"
 		return
 	done
 	record "$state_label" local_shared_rewrite_udp FAIL "no data received after 3 attempts -- UDP is best-effort, but total loss across 3 attempts on a real link during an offload check is itself worth investigating, not accepted silently"
@@ -464,7 +485,8 @@ check_shared_tcp_rewrite() {
 
 # check_shared_udp_rewrite is check_local_udp_rewrite's shared.data_plane
 # counterpart, driven from $DOWNSTREAM_HOST the same way, with the same
-# SHA-256-comparison and retry-on-total-loss-only semantics.
+# SHA-256-comparison, retry-on-total-loss-only, and send-status-never-skips-
+# the-receipt-check semantics (see check_local_udp_rewrite's own comment).
 check_shared_udp_rewrite() {
 	local state_label="$1"
 	[[ -z "$DOWNSTREAM_HOST" || -z "$REMOTE_PORT_UDP" ]] && return
@@ -475,30 +497,35 @@ check_shared_udp_rewrite() {
 		record "$state_label" shared_rewrite_udp FAIL "could not prepare the send payload on $DOWNSTREAM_HOST"
 		return
 	fi
-	local attempt remote_size remote_hash
+	local attempt send_status remote_size remote_hash
 	for attempt in 1 2 3; do
 		$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
 			"timeout 15 nc -u -l -p $REMOTE_PORT_UDP -w 10 > /tmp/offload_check_udp_shared.bin" &
 		local remote_pid=$!
 		sleep 1
-		if ! $DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
-			"nc -u -q1 -w2 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_UDP < /tmp/offload_check_udp_shared_sent.bin"; then
-			echo "warning: the UDP send command on $DOWNSTREAM_HOST itself failed on attempt $attempt/3; retrying" >&2
-			wait "$remote_pid" 2>/dev/null || true
+		send_status=0
+		$DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
+			"nc -u -q1 -w2 $REMOTE_FAKEIP_TARGET $REMOTE_PORT_UDP < /tmp/offload_check_udp_shared_sent.bin" || send_status=$?
+		wait "$remote_pid" 2>/dev/null || true
+		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp_shared.bin" 2>/dev/null)
+		if [[ -z "$remote_size" ]]; then
+			echo "warning: could not read the receiver's file size on attempt $attempt/3 (send command on $DOWNSTREAM_HOST exit=$send_status); retrying, not treating unreadable evidence as a confirmed empty receipt" >&2
 			continue
 		fi
-		wait "$remote_pid" 2>/dev/null || true
-		remote_size=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "stat -c %s /tmp/offload_check_udp_shared.bin" 2>/dev/null || echo 0)
 		if [[ "$remote_size" == "0" ]]; then
-			echo "warning: no data received on attempt $attempt/3 (UDP is best-effort); retrying" >&2
+			if [[ "$send_status" -ne 0 ]]; then
+				echo "warning: no data received on attempt $attempt/3, consistent with the send command on $DOWNSTREAM_HOST failing (exit=$send_status); retrying" >&2
+			else
+				echo "warning: no data received on attempt $attempt/3 (UDP is best-effort); retrying" >&2
+			fi
 			continue
 		fi
 		remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_udp_shared.bin 2>/dev/null | cut -d' ' -f1")
 		if [[ "$remote_hash" == "$sent_hash" ]]; then
-			record "$state_label" shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from $DOWNSTREAM_HOST through the DUT"
+			record "$state_label" shared_rewrite_udp PASS "SHA-256 of received datagram matches sent data on attempt $attempt/3 ($sent_hash), originated from $DOWNSTREAM_HOST through the DUT (send command exit=$send_status)"
 			return
 		fi
-		record "$state_label" shared_rewrite_udp FAIL "content mismatch on attempt $attempt: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not a total-loss condition eligible for retry"
+		record "$state_label" shared_rewrite_udp FAIL "content mismatch on attempt $attempt (send command on $DOWNSTREAM_HOST exit=$send_status): sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not a total-loss condition eligible for retry"
 		return
 	done
 	record "$state_label" shared_rewrite_udp FAIL "no data received from $DOWNSTREAM_HOST via the DUT after 3 attempts -- UDP is best-effort, but total loss across 3 attempts on a real link during an offload check is itself worth investigating, not accepted silently"
