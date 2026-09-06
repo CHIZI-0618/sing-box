@@ -208,6 +208,7 @@ func (i *Inbound) startInbound() error {
 			", self_bypass=", i.selfBypassMode(),
 			", process_tracking=", i.processTrackingMode(),
 		)
+		i.logStartupSummary()
 		return nil
 	}
 	i.logger.Debug(
@@ -305,6 +306,7 @@ func (i *Inbound) startInbound() error {
 		", tc_priority=", i.tcPriority,
 	)
 	i.udpReplySockets.startSweeper(i.ctx)
+	i.logStartupSummary()
 	return nil
 }
 

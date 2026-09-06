@@ -355,6 +355,145 @@ inclusive.
     Linux, or the router operating system. Multiple downstream interfaces may be
     configured for Wi-Fi, USB tethering, and similar links.
 
+### Examples
+
+Each of these three configurations passes `sing-box check` as shown; the
+underlying interception paths they select (`local.data_plane: tc`/`cgroup`,
+`shared.data_plane: socket_assign`/`packet_rewrite`) are each covered by this
+project's real-kernel network-namespace tests. `check` validates configuration
+structure and construction, not a live network — it does not itself attach
+anything to a real interface.
+
+##### Local proxy only
+
+Intercepts traffic this host itself generates. `local.data_plane` defaults to
+`cgroup`; set it to `tc` if `fakeip_icmp: reply` is needed for local traffic.
+
+```json
+{
+  "type": "ebpf",
+  "tag": "ebpf-in",
+  "local": {
+    "enabled": true
+  }
+}
+```
+
+##### Hotspot/tethering sharing only
+
+Intercepts traffic arriving from downstream clients on `wlan1` (adjust to the
+actual hotspot/tethering interface name), with no local interception.
+`shared.data_plane` defaults to `packet_rewrite`, which requires Ethernet
+framing; use `socket_assign` for PPP/PPPoE, raw-IP, or tunnel interfaces
+instead.
+
+```json
+{
+  "type": "ebpf",
+  "tag": "ebpf-in",
+  "shared": {
+    "enabled": true,
+    "interface": ["wlan1"]
+  }
+}
+```
+
+##### Local and hotspot combined
+
+Both paths at once, each with its own defaults. `fakeip_icmp: reply` here only
+covers whichever of the two paths is on `tc`/`socket_assign` — see the support
+matrix above; this combination (`local: tc` + `shared: socket_assign`) is the
+one that covers both. `fakeip_icmp: reply` requires a FakeIP DNS transport to
+be configured somewhere in `dns.servers`, shown here for completeness since
+`sing-box check` rejects `reply` without one.
+
+```json
+{
+  "inbounds": [
+    {
+      "type": "ebpf",
+      "tag": "ebpf-in",
+      "fakeip_icmp": "reply",
+      "local": {
+        "enabled": true,
+        "data_plane": "tc"
+      },
+      "shared": {
+        "enabled": true,
+        "data_plane": "socket_assign",
+        "interface": ["wlan1"]
+      }
+    }
+  ],
+  "dns": {
+    "servers": [
+      { "type": "udp", "tag": "remote", "server": "8.8.8.8" },
+      { "type": "fakeip", "tag": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
+    ],
+    "rules": [
+      { "query_type": ["A", "AAAA"], "server": "fakeip" }
+    ],
+    "final": "remote"
+  },
+  "outbounds": [
+    { "type": "direct" }
+  ]
+}
+```
+
+### Resource limits
+
+- **UDP reply sockets**: each distinct destination a client reaches through
+  the TC/shared data planes (not `local.data_plane: cgroup`, which never opens
+  one of these) gets one transparent UDP reply socket, bounded at 256 per
+  internal shard (16 shards, so 4096 total). At capacity, an idle socket is
+  reclaimed first; if none is reclaimable, the new destination's reply is
+  rejected rather than growing the pool further. Independently, a socket idle
+  for 5 minutes is reclaimed by a background sweep every minute, so idle
+  sockets do not wait for capacity pressure. None of this is user-configurable;
+  the defaults are sized for ordinary client counts, not tuned per deployment.
+- **Bypass CIDR / host address policies**: each backend's compiled bypass CIDR
+  and host-address policy maps are capped (tens of thousands of entries);
+  exceeding the cap is a startup or update error, not a silent truncation.
+- These limits exist to keep memory and kernel map usage bounded under
+  sustained load and drift-inducing events (network changes, repeated
+  failures); see Diagnostics below for the counters that expose pressure
+  against them at runtime.
+
+### Diagnostics
+
+Two distinct tools answer two different questions:
+
+- **`sing-box tools ebpf status`** probes what the *kernel this command runs
+  on* supports — program types, helpers, and map types — without needing a
+  running sing-box instance. It cannot tell you whether a *running* eBPF
+  inbound is actually intercepting traffic, since it never has a running
+  instance to read that from.
+- **The Clash API's `GET /ebpf`** endpoint (when a Clash API server is
+  configured) reports every eBPF inbound's live status from inside the
+  running process: which paths are enabled, the interface(s) and actual
+  mount mechanism (`tcx` or `clsact`) each attached with, whether anything is
+  waiting for an interface or currently recovering from a failure, the most
+  recent warning and when a failure last cleared on its own, bypass_rule_set
+  consistency across backends, UDP session and reply-socket-pool counts, and
+  the categorized failure/recovery counters described below. For example:
+
+  ```
+  curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
+  ```
+
+  A brief version of the same facts (enabled paths, actual mount, any path
+  still waiting for an interface, and what `fakeip_icmp` actually covers) is
+  also logged once at startup, at the level normally shown by default.
+
+The counters reported include: TC assignment lookup failures, shared
+packet-rewrite token-reservation failures, shared packet-rewrite reconcile
+failures, and recovery attempt/success/failure counts. They are cumulative
+since the process started and never reset on their own; take two readings to
+compute a rate. They intentionally never break down by client or destination
+(that would grow without bound as clients come and go) and never log
+individual packets.
+
 ### Limitations
 
 - A sing-box instance may contain only one eBPF inbound with local interception

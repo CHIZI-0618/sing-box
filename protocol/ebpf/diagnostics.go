@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -349,4 +350,74 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// logStartupSummary is startInbound's item-9 deliverable: a brief, always-
+// visible (Info, not Debug) statement of which paths are enabled, what each
+// actually mounted as (interface and mechanism, not just the configured
+// data plane -- a config can ask for TCX and still land on clsact), which
+// configured paths have no interface to attach to yet, and which
+// attachments fakeip_icmp actually covers. It is built from the same
+// Diagnostics this inbound already computes for external queries, so the
+// summary can never say something the diagnostics endpoint would disagree
+// with a moment later.
+//
+// This does not replace startInbound's existing Debug-level line: that one
+// is a complete dump meant for deep troubleshooting (routing marks, listener
+// modes, and so on); this one is the handful of facts an operator actually
+// wants to see once, right after startup, at the log level they normally run.
+func (i *Inbound) logStartupSummary() {
+	diagnostics := i.Diagnostics()
+
+	paths := make([]string, 0, 2)
+	if diagnostics.LocalEnabled {
+		paths = append(paths, "local="+diagnostics.LocalDataPlane)
+	}
+	if diagnostics.SharedEnabled {
+		paths = append(paths, "shared="+diagnostics.SharedDataPlane)
+	}
+	pathsSummary := "none"
+	if len(paths) > 0 {
+		pathsSummary = strings.Join(paths, ", ")
+	}
+
+	mountsSummary := "none"
+	if len(diagnostics.Attachments) > 0 {
+		mounts := make([]string, 0, len(diagnostics.Attachments))
+		for _, attachment := range diagnostics.Attachments {
+			mounts = append(mounts, fmt.Sprintf("%s(%s,%s)", attachment.InterfaceName, attachment.Role, attachment.Mechanism))
+		}
+		mountsSummary = strings.Join(mounts, ", ")
+	}
+
+	waiting := make([]string, 0, 2)
+	if diagnostics.LocalEnabled && !attachmentHasRole(diagnostics.Attachments, "local") {
+		waiting = append(waiting, "local")
+	}
+	if diagnostics.SharedEnabled && !attachmentHasRole(diagnostics.Attachments, "shared") {
+		waiting = append(waiting, "shared")
+	}
+	waitingSummary := "none"
+	if len(waiting) > 0 {
+		waitingSummary = strings.Join(waiting, ", ")
+	}
+
+	fakeIPICMPSummary := "off"
+	if diagnostics.FakeIPICMPReply {
+		covered := make([]string, 0, len(diagnostics.Attachments))
+		for _, attachment := range diagnostics.Attachments {
+			if attachment.FakeIPICMP {
+				covered = append(covered, attachment.InterfaceName+"("+attachment.Role+")")
+			}
+		}
+		fakeIPICMPSummary = "enabled, not yet covering any attachment"
+		if len(covered) > 0 {
+			fakeIPICMPSummary = strings.Join(covered, ", ")
+		}
+	}
+
+	i.logger.Info(
+		"eBPF inbound started: paths=[", pathsSummary, "] mounts=[", mountsSummary,
+		"] waiting_for_interface=[", waitingSummary, "] fakeip_icmp=[", fakeIPICMPSummary, "]",
+	)
 }

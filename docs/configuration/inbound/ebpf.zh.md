@@ -306,6 +306,128 @@ FakeIP 和 DNS 的优先级与 `local.bypass_port` 相同，配置 53 端口时�
     请在 Android、Linux 或路由器系统中配置这些功能。可以同时配置 Wi-Fi、USB
     网络共享等多个下游接口。
 
+### 示例
+
+以下三种配置均通过了 `sing-box check` 验证；它们所选用的接管路径
+（`local.data_plane: tc`/`cgroup`、`shared.data_plane: socket_assign`/
+`packet_rewrite`）均由本项目自身的真实内核网络命名空间测试覆盖。`check` 只验证
+配置结构与对象构造是否正确，并不会附加到真实网络接口上。
+
+##### 仅本机代理
+
+接管本机自身产生的流量。`local.data_plane` 默认是 `cgroup`；若本机流量需要
+`fakeip_icmp: reply`，请显式设置为 `tc`。
+
+```json
+{
+  "type": "ebpf",
+  "tag": "ebpf-in",
+  "local": {
+    "enabled": true
+  }
+}
+```
+
+##### 仅热点/网络共享
+
+接管从 `wlan1`（请替换为实际的热点/网络共享接口名）下游客户端到达的流量，不启用
+本机接管。`shared.data_plane` 默认是 `packet_rewrite`，要求以太网帧；对于
+PPP/PPPoE、raw-IP 或隧道接口，请改用 `socket_assign`。
+
+```json
+{
+  "type": "ebpf",
+  "tag": "ebpf-in",
+  "shared": {
+    "enabled": true,
+    "interface": ["wlan1"]
+  }
+}
+```
+
+##### 本机与热点组合
+
+两条路径同时启用，各自使用默认值。这里的 `fakeip_icmp: reply` 只覆盖使用
+`tc`/`socket_assign` 的那条路径——参见上文的支持矩阵；`local: tc` +
+`shared: socket_assign` 这一组合是唯一能同时覆盖两条路径的方式。
+`fakeip_icmp: reply` 要求 `dns.servers` 中配置了 FakeIP DNS 传输方式，因此
+以下示例给出了完整配置，因为缺少该项 `sing-box check` 会拒绝 `reply`。
+
+```json
+{
+  "inbounds": [
+    {
+      "type": "ebpf",
+      "tag": "ebpf-in",
+      "fakeip_icmp": "reply",
+      "local": {
+        "enabled": true,
+        "data_plane": "tc"
+      },
+      "shared": {
+        "enabled": true,
+        "data_plane": "socket_assign",
+        "interface": ["wlan1"]
+      }
+    }
+  ],
+  "dns": {
+    "servers": [
+      { "type": "udp", "tag": "remote", "server": "8.8.8.8" },
+      { "type": "fakeip", "tag": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
+    ],
+    "rules": [
+      { "query_type": ["A", "AAAA"], "server": "fakeip" }
+    ],
+    "final": "remote"
+  },
+  "outbounds": [
+    { "type": "direct" }
+  ]
+}
+```
+
+### 资源限制
+
+- **UDP 应答 socket**：客户端通过 TC/shared 数据面（不包括
+  `local.data_plane: cgroup`，它从不打开这类 socket）到达的每个不同目的地会
+  占用一个透明 UDP 应答 socket，按内部分片限制为每片 256 个（共 16 片，合计
+  4096 个）。达到容量上限时优先回收一个空闲 socket；若没有可回收的，新目的地
+  的应答会被拒绝而不是继续扩容。此外，一个空闲达 5 分钟的 socket 会被后台每
+  分钟一次的清扫任务独立回收，无需等待容量压力触发。以上均不可配置；默认值
+  是按常规客户端规模设定的，并未针对具体部署调优。
+- **绕行 CIDR / 主机地址策略**：各后端编译后的绕行 CIDR 与主机地址策略表都有
+  容量上限（数万条目级别）；超出上限会在启动或更新时报错，而不是被静默截断。
+- 上述限制的目的是在持续负载和会引发状态漂移的事件（网络变化、反复失败）下
+  保持内存与内核表使用量有界；运行时对应的压力指标见下方"诊断"一节的计数器。
+
+### 诊断
+
+以下两种工具回答的是两个不同的问题：
+
+- **`sing-box tools ebpf status`** 探测的是*运行该命令的内核*支持什么——程序
+  类型、helper、map 类型——不需要一个正在运行的 sing-box 实例。它无法判断一个
+  *正在运行*的 eBPF 入站是否真的在接管流量，因为它从来没有一个运行中的实例可
+  供读取。
+- **Clash API 的 `GET /ebpf`** 端点（当配置了 Clash API 服务器时）从运行中的
+  进程内部报告每个 eBPF 入站的实时状态：启用了哪些路径、每条路径实际挂载的
+  接口与机制（`tcx` 或 `clsact`）、是否有路径仍在等待接口或正在从故障中恢复、
+  最近一次警告及故障最近一次自行恢复的时间、各后端间 bypass_rule_set 的一致
+  性、UDP 会话数与应答 socket 池状态，以及下文所述的分类计数器。例如：
+
+  ```
+  curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
+  ```
+
+  同样这几项事实的简要版本（启用的路径、实际挂载方式、仍在等待接口的路径、
+  `fakeip_icmp` 实际覆盖的范围）也会在启动时以默认可见的日志级别记录一次。
+
+上报的计数器包括：TC assignment 查找失败次数、shared packet-rewrite 令牌
+（token）分配失败次数、shared packet-rewrite reconcile 失败次数，以及恢复
+尝试/成功/失败次数。这些计数从进程启动起累计，不会自行重置；要计算速率，取
+两次读数相减即可。它们刻意不按客户端或目的地拆分（那样会随客户端来去无限
+增长），也不会记录单个数据包。
+
 ### 限制
 
 - 一个 sing-box 实例中只能有一个启用 local 接管的 eBPF 入站；其他 eBPF 入站必须
