@@ -53,15 +53,29 @@ jobs:
             ./adapter ./common/dialer ./common/listener ./common/ebpf ./protocol/ebpf .
           go test -run '^$' -tags with_ebpf,with_gvisor ./protocol/tailscale
 
-      - name: Load program matrix
+      # This used to run only four tests named explicitly by an anchored -run
+      # regex. That list was never widened as more ebpf_integration tests
+      # were added to this package, so it silently stopped exercising them in
+      # CI at all -- concretely, TestTCIPv6PathIsolationIntegration (whose
+      # nil-program panic aborted the whole test binary before it was fixed)
+      # and the packet-rewrite/FakeIP-ICMP counter tests
+      # (TestFakeIPICMPStatsCountsPassThroughNotOrdinaryTraffic,
+      # TestFakeIPICMPStatsZeroWhenDisabled,
+      # TestSharedNetworkStatsReadCleanlyWithNoFailures,
+      # TestSharedNetworkStatsIndependent) never ran here as root, which is
+      # the only way any of them exercises a real kernel/map instead of just
+      # its own skip path. Every ebpf_integration test in this package needs
+      # a privileged run the same way protocol/ebpf's own step below runs
+      # unfiltered, so this drops the filter instead of extending the list
+      # again.
+      - name: Run common/ebpf real-kernel tests
         shell: bash
         run: |
           set -euo pipefail
           sudo env \
             "PATH=$PATH" \
             SING_BOX_EBPF_INTEGRATION=1 \
-            go test -v -count=1 \
-              -run '^Test(TCProgramRun|MapBatch|LRUFallbackBounded|FakeIPICMPPassThrough)Integration$' \
+            go test -v -count=1 -race \
               -tags with_ebpf,ebpf_integration \
               ./common/ebpf 2>&1 | tee -a verifier.log
 
