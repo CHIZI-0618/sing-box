@@ -164,6 +164,9 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 // anomaly for diagnostics until a later call applies cleanly everywhere.
 func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy) error {
 	previous := i.bypassRuleSetPolicy
+	previousVersion := i.bypassRuleSetVersion
+	version := previousVersion + 1
+	i.bypassRuleSetVersion = version
 	var applied []bypassCIDRAppliedBackend
 	fail := func(cause error) error {
 		failedPaths := revertBypassCIDRBackends(applied, func(name string, err error) {
@@ -180,10 +183,14 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
 			return fail(err)
 		}
+		i.bypassRuleSetTCVersion = version
 		applied = append(applied, bypassCIDRAppliedBackend{
 			name: "TC",
 			revert: func() error {
 				_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
+				if revertErr == nil {
+					i.bypassRuleSetTCVersion = previousVersion
+				}
 				return revertErr
 			},
 		})
@@ -192,10 +199,14 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
 			return fail(err)
 		}
+		i.bypassRuleSetCgroupVersion = version
 		applied = append(applied, bypassCIDRAppliedBackend{
 			name: "cgroup",
 			revert: func() error {
 				_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
+				if revertErr == nil {
+					i.bypassRuleSetCgroupVersion = previousVersion
+				}
 				return revertErr
 			},
 		})
@@ -207,18 +218,29 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 				if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
 					return fail(err)
 				}
+				i.bypassRuleSetSharedVersion = version
 				previousIPv4Count, previousIPv6Count := previous.Counts()
 				applied = append(applied, bypassCIDRAppliedBackend{
-					name:   "shared",
-					revert: func() error { return backend.SetBypassCIDRState(previousIPv4Count, previousIPv6Count) },
+					name: "shared",
+					revert: func() error {
+						revertErr := backend.SetBypassCIDRState(previousIPv4Count, previousIPv6Count)
+						if revertErr == nil {
+							i.bypassRuleSetSharedVersion = previousVersion
+						}
+						return revertErr
+					},
 				})
 			} else if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
 				return fail(err)
 			} else {
+				i.bypassRuleSetSharedVersion = version
 				applied = append(applied, bypassCIDRAppliedBackend{
 					name: "shared",
 					revert: func() error {
 						_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
+						if revertErr == nil {
+							i.bypassRuleSetSharedVersion = previousVersion
+						}
 						return revertErr
 					},
 				})

@@ -87,6 +87,13 @@ type EBPFDiagnostics struct {
 	// RecoveryPending is whether interface_monitor.go's scheduler currently
 	// has an outstanding retry for general TC state or shared packet-rewrite.
 	RecoveryPending bool `json:"recovery_pending"`
+	// NextRetryAt is when interface_monitor.go's single retry timer is next
+	// armed to fire, across all three of its components (shared
+	// packet-rewrite, general TC, bypass_rule_set) -- nil when nothing is
+	// currently outstanding, matching RecoveryPending/BypassRuleSetPending
+	// both being false. Whichever component's own backoff is soonest is
+	// what actually wakes the loop; this does not say which one.
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 
 	// BypassRuleSetConsistent is false only when a compensating rollback
 	// itself failed (see Inbound.bypassRuleSetInconsistent in
@@ -96,6 +103,21 @@ type EBPFDiagnostics struct {
 	// BypassRuleSetPending is whether a previously-failed bypass_rule_set
 	// refresh is still awaiting retry.
 	BypassRuleSetPending bool `json:"bypass_rule_set_pending"`
+	// BypassRuleSetExpectedVersion counts every attempt applyBypassCIDRPolicyLocked
+	// has made (successful or not) since this inbound started, including
+	// retries of the same compiled policy -- not the number of times the
+	// compiled policy's actual content changed. BypassRuleSetBackendVersions
+	// records the version each backend was last confirmed running (rolled
+	// back to the previous version number, not left at the new one, when a
+	// compensating revert for that backend succeeds); a backend missing from
+	// the map does not exist for this inbound. A backend's version lagging
+	// behind BypassRuleSetExpectedVersion means that backend has not yet
+	// converged to the latest attempt -- expected while BypassRuleSetPending
+	// is true, and exactly what BypassRuleSetConsistent=false means the
+	// process could not confirm one way or the other for at least one
+	// backend (see the revert-also-failed case in inbound_policy.go).
+	BypassRuleSetExpectedVersion uint64            `json:"bypass_rule_set_expected_version"`
+	BypassRuleSetBackendVersions map[string]uint64 `json:"bypass_rule_set_backend_versions,omitempty"`
 
 	UDPSessionCount int                        `json:"udp_session_count"`
 	UDPReplySockets udpReplySocketPoolSnapshot `json:"udp_reply_sockets"`
@@ -105,14 +127,28 @@ type EBPFDiagnostics struct {
 
 // tcOutcomeHistory is the small amount of extra bookkeeping Diagnostics
 // needs that nothing else in this package already tracks: the last outcome
-// runTCInterfaceUpdateLoop's update step reported, and when a failing
-// component most recently cleared.
+// runTCInterfaceUpdateLoop's update step reported, when a failing component
+// most recently cleared, and the loop's own current retry schedule.
 type tcOutcomeHistory struct {
 	access         sync.Mutex
 	haveOutcome    bool
 	lastOutcome    tcUpdateOutcome
 	lastOutcomeAt  time.Time
 	lastRecoveryAt time.Time
+	// nextRetryAt is the zero time when the retry timer is currently
+	// disarmed (nothing outstanding across any of the three components).
+	nextRetryAt time.Time
+}
+
+// recordNextRetryDeadline is runTCInterfaceUpdates' onScheduleChange hook:
+// called every time runTCInterfaceUpdateLoop arms or disarms its single
+// physical timer, so Diagnostics reports exactly the schedule the loop is
+// actually running on, not a value recomputed separately from state this
+// function does not otherwise expose.
+func (i *Inbound) recordNextRetryDeadline(deadline time.Time) {
+	i.diagnostics.access.Lock()
+	i.diagnostics.nextRetryAt = deadline
+	i.diagnostics.access.Unlock()
 }
 
 // recordTCUpdateOutcome is runTCInterfaceUpdates' hook: called with every
@@ -244,11 +280,29 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		recoveryAt := i.diagnostics.lastRecoveryAt
 		diagnostics.LastRecoveryAt = &recoveryAt
 	}
+	if !i.diagnostics.nextRetryAt.IsZero() {
+		nextRetryAt := i.diagnostics.nextRetryAt
+		diagnostics.NextRetryAt = &nextRetryAt
+	}
 	i.diagnostics.access.Unlock()
 
 	i.bypassRuleSetAccess.Lock()
 	diagnostics.BypassRuleSetConsistent = !i.bypassRuleSetInconsistent
 	diagnostics.BypassRuleSetPending = i.bypassRuleSetNeedsRetry
+	diagnostics.BypassRuleSetExpectedVersion = i.bypassRuleSetVersion
+	versions := make(map[string]uint64, 3)
+	if i.tcBackend() != nil {
+		versions["TC"] = i.bypassRuleSetTCVersion
+	}
+	if i.cgroupBackendInstance() != nil {
+		versions["cgroup"] = i.bypassRuleSetCgroupVersion
+	}
+	if i.sharedRewrite != nil && i.sharedRewrite.sharedBackendInstance() != nil {
+		versions["shared"] = i.bypassRuleSetSharedVersion
+	}
+	if len(versions) > 0 {
+		diagnostics.BypassRuleSetBackendVersions = versions
+	}
 	i.bypassRuleSetAccess.Unlock()
 
 	diagnostics.UDPSessionCount = i.udpClientTable.count()

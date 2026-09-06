@@ -126,7 +126,7 @@ func newRetryLoopHarness(t *testing.T) *retryLoopHarness {
 			outcome := harness.update()
 			harness.ran <- struct{}{}
 			return tcUpdateOutcome{sharedRewrite: outcome, general: tcSharedRewriteSettled, bypassRuleSet: tcSharedRewriteSettled}
-		})
+		}, nil)
 	}()
 	t.Cleanup(func() {
 		cancel()

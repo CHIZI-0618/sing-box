@@ -106,6 +106,16 @@ type Inbound struct {
 	bypassRuleSetPolicy       commonEBPF.BypassCIDRPolicy
 	bypassRuleSetNeedsRetry   bool
 	bypassRuleSetInconsistent bool
+	// bypassRuleSetVersion counts every applyBypassCIDRPolicyLocked attempt
+	// (successful or not, including retries of the same compiled policy);
+	// the three backend-specific versions below record the version each
+	// backend was last confirmed running -- see EBPFDiagnostics'
+	// BypassRuleSetExpectedVersion/BypassRuleSetBackendVersions doc comment
+	// for what these numbers do and do not promise.
+	bypassRuleSetVersion       uint64
+	bypassRuleSetTCVersion     uint64
+	bypassRuleSetCgroupVersion uint64
+	bypassRuleSetSharedVersion uint64
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool

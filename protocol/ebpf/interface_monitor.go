@@ -343,7 +343,7 @@ func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan stru
 		outcome := i.updateTCInterfaces(ctx)
 		i.recordTCUpdateOutcome(outcome)
 		return outcome
-	})
+	}, i.recordNextRetryDeadline)
 }
 
 // tcRetryState is one component's independently-tracked backoff: delay is
@@ -371,10 +371,17 @@ type tcRetryState struct {
 // often, so treating any event as progress would keep restarting the delay
 // and turn the backoff into a busy loop. A component's delay resets only
 // after a round in which that component reported nothing left to recover.
+// onScheduleChange, when non-nil, is called every time the loop's single
+// physical timer is armed or disarmed, with the absolute time it is now
+// armed for (or the zero time when disarmed) -- runTCInterfaceUpdates uses
+// it to keep Diagnostics' "next retry time" in sync with the same schedule
+// the timer itself is actually running on, rather than recomputing it
+// separately from state this function does not otherwise expose.
 func runTCInterfaceUpdateLoop(
 	ctx context.Context,
 	updates <-chan struct{},
 	update func(context.Context) tcUpdateOutcome,
+	onScheduleChange func(deadline time.Time),
 ) {
 	retryTimer := tcRetryTimerFactory()
 	defer retryTimer.Disarm()
@@ -471,6 +478,9 @@ func runTCInterfaceUpdateLoop(
 		if earliest == -1 {
 			retryTimer.Disarm()
 			retryChannel = nil
+			if onScheduleChange != nil {
+				onScheduleChange(time.Time{})
+			}
 			continue
 		}
 		delay := states[earliest].deadline.Sub(now)
@@ -479,6 +489,9 @@ func runTCInterfaceUpdateLoop(
 		}
 		retryTimer.Arm(delay)
 		retryChannel = retryTimer.Expired()
+		if onScheduleChange != nil {
+			onScheduleChange(states[earliest].deadline)
+		}
 	}
 }
 

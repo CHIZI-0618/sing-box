@@ -21,6 +21,28 @@ type componentRetryLoopHarness struct {
 	access   sync.Mutex
 	outcome  tcUpdateOutcome
 	ran      chan struct{}
+	// schedule is the most recent value passed to onScheduleChange -- nil
+	// before the loop has armed or disarmed even once, a non-nil zero time
+	// when the loop last reported disarmed.
+	schedule *time.Time
+}
+
+// onScheduleChange is passed to runTCInterfaceUpdateLoop as its
+// onScheduleChange hook.
+func (h *componentRetryLoopHarness) onScheduleChange(deadline time.Time) {
+	h.access.Lock()
+	h.schedule = &deadline
+	h.access.Unlock()
+}
+
+// nextRetryAt reports the harness's most recently observed schedule value,
+// the same way Inbound.Diagnostics would after runTCInterfaceUpdates' own
+// hook (recordNextRetryDeadline) ran -- nil (armed/disarmed unknown) before
+// any round has completed, a zero time when disarmed, or the armed deadline.
+func (h *componentRetryLoopHarness) nextRetryAt() *time.Time {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.schedule
 }
 
 func newComponentRetryLoopHarness(t *testing.T) *componentRetryLoopHarness {
@@ -60,7 +82,7 @@ func newComponentRetryLoopHarness(t *testing.T) *componentRetryLoopHarness {
 			harness.access.Unlock()
 			harness.ran <- struct{}{}
 			return outcome
-		})
+		}, harness.onScheduleChange)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -200,6 +222,51 @@ func TestRetryLoopComponentsAreIndependent(t *testing.T) {
 	}
 }
 
+// TestRetryLoopReportsNextRetryTime proves the onScheduleChange hook --
+// Inbound.recordNextRetryDeadline's data source for EBPFDiagnostics'
+// NextRetryAt -- actually reflects the loop's own timer, not a value guessed
+// at independently: nil before the loop has armed or disarmed even once, the
+// real deadline while a component is outstanding, and the zero time once
+// every component has settled and the timer is disarmed again.
+func TestRetryLoopReportsNextRetryTime(t *testing.T) {
+	harness := newComponentRetryLoopHarness(t)
+
+	if schedule := harness.nextRetryAt(); schedule != nil {
+		t.Fatalf("nextRetryAt() = %v, want nil before the loop has armed or disarmed", schedule)
+	}
+
+	failing := allSettled()
+	failing.general = tcSharedRewriteRecoverable
+	before := time.Now()
+	action := harness.round(t, harness.notify, failing)
+	after := time.Now()
+	if !action.armed || action.delay != tcRetryInitialDelay {
+		t.Fatalf("action = %+v, want armed at %s", action, tcRetryInitialDelay)
+	}
+
+	schedule := harness.nextRetryAt()
+	if schedule == nil {
+		t.Fatal("nextRetryAt() = nil, want the armed deadline reported")
+	}
+	earliestExpected := before.Add(tcRetryInitialDelay)
+	latestExpected := after.Add(tcRetryInitialDelay)
+	if schedule.Before(earliestExpected) || schedule.After(latestExpected) {
+		t.Fatalf("nextRetryAt() = %v, want between %v and %v", schedule, earliestExpected, latestExpected)
+	}
+
+	action = harness.round(t, harness.fire(t), allSettled())
+	if action.armed {
+		t.Fatalf("action = %+v, want disarmed once the general component settled", action)
+	}
+	schedule = harness.nextRetryAt()
+	if schedule == nil {
+		t.Fatal("nextRetryAt() = nil, want the disarmed (zero) deadline reported")
+	}
+	if !schedule.IsZero() {
+		t.Fatalf("nextRetryAt() = %v, want the zero time once disarmed", schedule)
+	}
+}
+
 // TestRetryLoopHealthCheckRunsWithNothingOutstanding proves the periodic,
 // unconditional health check: with every component settled and no retry
 // timer armed at all, a tick on the health-check ticker still drives an
@@ -228,7 +295,7 @@ func TestRetryLoopHealthCheckRunsWithNothingOutstanding(t *testing.T) {
 		runTCInterfaceUpdateLoop(ctx, nil, func(context.Context) tcUpdateOutcome {
 			ran <- struct{}{}
 			return allSettled()
-		})
+		}, nil)
 	}()
 	t.Cleanup(func() {
 		cancel()
