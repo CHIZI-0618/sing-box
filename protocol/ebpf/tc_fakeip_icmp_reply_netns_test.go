@@ -203,8 +203,19 @@ func TestFakeIPICMPLocalReplyAnswersARealPing(t *testing.T) {
 		t.Fatalf("attachmentType = %q, want clsact", attachment.attachmentType)
 	}
 
+	before, err := backend.FakeIPICMPReplyCount()
+	if err != nil {
+		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
+	}
 	if err = pingFakeIPICMPTarget(t, fakeIPTarget, 5*time.Second); err != nil {
 		t.Fatalf("read a reply: %v (the request may have gone to the wire instead of being answered)", err)
+	}
+	after, err := backend.FakeIPICMPReplyCount()
+	if err != nil {
+		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
+	}
+	if after != before+1 {
+		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", after, before+1)
 	}
 }
 

@@ -488,12 +488,18 @@ Two distinct tools answer two different questions:
   also logged once at startup, at the level normally shown by default.
 
 The counters reported include: TC assignment lookup failures, shared
-packet-rewrite token-reservation failures, shared packet-rewrite reconcile
-failures, and recovery attempt/success/failure counts. They are cumulative
-since the process started and never reset on their own; take two readings to
-compute a rate. They intentionally never break down by client or destination
-(that would grow without bound as clients come and go) and never log
-individual packets.
+packet-rewrite token-reservation and packet-rewrite failures, shared
+packet-rewrite reconcile failures, recovery attempt/success/failure counts,
+and (when `fakeip_icmp: reply` is enabled) FakeIP ICMP replies sent,
+Echo Requests examined and passed through without an answer, and rewrite
+failures. They are cumulative since the process started and never reset on
+their own; take two readings to compute a rate. They intentionally never
+break down by client or destination (that would grow without bound as
+clients come and go) and never log individual packets. The FakeIP ICMP
+pass-through count only ever counts ICMP/ICMPv6 Echo Request this object
+examined and declined to answer (fragmented, has options, wrong type/code,
+or outside the FakeIP prefixes) — never ordinary non-ICMP traffic on the
+same interface.
 
 ### Limitations
 

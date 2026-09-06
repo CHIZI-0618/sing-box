@@ -425,10 +425,14 @@ FakeIP DNS 传输方式，因此以下示例给出了完整配置，因为缺少
   `fakeip_icmp` 实际覆盖的范围）也会在启动时以默认可见的日志级别记录一次。
 
 上报的计数器包括：TC assignment 查找失败次数、shared packet-rewrite 令牌
-（token）分配失败次数、shared packet-rewrite reconcile 失败次数，以及恢复
-尝试/成功/失败次数。这些计数从进程启动起累计，不会自行重置；要计算速率，取
-两次读数相减即可。它们刻意不按客户端或目的地拆分（那样会随客户端来去无限
-增长），也不会记录单个数据包。
+（token）分配失败次数与改写（rewrite）失败次数、shared packet-rewrite
+reconcile 失败次数、恢复尝试/成功/失败次数，以及（启用 `fakeip_icmp: reply`
+时）FakeIP ICMP 已发送的回复数、已检查但未回答而放行的 Echo Request 数、
+改写失败数。这些计数从进程启动起累计，不会自行重置；要计算速率，取两次读数
+相减即可。它们刻意不按客户端或目的地拆分（那样会随客户端来去无限增长），
+也不会记录单个数据包。FakeIP ICMP 的放行计数只统计本对象检查过但未回答的
+ICMP/ICMPv6 Echo Request（分片、带选项、类型/代码不符，或目的地不在 FakeIP
+范围内）——绝不统计同一接口上的普通非 ICMP 流量。
 
 ### 限制
 

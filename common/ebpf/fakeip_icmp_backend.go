@@ -47,6 +47,20 @@ const (
 	fakeIPICMPFlagFakeIPv6   = 1 << 5
 )
 
+// These three mirror native/fakeip_icmp.bpf.c's SB_FAKEIP_ICMP_STAT_* indices
+// and SB_FAKEIP_ICMP_STAT_COUNT field for field; there is no generated
+// binding for either side's constants, so this comment is the ABI contract
+// between them. See that file's own comment on fakeip_icmp_stats for why
+// ordinary non-ICMP traffic on the same interface is never counted here at
+// all: PassThrough only ever counts an ICMP/ICMPv6 Echo Request this object
+// examined and declined to answer.
+const (
+	fakeIPICMPStatReply          uint32 = 0
+	fakeIPICMPStatPassThrough    uint32 = 1
+	fakeIPICMPStatRewriteFailure uint32 = 2
+	fakeIPICMPStatCount                 = 3
+)
+
 // fakeIPICMPControl mirrors struct sb_fakeip_icmp_control in
 // native/fakeip_icmp.bpf.c field for field; the _Static_assert in that file
 // is this struct's ABI contract.
@@ -58,13 +72,14 @@ type fakeIPICMPControl struct {
 	FakeIPIPv6Mask   [16]byte
 }
 
-// loadFakeIPICMPResources loads the object's one map and four programs. The
-// map is kept even though this object has no config-shaped sizing to do,
+// loadFakeIPICMPResources loads the object's two maps and four programs. The
+// maps are kept even though this object has no config-shaped sizing to do,
 // because loadObjectMaps drops any map not named in its overrides — the
-// override here exists to rename and place it, not to resize it.
+// overrides here exist to rename and place them, not to resize them.
 func loadFakeIPICMPResources() (map[string]*CiliumEBPF.Map, []*CiliumEBPF.Program, error) {
 	mapOverrides := map[string]mapSpecOverride{
 		"fakeip_icmp_control": {name: "sb_icmp_ctl", mapType: CiliumEBPF.Array, maxEntries: 1},
+		"fakeip_icmp_stats":   {name: "sb_icmp_stat", mapType: CiliumEBPF.PerCPUArray, maxEntries: fakeIPICMPStatCount},
 	}
 	maps, err := loadObjectMaps(loadFakeIPICMP, mapOverrides)
 	if err != nil {
@@ -202,6 +217,46 @@ func (b *FakeIPICMPBackend) SharedReplyProgram(framing TCLinkFraming) *CiliumEBP
 	default:
 		return nil
 	}
+}
+
+// ReplyCount, PassThroughCount, and RewriteFailureCount read
+// fakeip_icmp_stats' three categories -- see that map's own doc comment in
+// native/fakeip_icmp.bpf.c. Each is a full PERCPU_ARRAY sum, computed fresh
+// on every call; callers polling frequently should cache accordingly.
+func (b *FakeIPICMPBackend) ReplyCount() (uint64, error) {
+	return b.stat(fakeIPICMPStatReply)
+}
+
+func (b *FakeIPICMPBackend) PassThroughCount() (uint64, error) {
+	return b.stat(fakeIPICMPStatPassThrough)
+}
+
+func (b *FakeIPICMPBackend) RewriteFailureCount() (uint64, error) {
+	return b.stat(fakeIPICMPStatRewriteFailure)
+}
+
+func (b *FakeIPICMPBackend) stat(index uint32) (uint64, error) {
+	if b == nil {
+		return 0, errBackendClosed
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.closed {
+		return 0, errBackendClosed
+	}
+	statsMap := b.runtime.maps["fakeip_icmp_stats"]
+	if statsMap == nil {
+		return 0, errBackendClosed
+	}
+	var perCPU []uint64
+	if err := statsMap.Lookup(&index, &perCPU); err != nil {
+		return 0, err
+	}
+	var total uint64
+	for _, value := range perCPU {
+		total += value
+	}
+	return total, nil
 }
 
 // Close releases the object's maps and programs. Safe to call on a nil

@@ -65,3 +65,28 @@ func (b *TCBackend) FakeIPICMPSharedReplyProgram(framing TCLinkFraming) *CiliumE
 	b.access.RUnlock()
 	return backend.SharedReplyProgram(framing)
 }
+
+func (b *TCBackend) fakeIPICMPBackend() *FakeIPICMPBackend {
+	if b == nil {
+		return nil
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.fakeIPICMP
+}
+
+// FakeIPICMPReplyCount, FakeIPICMPPassThroughCount, and
+// FakeIPICMPRewriteFailureCount delegate to the underlying FakeIPICMPBackend's
+// own counters (see that type's doc comments); each reports errBackendClosed
+// if fakeip_icmp was never enabled on this backend.
+func (b *TCBackend) FakeIPICMPReplyCount() (uint64, error) {
+	return b.fakeIPICMPBackend().ReplyCount()
+}
+
+func (b *TCBackend) FakeIPICMPPassThroughCount() (uint64, error) {
+	return b.fakeIPICMPBackend().PassThroughCount()
+}
+
+func (b *TCBackend) FakeIPICMPRewriteFailureCount() (uint64, error) {
+	return b.fakeIPICMPBackend().RewriteFailureCount()
+}

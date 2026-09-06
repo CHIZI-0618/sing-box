@@ -125,6 +125,23 @@ struct icmp_echo_header {
 
 MAP(fakeip_icmp_control, __u32, struct sb_fakeip_icmp_control, BPF_MAP_TYPE_ARRAY, 1U);
 
+// fakeip_icmp_stats counts three outcomes for this object's own decisions,
+// distinct from any counter tc.bpf.c or shared_network.bpf.c keeps: a reply
+// actually sent, an ICMP Echo Request this object examined but did not
+// answer because it fell outside the safe subset (fragmented, has options,
+// wrong type/code, an extension header, or a destination outside the FakeIP
+// prefixes), and an in-place rewrite that failed partway (dropped, not
+// passed through, since the packet is already partially mutated by then).
+// Traffic that is not ICMP/ICMPv6 to begin with is not counted here at all
+// -- that would just be a count of ordinary traffic on whatever interface
+// this program is attached to, not a fact about fakeip_icmp's own behavior.
+#define SB_FAKEIP_ICMP_STAT_REPLY 0U
+#define SB_FAKEIP_ICMP_STAT_PASS_THROUGH 1U
+#define SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE 2U
+#define SB_FAKEIP_ICMP_STAT_COUNT 3U
+
+MAP(fakeip_icmp_stats, __u32, __u64, BPF_MAP_TYPE_PERCPU_ARRAY, SB_FAKEIP_ICMP_STAT_COUNT);
+
 static void *(*map_lookup)(void *map, const void *key) = (void *)BPF_FUNC_map_lookup_elem;
 static long (*redirect)(int ifindex, __u64 flags) = (void *)BPF_FUNC_redirect;
 static long (*skb_store_bytes)(void *ctx, __u32 offset, const void *from, __u32 length, __u64 flags) =
@@ -135,6 +152,11 @@ static long (*l4_csum_replace)(struct __sk_buff *skb, __u32 offset, __u64 from, 
     (void *)BPF_FUNC_l4_csum_replace;
 static __s64 (*csum_diff)(const __be32 *from, __u32 from_size, const __be32 *to, __u32 to_size, __wsum seed) =
     (void *)BPF_FUNC_csum_diff;
+
+INLINE void record_fakeip_icmp_stat(__u32 key) {
+    __u64 *counter = map_lookup(&fakeip_icmp_stats, &key);
+    if (counter != 0) *counter += 1U;
+}
 
 INLINE __u16 network_order16(__u16 value) {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -206,25 +228,53 @@ INLINE bool swap_ethernet_addresses(struct __sk_buff *skb) {
 // returning false, because a caller that only ever passes the packet through
 // on false has no way to tell "not for us" from "cannot be read" apart, and
 // does not need to.
+// find_ipv4_echo_request's own pass-through counting deliberately starts
+// only after confirming the packet is ICMP at all: every disqualification
+// before that point (not ICMP, or too short to even read the fixed header)
+// would otherwise count ordinary TCP/UDP traffic on this interface, which is
+// not a fact about fakeip_icmp's own behavior. Once a packet is known to be
+// ICMP, every further disqualification -- options, fragmentation, wrong
+// destination, wrong type/code, or too short to read the rest -- is exactly
+// what SB_FAKEIP_ICMP_STAT_PASS_THROUGH exists to count.
 INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 packet_length, __u32 l3_offset,
     const struct sb_fakeip_icmp_control *control, struct ipv4_header **ip, struct icmp_echo_header **icmp) {
     struct ipv4_header *header = data + l3_offset;
     if ((void *)(header + 1) > data_end) return false;
-    if (header->version != 4U || header->ihl != 5U || header->protocol != IPPROTO_ICMP_VALUE) return false;
-    if ((network_order16(header->fragment_offset) & (IPV4_FRAGMENT_OFFSET_MASK | IPV4_FRAGMENT_MORE)) != 0U) return false;
+    if (header->protocol != IPPROTO_ICMP_VALUE) return false;
+    if (header->version != 4U || header->ihl != 5U) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
+    if ((network_order16(header->fragment_offset) & (IPV4_FRAGMENT_OFFSET_MASK | IPV4_FRAGMENT_MORE)) != 0U) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
     __u16 total_length = network_order16(header->total_length);
-    if (total_length < sizeof(*header) + sizeof(struct icmp_echo_header)) return false;
-    if (packet_length < l3_offset || (__u32)total_length > packet_length - l3_offset) return false;
+    if (total_length < sizeof(*header) + sizeof(struct icmp_echo_header)) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
+    if (packet_length < l3_offset || (__u32)total_length > packet_length - l3_offset) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
     __u8 destination[4];
     __builtin_memcpy(destination, &header->destination, 4U);
     if (!sb_ebpf_must_intercept_fakeip_ipv4(
             destination, control->flags, SB_FAKEIP_ICMP_FLAG_FAKEIP_IPV4,
             control->fakeip_ipv4_prefix, control->fakeip_ipv4_mask)) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
         return false;
     }
     struct icmp_echo_header *echo = (void *)header + 20U;
-    if ((void *)(echo + 1) > data_end) return false;
-    if (echo->type != ICMP_ECHO_REQUEST_VALUE || echo->code != 0U) return false;
+    if ((void *)(echo + 1) > data_end) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
+    if (echo->type != ICMP_ECHO_REQUEST_VALUE || echo->code != 0U) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
     *ip = header;
     *icmp = echo;
     return true;
@@ -236,23 +286,43 @@ INLINE bool find_ipv4_echo_request(void *data, void *data_end, __u32 packet_leng
 // hop or routing header ahead of a real echo request is passed through
 // unmodified rather than walked, which is the conservative half of "either
 // explicitly allow or explicitly drop, never parse past what is verified".
+// Pass-through counting starts only once next_header is confirmed to be
+// ICMPv6 -- see find_ipv4_echo_request's own comment on why "not this
+// protocol at all" and "this protocol, but disqualified" are not the same
+// thing to count.
 INLINE bool find_ipv6_echo_request(void *data, void *data_end, __u32 packet_length, __u32 l3_offset,
     const struct sb_fakeip_icmp_control *control, struct ipv6_header **ip, struct icmp_echo_header **icmp) {
     struct ipv6_header *header = data + l3_offset;
     if ((void *)(header + 1) > data_end) return false;
-    if ((network_order32(header->version_flow) >> 28U) != 6U) return false;
     if (header->next_header != IPPROTO_ICMPV6_VALUE) return false;
+    if ((network_order32(header->version_flow) >> 28U) != 6U) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
     __u16 payload_length = network_order16(header->payload_length);
-    if (payload_length < sizeof(struct icmp_echo_header)) return false;
-    if (packet_length < l3_offset || (__u32)payload_length + sizeof(*header) > packet_length - l3_offset) return false;
+    if (payload_length < sizeof(struct icmp_echo_header)) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
+    if (packet_length < l3_offset || (__u32)payload_length + sizeof(*header) > packet_length - l3_offset) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
     if (!sb_ebpf_must_intercept_fakeip_ipv6(
             header->destination, control->flags, SB_FAKEIP_ICMP_FLAG_FAKEIP_IPV6,
             control->fakeip_ipv6_prefix, control->fakeip_ipv6_mask)) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
         return false;
     }
     struct icmp_echo_header *echo = (void *)header + sizeof(*header);
-    if ((void *)(echo + 1) > data_end) return false;
-    if (echo->type != ICMPV6_ECHO_REQUEST_VALUE || echo->code != 0U) return false;
+    if ((void *)(echo + 1) > data_end) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
+    if (echo->type != ICMPV6_ECHO_REQUEST_VALUE || echo->code != 0U) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_PASS_THROUGH);
+        return false;
+    }
     *ip = header;
     *icmp = echo;
     return true;
@@ -314,8 +384,10 @@ INLINE int reply_ipv4_echo(struct __sk_buff *skb, __u32 l3_offset, __be32 old_so
         skb_store_bytes(skb, source_offset, &new_source, 4U, 0U) != 0 ||
         skb_store_bytes(skb, destination_offset, &new_destination, 4U, 0U) != 0 ||
         skb_store_bytes(skb, icmp_offset + __builtin_offsetof(struct icmp_echo_header, type), &new_type, 1U, 0U) != 0) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE);
         return TC_ACT_SHOT;
     }
+    record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REPLY);
     return TC_ACT_OK;
 }
 
@@ -345,13 +417,15 @@ INLINE int reply_ipv6_echo(struct __sk_buff *skb, __u32 l3_offset, const __u8 ol
     __builtin_memcpy(&new_type_code, new_type_code_bytes, 2U);
     __u32 icmp_checksum_offset = icmp_offset + __builtin_offsetof(struct icmp_echo_header, checksum);
     __s64 address_diff = csum_diff((const __be32 *)old_addresses, 32U, (const __be32 *)new_addresses, 32U, 0U);
-    if (address_diff < 0) return TC_ACT_SHOT;
+    if (address_diff < 0) { record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE); return TC_ACT_SHOT; }
     if (l4_csum_replace(skb, icmp_checksum_offset, 0U, (__u64)address_diff, BPF_F_PSEUDO_HDR) != 0 ||
         l4_csum_replace(skb, icmp_checksum_offset, old_type_code, new_type_code, 2U) != 0 ||
         skb_store_bytes(skb, source_offset, new_addresses, 32U, 0U) != 0 ||
         skb_store_bytes(skb, icmp_offset + __builtin_offsetof(struct icmp_echo_header, type), &new_type, 1U, 0U) != 0) {
+        record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE);
         return TC_ACT_SHOT;
     }
+    record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REPLY);
     return TC_ACT_OK;
 }
 
@@ -398,7 +472,7 @@ INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
         __be32 old_destination = ip->destination;
         __u8 old_type = icmp->type;
         __u8 old_code = icmp->code;
-        if (ethernet && !swap_ethernet_addresses(skb)) return TC_ACT_SHOT;
+        if (ethernet && !swap_ethernet_addresses(skb)) { record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE); return TC_ACT_SHOT; }
         int result = reply_ipv4_echo(skb, l3_offset, old_source, old_destination, old_type, old_code);
         if (result != TC_ACT_OK) return result;
         return redirect((int)skb->ifindex, BPF_F_INGRESS);
@@ -412,7 +486,7 @@ INLINE int local_reply(struct __sk_buff *skb, bool ethernet) {
         __builtin_memcpy(old_addresses + 16U, ip->destination, 16U);
         __u8 old_type = icmp->type;
         __u8 old_code = icmp->code;
-        if (ethernet && !swap_ethernet_addresses(skb)) return TC_ACT_SHOT;
+        if (ethernet && !swap_ethernet_addresses(skb)) { record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE); return TC_ACT_SHOT; }
         int result = reply_ipv6_echo(skb, l3_offset, old_addresses, old_type, old_code);
         if (result != TC_ACT_OK) return result;
         return redirect((int)skb->ifindex, BPF_F_INGRESS);
@@ -459,7 +533,7 @@ INLINE int shared_reply(struct __sk_buff *skb, bool ethernet) {
         __be32 old_destination = ip->destination;
         __u8 old_type = icmp->type;
         __u8 old_code = icmp->code;
-        if (ethernet && !swap_ethernet_addresses(skb)) return TC_ACT_SHOT;
+        if (ethernet && !swap_ethernet_addresses(skb)) { record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE); return TC_ACT_SHOT; }
         int result = reply_ipv4_echo(skb, l3_offset, old_source, old_destination, old_type, old_code);
         if (result != TC_ACT_OK) return result;
         return redirect((int)skb->ifindex, 0U);
@@ -473,7 +547,7 @@ INLINE int shared_reply(struct __sk_buff *skb, bool ethernet) {
         __builtin_memcpy(old_addresses + 16U, ip->destination, 16U);
         __u8 old_type = icmp->type;
         __u8 old_code = icmp->code;
-        if (ethernet && !swap_ethernet_addresses(skb)) return TC_ACT_SHOT;
+        if (ethernet && !swap_ethernet_addresses(skb)) { record_fakeip_icmp_stat(SB_FAKEIP_ICMP_STAT_REWRITE_FAILURE); return TC_ACT_SHOT; }
         int result = reply_ipv6_echo(skb, l3_offset, old_addresses, old_type, old_code);
         if (result != TC_ACT_OK) return result;
         return redirect((int)skb->ifindex, 0U);

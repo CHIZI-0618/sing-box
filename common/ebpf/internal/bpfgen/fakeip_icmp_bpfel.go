@@ -17,6 +17,7 @@ import (
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
 	FakeIPICMPMapFakeipIcmpControl                     = "fakeip_icmp_control"
+	FakeIPICMPMapFakeipIcmpStats                       = "fakeip_icmp_stats"
 	FakeIPICMPProgSingboxFakeipIcmpLocalReplyEthernet  = "singbox_fakeip_icmp_local_reply_ethernet"
 	FakeIPICMPProgSingboxFakeipIcmpLocalReplyRawIp     = "singbox_fakeip_icmp_local_reply_raw_ip"
 	FakeIPICMPProgSingboxFakeipIcmpSharedReplyEthernet = "singbox_fakeip_icmp_shared_reply_ethernet"
@@ -76,6 +77,7 @@ type FakeIPICMPProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type FakeIPICMPMapSpecs struct {
 	FakeipIcmpControl *ebpf.MapSpec `ebpf:"fakeip_icmp_control"`
+	FakeipIcmpStats   *ebpf.MapSpec `ebpf:"fakeip_icmp_stats"`
 }
 
 // FakeIPICMPVariableSpecs contains global variables before they are loaded into the kernel.
@@ -105,11 +107,13 @@ func (o *FakeIPICMPObjects) Close() error {
 // It can be passed to LoadFakeIPICMPObjects or ebpf.CollectionSpec.LoadAndAssign.
 type FakeIPICMPMaps struct {
 	FakeipIcmpControl *ebpf.Map `ebpf:"fakeip_icmp_control"`
+	FakeipIcmpStats   *ebpf.Map `ebpf:"fakeip_icmp_stats"`
 }
 
 func (m *FakeIPICMPMaps) Close() error {
 	return _FakeIPICMPClose(
 		m.FakeipIcmpControl,
+		m.FakeipIcmpStats,
 	)
 }
 

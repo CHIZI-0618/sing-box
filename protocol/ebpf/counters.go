@@ -43,33 +43,37 @@ type ebpfCounters struct {
 	recoveryFailures  atomic.Uint64
 }
 
-// EBPFCounters is ebpfCounters' point-in-time snapshot for diagnostics.
-//
-// TokenReservationFailures and UDPReplySockets (embedded in EBPFDiagnostics
-// alongside this) round out item 8's full list; they are not duplicated
-// here because they already have their own accurate source: shared
-// packet-rewrite's native object already counts token-reservation failures
-// in the kernel (SharedNetworkBackend.TokenReservationFailures, wired into
-// shared_network_flow.h's reserve_token) and udpReplySocketPool already
-// tracks capacity rejections and reclaims (item 4). Item 8's "packet
-// rewrite failures" and "FakeIP ICMP replies, parse/policy pass-throughs,
-// rewrite-failure drops" bullets need new per-packet counters inside the
-// native objects themselves (shared_network.bpf.c and fakeip_icmp.bpf.c
-// respectively); this round does not add them; see the delivery notes for
-// why (rebuilding the native objects requires the pinned Android NDK r29
-// Clang 21 toolchain this environment does not have, and changing the .c
-// sources without regenerating the checked-in objects would leave them out
-// of sync).
+// EBPFCounters is ebpfCounters' point-in-time snapshot for diagnostics,
+// merged with counters read fresh from the kernel on every call rather than
+// tracked as Go-side atomics: TokenReservationFailures and RewriteFailures
+// (shared packet-rewrite's own native object, shared_network.bpf.c) and
+// FakeIPICMPReplies/FakeIPICMPPassThrough/FakeIPICMPRewriteFailureDrops
+// (the fakeip_icmp responder, common to every path that hosts it -- local
+// TC, shared socket_assign, and shared packet_rewrite -- summed across
+// however many of those this inbound actually has enabled). UDPReplySockets
+// (embedded in EBPFDiagnostics alongside this) rounds out item 8's list
+// from udpReplySocketPool's own existing capacity/reclaim tracking (item 4).
 type EBPFCounters struct {
 	AssignmentLookupFailures uint64 `json:"assignment_lookup_failures"`
-	// TokenReservationFailures is 0 whenever this inbound has no shared
-	// packet-rewrite backend to read it from, not necessarily because
-	// nothing ever failed.
+	// TokenReservationFailures and RewriteFailures are 0 whenever this
+	// inbound has no shared packet-rewrite backend to read them from, not
+	// necessarily because nothing ever failed.
 	TokenReservationFailures uint64 `json:"token_reservation_failures"`
+	RewriteFailures          uint64 `json:"rewrite_failures"`
 	SharedReconcileFailures  uint64 `json:"shared_reconcile_failures"`
 	RecoveryAttempts         uint64 `json:"recovery_attempts"`
 	RecoverySuccesses        uint64 `json:"recovery_successes"`
 	RecoveryFailures         uint64 `json:"recovery_failures"`
+	// FakeIPICMPReplies, FakeIPICMPPassThrough, and
+	// FakeIPICMPRewriteFailureDrops are all 0 when fakeip_icmp is not
+	// enabled on any path, not necessarily because nothing happened.
+	// PassThrough counts only ICMP/ICMPv6 Echo Request this object examined
+	// and declined to answer -- never ordinary non-ICMP traffic on the same
+	// interface, which would make it a count of ambient traffic rather than
+	// a fact about fakeip_icmp's own behavior.
+	FakeIPICMPReplies             uint64 `json:"fakeip_icmp_replies"`
+	FakeIPICMPPassThrough         uint64 `json:"fakeip_icmp_pass_through"`
+	FakeIPICMPRewriteFailureDrops uint64 `json:"fakeip_icmp_rewrite_failure_drops"`
 }
 
 func (c *ebpfCounters) snapshot() EBPFCounters {

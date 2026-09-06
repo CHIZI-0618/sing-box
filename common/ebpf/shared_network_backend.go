@@ -270,7 +270,7 @@ func prepareSharedNetworkRuntime(
 	var err error
 	runtimeState.maps, err = loadObjectMaps(loadSharedNetwork, map[string]mapSpecOverride{
 		"shared_control":             {name: "sb_sh_control", mapType: CiliumEBPF.Array, maxEntries: 1},
-		"shared_stats":               {name: "sb_sh_stats", mapType: CiliumEBPF.PerCPUArray, maxEntries: 1},
+		"shared_stats":               {name: "sb_sh_stats", mapType: CiliumEBPF.PerCPUArray, maxEntries: sharedNetworkStatCount},
 		"shared_flow_by_original":    {name: "sb_sh_orig", mapType: CiliumEBPF.Hash, maxEntries: capacity.Proxy, flags: bpfFlagNoPrealloc},
 		"shared_bypass_flow":         {name: "sb_sh_bypass", mapType: CiliumEBPF.LRUHash, maxEntries: capacity.Bypass},
 		"shared_flow_by_token":       {name: "sb_sh_token", mapType: CiliumEBPF.Hash, maxEntries: capacity.Proxy, flags: bpfFlagNoPrealloc},
@@ -583,4 +583,29 @@ func (b *SharedNetworkBackend) FakeIPICMPSharedReplyProgram(framing TCLinkFramin
 	backend := b.fakeIPICMP
 	b.access.RUnlock()
 	return backend.SharedReplyProgram(framing)
+}
+
+func (b *SharedNetworkBackend) fakeIPICMPBackend() *FakeIPICMPBackend {
+	if b == nil {
+		return nil
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.fakeIPICMP
+}
+
+// FakeIPICMPReplyCount, FakeIPICMPPassThroughCount, and
+// FakeIPICMPRewriteFailureCount delegate to the underlying FakeIPICMPBackend's
+// own counters -- see TCBackend's identical trio in tc_fakeip_icmp.go, and
+// FakeIPICMPBackend's own doc comments for what each counts.
+func (b *SharedNetworkBackend) FakeIPICMPReplyCount() (uint64, error) {
+	return b.fakeIPICMPBackend().ReplyCount()
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPPassThroughCount() (uint64, error) {
+	return b.fakeIPICMPBackend().PassThroughCount()
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPRewriteFailureCount() (uint64, error) {
+	return b.fakeIPICMPBackend().RewriteFailureCount()
 }

@@ -91,6 +91,10 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPing(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPSharedNetworkBackend(t)
 	t.Cleanup(func() { _ = backend.Close() })
+	repliesBefore, err := backend.FakeIPICMPReplyCount()
+	if err != nil {
+		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
+	}
 
 	attributes := netlink.NewLinkAttrs()
 	attributes.Name = "sbrwicmpw0"
@@ -191,6 +195,13 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPing(t *testing.T) {
 	}
 	if !reply.icmpChecksumOK {
 		t.Fatal("reply ICMP checksum does not validate")
+	}
+	repliesAfter, err := backend.FakeIPICMPReplyCount()
+	if err != nil {
+		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
+	}
+	if repliesAfter != repliesBefore+1 {
+		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
 
 // EBPFAttachmentDiagnostics describes one place this inbound is actually
@@ -253,12 +255,51 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	diagnostics.UDPReplySockets = i.udpReplySockets.snapshot()
 
 	diagnostics.Counters = i.counters.snapshot()
+	var sharedRewriteBackend *commonEBPF.SharedNetworkBackend
 	if i.sharedRewrite != nil {
-		if backend := i.sharedRewrite.sharedBackendInstance(); backend != nil {
-			if failures, err := backend.TokenReservationFailures(); err == nil {
-				diagnostics.Counters.TokenReservationFailures = failures
-			}
+		sharedRewriteBackend = i.sharedRewrite.sharedBackendInstance()
+	}
+	if sharedRewriteBackend != nil {
+		if failures, err := sharedRewriteBackend.TokenReservationFailures(); err == nil {
+			diagnostics.Counters.TokenReservationFailures = failures
 		}
+		if failures, err := sharedRewriteBackend.RewriteFailures(); err == nil {
+			diagnostics.Counters.RewriteFailures = failures
+		}
+	}
+	// fakeip_icmp can be hosted independently by the TC backend (local TC,
+	// shared socket_assign) and by the shared packet-rewrite backend at the
+	// same time -- each loads its own copy of the object (see
+	// common/ebpf/fakeip_icmp_backend.go) -- so their counts are summed
+	// rather than one overwriting the other.
+	for _, addCount := range []func() (uint64, uint64, uint64, bool){
+		func() (uint64, uint64, uint64, bool) {
+			backend := i.tcBackend()
+			if backend == nil || !backend.FakeIPICMPEnabled() {
+				return 0, 0, 0, false
+			}
+			replies, _ := backend.FakeIPICMPReplyCount()
+			passThrough, _ := backend.FakeIPICMPPassThroughCount()
+			rewriteFailures, _ := backend.FakeIPICMPRewriteFailureCount()
+			return replies, passThrough, rewriteFailures, true
+		},
+		func() (uint64, uint64, uint64, bool) {
+			if sharedRewriteBackend == nil || !sharedRewriteBackend.FakeIPICMPEnabled() {
+				return 0, 0, 0, false
+			}
+			replies, _ := sharedRewriteBackend.FakeIPICMPReplyCount()
+			passThrough, _ := sharedRewriteBackend.FakeIPICMPPassThroughCount()
+			rewriteFailures, _ := sharedRewriteBackend.FakeIPICMPRewriteFailureCount()
+			return replies, passThrough, rewriteFailures, true
+		},
+	} {
+		replies, passThrough, rewriteFailures, enabled := addCount()
+		if !enabled {
+			continue
+		}
+		diagnostics.Counters.FakeIPICMPReplies += replies
+		diagnostics.Counters.FakeIPICMPPassThrough += passThrough
+		diagnostics.Counters.FakeIPICMPRewriteFailureDrops += rewriteFailures
 	}
 
 	diagnostics.State = deriveDiagnosticsState(diagnostics)
@@ -342,10 +383,14 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 		d.UDPReplySockets.Count, d.UDPReplySockets.Peak, d.UDPReplySockets.Evicted, d.UDPReplySockets.CapacityRejected,
 	))
 	lines = append(lines, fmt.Sprintf(
-		"Counters: assignment_lookup_failures=%d token_reservation_failures=%d shared_reconcile_failures=%d "+
-			"recovery_attempts=%d recovery_successes=%d recovery_failures=%d",
-		d.Counters.AssignmentLookupFailures, d.Counters.TokenReservationFailures, d.Counters.SharedReconcileFailures,
-		d.Counters.RecoveryAttempts, d.Counters.RecoverySuccesses, d.Counters.RecoveryFailures,
+		"Counters: assignment_lookup_failures=%d token_reservation_failures=%d rewrite_failures=%d "+
+			"shared_reconcile_failures=%d recovery_attempts=%d recovery_successes=%d recovery_failures=%d",
+		d.Counters.AssignmentLookupFailures, d.Counters.TokenReservationFailures, d.Counters.RewriteFailures,
+		d.Counters.SharedReconcileFailures, d.Counters.RecoveryAttempts, d.Counters.RecoverySuccesses, d.Counters.RecoveryFailures,
+	))
+	lines = append(lines, fmt.Sprintf(
+		"fakeip_icmp counters: replies=%d pass_through=%d rewrite_failure_drops=%d",
+		d.Counters.FakeIPICMPReplies, d.Counters.FakeIPICMPPassThrough, d.Counters.FakeIPICMPRewriteFailureDrops,
 	))
 	for _, line := range lines {
 		if _, err := io.WriteString(w, line+"\n"); err != nil {
