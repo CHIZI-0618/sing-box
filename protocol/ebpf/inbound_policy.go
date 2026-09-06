@@ -68,11 +68,19 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 		i.policyWarnings.warn(i.logger, "refresh TC eBPF bypass_rule_set: ", err)
 		// A rule-set update is the only thing that would otherwise ever ask
 		// for a retry: nothing about this ruleset is guaranteed to change
-		// again. retryBypassRuleSetIfNeededLocked, driven by the same
-		// scheduler that already retries other TC failures without needing
-		// a new event, picks this back up instead of leaving it to whatever
-		// the next unrelated rule-set change happens to be.
+		// again. retryBypassRuleSetIfNeededLocked picks this back up on the
+		// scheduler's next round, but the scheduler only runs a round on a
+		// network event or its own health-check tick (tcHealthCheckInterval,
+		// ten minutes) -- setting the flag alone does not make one happen.
+		// notifyTCInterfaceUpdate is the same non-blocking wake this
+		// package's other event sources already use to get an immediate
+		// round out of the update loop instead of waiting on either of
+		// those; without it, this failure's own first retry attempt would
+		// sit unnoticed for up to ten minutes even though the scheduler's
+		// real exponential backoff (seconds, not minutes) is what every
+		// other TC failure in this package actually gets.
 		i.bypassRuleSetNeedsRetry = true
+		i.notifyTCInterfaceUpdate()
 		return
 	}
 	i.bypassRuleSetNeedsRetry = false

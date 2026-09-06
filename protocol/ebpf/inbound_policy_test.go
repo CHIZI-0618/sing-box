@@ -436,3 +436,31 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 		t.Fatalf("bypassRuleSetPolicy = %+v, want the second (latest expected) policy, not the first", inbound.bypassRuleSetPolicy)
 	}
 }
+
+// TestUpdateBypassRuleSetWakesTheSchedulerOnFailure is an independent
+// review's finding: updateBypassRuleSet's failure path set
+// bypassRuleSetNeedsRetry but never actually woke the scheduler, despite
+// its own comment claiming retryBypassRuleSetIfNeededLocked would "pick
+// this back up" the same way other TC failures get retried. The scheduler
+// only runs a round on a network event or its own ten-minute health-check
+// tick (tcHealthCheckInterval) -- setting the flag alone does not cause
+// either, so the very first retry attempt for a rule-set update failure
+// would otherwise sit unnoticed for up to ten minutes, not the seconds
+// -scale exponential backoff every other TC failure in this package gets.
+func TestUpdateBypassRuleSetWakesTheSchedulerOnFailure(t *testing.T) {
+	inbound := &Inbound{bypassRuleSetStarted: true}
+	inbound.logger = log.NewNOPFactory().Logger()
+	inbound.tcDataPlane = &tcDataPlane{backend: &commonEBPF.TCBackend{}} // zero value: never usable
+	inbound.interfaceMonitor.network = &testNetworkUpdateMonitor{}
+	inbound.interfaceMonitor.updates = make(chan struct{}, 1)
+
+	inbound.updateBypassRuleSet(nil)
+	if !inbound.bypassRuleSetNeedsRetry {
+		t.Fatal("fixture failed to create a pending bypass_rule_set retry -- the backend must be unusable for this test to mean anything")
+	}
+	select {
+	case <-inbound.interfaceMonitor.updates:
+	default:
+		t.Fatal("failed rule-set callback left the scheduler asleep; the first retry would wait for a network event or the ten-minute health tick")
+	}
+}
