@@ -12,8 +12,8 @@ from this branch; it is not part of the public documentation site under
 
 All code, test, and CI changes described in this document, including §12's
 response to the first independent code review, §13's response to a second
-one, and §14's response to a third, land at
-`600850181c923bed7e4cd022bbe7227f51d21047`. This section is updated in place
+one, §14's response to a third, and §15's response to a fourth, land at
+`f7b001f8852c48dbe41db9518e7ce7a8c9dd8399`. This section is updated in place
 each time this document itself is revised, rather than being re-derived —
 this document's own commit necessarily lands after the hash it names.
 
@@ -44,14 +44,16 @@ f04e0561 ebpf: count shared packet-rewrite UDP clients in UDPSessionCount too
 b1b7f4e7 ebpf: fix offload-verify script's coverage, content, and role checks
 f05e751d docs: record the second independent review's three findings and this round's fix
 60085018 ebpf: never let a UDP send-command failure skip inspecting the receipt
+9df654b4 docs: record the third independent review's finding and this round's fix
+f7b001f8 ebpf: guard the UDP receipt-size read against the script's own set -e
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
 (`.codex-remote-attachments/`, predating this work) and `outputs/` (the
 independent reviews' own artifact bundles — `outputs/ebpf-review/`,
-`outputs/ebpf-review-round2/`, and `outputs/ebpf-review-round3/` — left
-exactly as delivered) — see §12, §13, and §14 for how those reviews'
-findings were addressed.
+`outputs/ebpf-review-round2/`, `outputs/ebpf-review-round3/`, and
+`outputs/ebpf-review-round4/` — left exactly as delivered) — see §12, §13,
+§14, and §15 for how those reviews' findings were addressed.
 
 ## 2. Environment
 
@@ -857,3 +859,101 @@ was modified by this round beyond this one finding. `outputs/ebpf-review/`,
 `outputs/ebpf-review-round2/`, and `outputs/ebpf-review-round3/` (each
 review's own artifact bundle) were read for context and left completely
 untouched, uncommitted, exactly as delivered.
+
+## 15. Response to a fourth independent code review
+
+A fourth independent review of HEAD `9df654b4` and fix commit `60085018`
+confirmed §14's fix closed the previous P2 (a failed UDP sender skipping
+the corrupt receipt and later reporting PASS) in both roles, re-running the
+round-3 harness unchanged and observing FAIL on attempt 1 in both
+functions, with summary and role-dispatch checks still behaving as
+expected and `bash -n`/`shellcheck -x` clean. It found one new P2 in the
+same two functions, one line past what §14 fixed.
+
+### P2 — the receipt-size read was itself unguarded under the script's own `set -euo pipefail`
+
+**Finding**: `remote_size=$($SSH ... "stat -c %s ..." 2>/dev/null)` is a
+bare command-substitution assignment. Under this script's own `set -euo
+pipefail` (line 130), a nonzero exit from that inner `$SSH`/`stat` call —
+not the `2>/dev/null` redirect, which only silences stderr, not the exit
+status — terminates the whole script immediately, before the `[[ -z
+"$remote_size" ]]` emptiness check introduced by §14 ever runs. The review
+reproduced this for both production functions: an SSH/stat failure on
+attempt 1 produced no FAIL record and no completion, and in the full
+script this would silently stop the rest of the offload matrix and the
+final summary from ever running — not a false PASS, but a structured
+report going unfinished without any indication why. The review also noted
+a second, narrower gap: if that same command *succeeded* but printed empty
+output (a synthetic case, not the ordinary GNU `stat` failure mode), the
+old `[[ -z ... ]]` check let it fall into the same branch as a *confirmed*
+zero-byte receipt and permitted a fresh transfer retry — which still does
+not implement the documented retry-on-confirmed-total-loss-only policy,
+since nothing was actually confirmed.
+
+**Fix** (`f7b001f8`): the assignment is now wrapped in an explicit `if !
+remote_size=$(...); then remote_size=""; fi` guard, which `set -e` never
+treats as a fatal top-level failure (a command tested directly in an `if`
+condition is exempt, regardless of its exit status). The result is then
+validated with `[[ "$remote_size" =~ ^[0-9]+$ ]]` rather than merely
+checked for emptiness, so a failed call and a successful-but-malformed one
+are both rejected the same way. Either case is now recorded as an
+immediate FAIL naming the evidence-read error and returns — it is never
+retried as a fresh transfer attempt, per the review's own instruction that
+only a successfully read, confirmed-zero size may permit that. This is the
+review's primary suggested correction; its offered alternative (retry
+reading the same attempt's evidence without moving on to a new transfer)
+was not taken, to avoid introducing a second, nested retry mechanism
+alongside the existing per-attempt loop for a case — a completely
+unreachable or non-responding SSH endpoint — where a fresh transfer retry
+is no more likely to succeed than a fresh read retry would be.
+
+**Verified**: an ad hoc, uncommitted scratchpad harness deliberately set
+`set -euo pipefail` itself — matching the real script's own flags exactly,
+which every earlier scratchpad harness in this engagement had not done
+(they only ever set `-uo pipefail`), and is exactly why this bug had not
+already surfaced in this engagement's own prior verification passes. Under
+those matched flags: (1) a hard SSH/stat failure (nonzero exit, no output)
+on the receiver side, for both `check_local_udp_rewrite` and
+`check_shared_udp_rewrite`, now produces a recorded FAIL naming the
+evidence-read error and lets the harness process continue running,
+where the old code would have aborted the whole script; (2) a
+success-with-empty-output stat result is rejected as invalid rather than
+accepted as a confirmed zero, also producing an immediate FAIL; (3) a
+genuinely confirmed zero-byte receipt still retries three times and then
+records the same total-loss FAIL as before, unchanged. The round-2 and
+round-3 real-loopback regression harnesses (matching content, a listener
+that cannot bind, single-byte corruption, and the send-failure-plus-
+corrupt-receipt scenario) were re-run unchanged and still pass. `bash -n`
+and `shellcheck -x` both clean; the full `go test -race` suite for
+`common/ebpf` and `protocol/ebpf` still passes as root under WSL Debian.
+Never run against real hardware, and the review's own reproduction (`bash
+outputs/ebpf-review-round4/receipt-errors.sh`) likewise used only mocked
+network commands, changing no real NIC or SSH configuration.
+
+### What this round does not resolve
+
+Unchanged from §14: real hardware remains unexecuted; the
+`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing` flake's root cause
+remains unconfirmed (this review did not run the Go suite and does not
+bear on it either way); real GitHub Actions, Android, and TCX-on-physical-
+silicon remain unverified; items 11 and 12 remain held. One adjacent risk
+of the same general class is disclosed here rather than fixed, per this
+round's scope: the `remote_hash=$($SSH ... "sha256sum ...")` assignment
+immediately after the now-fixed `remote_size` read, in both functions, is
+still a bare, unguarded command substitution under the same `set -e`. It
+was not named by this review, and this round makes no claim about it
+either way; whether it warrants the same guard is left for a future round
+to assess on its own review, not folded into this fix.
+
+### Summary
+
+| Finding | Severity | Status | Live-verified |
+|---|---|---|---|
+| Receipt-size read unguarded under set -e | P2 | Fixed | Yes, reproduces both the abort and the empty-output cases for both roles |
+
+No production code, existing Go tests, or the acceptance evidence above §15
+was modified by this round beyond this one finding. `outputs/ebpf-review/`,
+`outputs/ebpf-review-round2/`, `outputs/ebpf-review-round3/`, and
+`outputs/ebpf-review-round4/` (each review's own artifact bundle) were read
+for context and left completely untouched, uncommitted, exactly as
+delivered.
