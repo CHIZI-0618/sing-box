@@ -43,3 +43,24 @@ func TestProcessTrackerInstructions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProcessTrackerPolicyMetadata(t *testing.T) {
+	tests := []struct {
+		name          string
+		defaultBypass bool
+		matched       bool
+		expected      int32
+	}{
+		{"include match", true, true, socketMetadataPolicyIntercept},
+		{"include miss", true, false, socketMetadataPolicyBypass},
+		{"exclude match", false, true, socketMetadataPolicyBypass},
+		{"exclude miss", false, false, socketMetadataPolicyIntercept},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := processTrackerPolicyMetadata(test.defaultBypass, test.matched); actual != test.expected {
+				t.Fatalf("unexpected metadata: got=%d expected=%d", actual, test.expected)
+			}
+		})
+	}
+}
