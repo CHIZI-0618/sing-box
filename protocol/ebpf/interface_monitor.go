@@ -538,6 +538,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 	if i.sharedRewrite != nil && i.sharedRewrite.dataPlane != nil {
 		previous := i.sharedRewrite.dataPlane.attachmentDescriptions()
 		if err = i.sharedRewrite.dataPlane.reconcile(sharedInterfaces, hostAddresses); err != nil {
+			i.counters.sharedReconcileFailures.Add(1)
 			i.interfaceWarnings.reconcile.warn(i.logger, "refresh shared packet-rewrite interfaces: ", err)
 			outcome.sharedRewrite = i.sharedRewrite.dataPlane.retryOutcome()
 		} else {

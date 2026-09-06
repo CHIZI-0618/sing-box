@@ -96,6 +96,8 @@ type EBPFDiagnostics struct {
 
 	UDPSessionCount int                        `json:"udp_session_count"`
 	UDPReplySockets udpReplySocketPoolSnapshot `json:"udp_reply_sockets"`
+
+	Counters EBPFCounters `json:"counters"`
 }
 
 // tcOutcomeHistory is the small amount of extra bookkeeping Diagnostics
@@ -112,17 +114,46 @@ type tcOutcomeHistory struct {
 
 // recordTCUpdateOutcome is runTCInterfaceUpdates' hook: called with every
 // outcome the update step reports, whether or not anything changed, so
-// Diagnostics always reflects the most recent round.
+// Diagnostics always reflects the most recent round. It also drives
+// ebpfCounters' recovery attempt/success/failure counts, across all three
+// of tcUpdateOutcome's components: one attempt per round in which any
+// component reported Recoverable, one success per component transition from
+// Recoverable to Settled, one failure per component transition to
+// Unrecoverable.
 func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
 	now := time.Now()
 	i.diagnostics.access.Lock()
 	defer i.diagnostics.access.Unlock()
-	recoveredNow := func(previous, current tcSharedRewriteOutcome) bool {
-		return previous == tcSharedRewriteRecoverable && current == tcSharedRewriteSettled
+
+	components := [...]tcSharedRewriteOutcome{outcome.sharedRewrite, outcome.general, outcome.bypassRuleSet}
+	var previousComponents [3]tcSharedRewriteOutcome
+	if i.diagnostics.haveOutcome {
+		previousComponents = [3]tcSharedRewriteOutcome{
+			i.diagnostics.lastOutcome.sharedRewrite,
+			i.diagnostics.lastOutcome.general,
+			i.diagnostics.lastOutcome.bypassRuleSet,
+		}
 	}
-	if i.diagnostics.haveOutcome &&
-		(recoveredNow(i.diagnostics.lastOutcome.general, outcome.general) ||
-			recoveredNow(i.diagnostics.lastOutcome.sharedRewrite, outcome.sharedRewrite)) {
+	recoveredThisRound := false
+	attemptedThisRound := false
+	for index, current := range components {
+		if current == tcSharedRewriteRecoverable {
+			attemptedThisRound = true
+		}
+		if i.diagnostics.haveOutcome {
+			switch {
+			case previousComponents[index] == tcSharedRewriteRecoverable && current == tcSharedRewriteSettled:
+				i.counters.recoverySuccesses.Add(1)
+				recoveredThisRound = true
+			case previousComponents[index] != tcSharedRewriteUnrecoverable && current == tcSharedRewriteUnrecoverable:
+				i.counters.recoveryFailures.Add(1)
+			}
+		}
+	}
+	if attemptedThisRound {
+		i.counters.recoveryAttempts.Add(1)
+	}
+	if recoveredThisRound {
 		i.diagnostics.lastRecoveryAt = now
 	}
 	i.diagnostics.lastOutcome = outcome
@@ -217,6 +248,15 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	diagnostics.UDPSessionCount = i.udpClientTable.count()
 	diagnostics.UDPReplySockets = i.udpReplySockets.snapshot()
 
+	diagnostics.Counters = i.counters.snapshot()
+	if i.sharedRewrite != nil {
+		if backend := i.sharedRewrite.sharedBackendInstance(); backend != nil {
+			if failures, err := backend.TokenReservationFailures(); err == nil {
+				diagnostics.Counters.TokenReservationFailures = failures
+			}
+		}
+	}
+
 	diagnostics.State = deriveDiagnosticsState(diagnostics)
 	return diagnostics
 }
@@ -296,6 +336,12 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 	lines = append(lines, fmt.Sprintf(
 		"UDP reply sockets: count=%d peak=%d evicted=%d capacity_rejected=%d",
 		d.UDPReplySockets.Count, d.UDPReplySockets.Peak, d.UDPReplySockets.Evicted, d.UDPReplySockets.CapacityRejected,
+	))
+	lines = append(lines, fmt.Sprintf(
+		"Counters: assignment_lookup_failures=%d token_reservation_failures=%d shared_reconcile_failures=%d "+
+			"recovery_attempts=%d recovery_successes=%d recovery_failures=%d",
+		d.Counters.AssignmentLookupFailures, d.Counters.TokenReservationFailures, d.Counters.SharedReconcileFailures,
+		d.Counters.RecoveryAttempts, d.Counters.RecoverySuccesses, d.Counters.RecoveryFailures,
 	))
 	for _, line := range lines {
 		if _, err := io.WriteString(w, line+"\n"); err != nil {

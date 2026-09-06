@@ -114,6 +114,7 @@ type Inbound struct {
 	policyWarnings    warningLimiter
 	interfaceWarnings interfaceWarningLimiters
 	diagnostics       tcOutcomeHistory
+	counters          ebpfCounters
 }
 
 func (i *Inbound) localTCEnabled() bool {
