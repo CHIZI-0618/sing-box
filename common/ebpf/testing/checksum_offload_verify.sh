@@ -447,15 +447,44 @@ check_local_udp_rewrite() {
 # fakeip_icmp_replies counter to have actually advanced, which is real
 # evidence the packet was processed by this inbound's eBPF code specifically
 # and not, say, answered by some unrelated device on the same segment.
+#
+# A sixth independent review found dut_counter's own two call sites here
+# were still bare command substitutions under this script's `set -euo
+# pipefail`: dut_counter's internal `curl | jq` pipeline can exit nonzero
+# under `pipefail` when DUT_DIAGNOSTICS_URL is configured but the DUT's
+# diagnostics endpoint is unreachable, which aborted the whole script
+# instead of recording a structured outcome -- disclosed but left unfixed
+# after the fifth review, since that review had named a different six
+# sites. Both reads are now guarded the same way as every other evidence
+# read in this file, and their results validated as plain nonnegative
+# integers rather than merely checked for emptiness: a read that fails, or
+# succeeds with a non-numeric result, is an immediate, explicit FAIL when
+# DUT_DIAGNOSTICS_URL is configured -- it is never silently treated the
+# same as DUT_DIAGNOSTICS_URL being unset, which would let a configured but
+# broken diagnostics endpoint quietly downgrade this check to the weaker,
+# opt-out mode instead of reporting that the stronger mode it was
+# configured for could not actually run.
 check_shared_fakeip_icmp() {
 	local state_label="$1" family="$2" target="$3"
 	[[ -z "$DOWNSTREAM_HOST" ]] && return
 	local ping_bin=ping
 	[[ "$family" == "6" ]] && ping_bin=ping6
 	local before after out
-	before=$(dut_counter .fakeip_icmp_replies)
+	if ! before=$(dut_counter .fakeip_icmp_replies); then
+		before=""
+	fi
+	if [[ -n "$DUT_DIAGNOSTICS_URL" && ! "$before" =~ ^[0-9]+$ ]]; then
+		record "$state_label" "shared_fakeip_icmp_v${family}" FAIL "DUT_DIAGNOSTICS_URL is configured but the 'before' fakeip_icmp_replies counter could not be read -- evidence-read error, not a content judgment"
+		return
+	fi
 	if out=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" "$ping_bin -c $PING_COUNT -q $target" 2>&1); then
-		after=$(dut_counter .fakeip_icmp_replies)
+		if ! after=$(dut_counter .fakeip_icmp_replies); then
+			after=""
+		fi
+		if [[ -n "$DUT_DIAGNOSTICS_URL" && ! "$after" =~ ^[0-9]+$ ]]; then
+			record "$state_label" "shared_fakeip_icmp_v${family}" FAIL "DUT_DIAGNOSTICS_URL is configured but the 'after' fakeip_icmp_replies counter could not be read -- evidence-read error, not a content judgment"
+			return
+		fi
 		local loss
 		loss=$(echo "$out" | grep -oP '\d+(?=% packet loss)')
 		if [[ "$loss" != "0" ]]; then
@@ -463,7 +492,7 @@ check_shared_fakeip_icmp() {
 			return
 		fi
 		if [[ -n "$DUT_DIAGNOSTICS_URL" ]]; then
-			if [[ -z "$before" || -z "$after" || "$after" -le "$before" ]]; then
+			if [[ "$after" -le "$before" ]]; then
 				record "$state_label" "shared_fakeip_icmp_v${family}" FAIL "0% loss from $DOWNSTREAM_HOST, but the DUT's fakeip_icmp_replies counter did not advance (before=$before after=$after) -- something other than this inbound answered"
 				return
 			fi
@@ -479,6 +508,20 @@ check_shared_fakeip_icmp() {
 # check_shared_tcp_rewrite is check_local_tcp_rewrite's shared.data_plane
 # counterpart: the transfer is driven from $DOWNSTREAM_HOST toward
 # REMOTE_FAKEIP_TARGET, with the DUT in between doing the actual rewrite.
+#
+# Its two dut_counter reads are guarded and validated the same way, and for
+# the same reason, as check_shared_fakeip_icmp's own two reads (see that
+# function's comment) -- a sixth independent review found both were still
+# bare, unguarded assignments, and that the final comparison below required
+# both to be non-empty before ever treating a configured-but-unreadable
+# counter as anything other than a silent PASS, exactly the "configured
+# diagnostics quietly downgrading to opt-out behavior" defect
+# check_shared_fakeip_icmp had to avoid too. Both reads now fail fast,
+# immediately after being taken, whenever DUT_DIAGNOSTICS_URL is configured
+# but the read did not produce a valid nonnegative integer -- consistent
+# with how every other evidence read in this function (sent_hash,
+# remote_hash) already fails fast rather than deferring the judgment to a
+# later comparison that could silently no-op on invalid input.
 check_shared_tcp_rewrite() {
 	local state_label="$1"
 	[[ -z "$DOWNSTREAM_HOST" || -z "$REMOTE_PORT_TCP" ]] && return
@@ -487,7 +530,14 @@ check_shared_tcp_rewrite() {
 	local remote_pid=$!
 	sleep 1
 	local before after sent_hash
-	before=$(dut_counter .rewrite_failures)
+	if ! before=$(dut_counter .rewrite_failures); then
+		before=""
+	fi
+	if [[ -n "$DUT_DIAGNOSTICS_URL" && ! "$before" =~ ^[0-9]+$ ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "DUT_DIAGNOSTICS_URL is configured but the 'before' rewrite_failures counter could not be read -- evidence-read error, not a content judgment"
+		wait "$remote_pid" 2>/dev/null || true
+		return
+	fi
 	if ! sent_hash=$($DOWNSTREAM_SSH "${DOWNSTREAM_SSH_USER}@${DOWNSTREAM_HOST}" \
 		"head -c $TRANSFER_BYTES /dev/urandom > /tmp/offload_check_tcp_shared_sent.bin && sha256sum /tmp/offload_check_tcp_shared_sent.bin | cut -d' ' -f1"); then
 		sent_hash=""
@@ -504,7 +554,13 @@ check_shared_tcp_rewrite() {
 		return
 	fi
 	wait "$remote_pid" 2>/dev/null || true
-	after=$(dut_counter .rewrite_failures)
+	if ! after=$(dut_counter .rewrite_failures); then
+		after=""
+	fi
+	if [[ -n "$DUT_DIAGNOSTICS_URL" && ! "$after" =~ ^[0-9]+$ ]]; then
+		record "$state_label" shared_rewrite_tcp FAIL "DUT_DIAGNOSTICS_URL is configured but the 'after' rewrite_failures counter could not be read -- evidence-read error, not a content judgment"
+		return
+	fi
 	local remote_hash
 	if ! remote_hash=$($SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" "sha256sum /tmp/offload_check_tcp_shared.bin 2>/dev/null | cut -d' ' -f1"); then
 		remote_hash=""
@@ -517,7 +573,7 @@ check_shared_tcp_rewrite() {
 		record "$state_label" shared_rewrite_tcp FAIL "content mismatch: sent SHA-256 $sent_hash, remote SHA-256 $remote_hash -- corrupted in transit, not merely a byte-count difference"
 		return
 	fi
-	if [[ -n "$DUT_DIAGNOSTICS_URL" && -n "$before" && -n "$after" && "$after" -gt "$before" ]]; then
+	if [[ -n "$DUT_DIAGNOSTICS_URL" && "$after" -gt "$before" ]]; then
 		record "$state_label" shared_rewrite_tcp FAIL "content arrived intact (SHA-256 $remote_hash), but the DUT's rewrite_failures counter advanced ($before -> $after) during the transfer"
 		return
 	fi
