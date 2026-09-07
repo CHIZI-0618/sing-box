@@ -796,14 +796,43 @@ echo "report written to $REPORT" >&2
 # unreadable report here is its own distinct, unambiguous fatal condition
 # with its own exit code, never confused with any of the four outcomes
 # that assume $REPORT was read successfully.
+#
+# A seventh independent review found that the `[[ -r "$REPORT" ]]` test
+# above only ever caught a report already missing or inaccessible at that
+# instant -- it said nothing about the four `awk | wc -l` pipelines that
+# actually read it a moment later, which were themselves still bare,
+# unguarded command substitutions. A file confirmed readable can still fail
+# to be read moments later (deleted out from under the script, a broken
+# awk/wc, a later I/O error), and that failure propagated straight out of
+# the script as a raw, undocumented exit code instead of the FATAL/exit 4
+# this section exists to guarantee. The four separate reads are now one
+# single guarded awk pass computing every count from the same read of the
+# file, so every category is guaranteed consistent with the others, its
+# result is validated as four plain integers before being trusted, and any
+# failure at any stage -- the read itself, or a malformed result -- reaches
+# the same FATAL/exit 4 the readability check immediately below already
+# establishes for the plain missing/inaccessible case.
 if [[ ! -r "$REPORT" ]]; then
 	echo "FATAL: $REPORT is not readable -- cannot compute the final summary from a report this run itself was writing to throughout; this is not the same as INCONCLUSIVE (which means the report was read fine but nothing in it passed)" >&2
 	exit 4
 fi
-PASS_COUNT=$(awk -F'\t' 'NR>1 && $3=="PASS"' "$REPORT" | wc -l)
-FAIL_COUNT=$(awk -F'\t' 'NR>1 && $3=="FAIL"' "$REPORT" | wc -l)
-UNSUPPORTED_COUNT=$(awk -F'\t' 'NR>1 && $3=="UNSUPPORTED"' "$REPORT" | wc -l)
-NOT_TESTED_COUNT=$(awk -F'\t' 'NR>1 && $3=="NOT_TESTED"' "$REPORT" | wc -l)
+if ! SUMMARY_COUNTS=$(awk -F'\t' '
+	NR>1 {
+		if ($3=="PASS") pass++
+		else if ($3=="FAIL") fail++
+		else if ($3=="UNSUPPORTED") unsupported++
+		else if ($3=="NOT_TESTED") not_tested++
+	}
+	END { printf "%d %d %d %d", pass+0, fail+0, unsupported+0, not_tested+0 }
+' "$REPORT"); then
+	echo "FATAL: could not compute the final summary from $REPORT -- the statistics read itself failed even though the report was confirmed readable a moment earlier" >&2
+	exit 4
+fi
+if [[ ! "$SUMMARY_COUNTS" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]]; then
+	echo "FATAL: the final summary computation produced an unexpected result ('$SUMMARY_COUNTS') from $REPORT -- not trusting a malformed count" >&2
+	exit 4
+fi
+read -r PASS_COUNT FAIL_COUNT UNSUPPORTED_COUNT NOT_TESTED_COUNT <<< "$SUMMARY_COUNTS"
 
 echo "summary: $PASS_COUNT PASS, $FAIL_COUNT FAIL, $UNSUPPORTED_COUNT UNSUPPORTED, $NOT_TESTED_COUNT NOT_TESTED (TEST_ROLE=$TEST_ROLE)" >&2
 
