@@ -12,11 +12,11 @@ from this branch; it is not part of the public documentation site under
 
 All code, test, and CI changes described in this document, including §12's
 response to the first independent code review through §17's response to a
-sixth, plus §18's self-directed comprehensive sweep, land at
-`3656649c91f2805a0f809c177bf2d52949985d65`. This section is updated in
-place each time this document itself is revised, rather than being
-re-derived — this document's own commit necessarily lands after the hash
-it names.
+sixth, §18's self-directed comprehensive sweep, and §19's response to a
+seventh review, land at `ee74dd9f2b8123197592568e30f432b882d750a8`. This
+section is updated in place each time this document itself is revised,
+rather than being re-derived — this document's own commit necessarily
+lands after the hash it names.
 
 Full commit range for the code/test/CI work this document evidences (oldest
 first):
@@ -53,13 +53,15 @@ c92e38aa docs: record the fourth independent review's finding and this round's f
 3db6a2e3 ebpf: guard dut_counter reads and stop silently accepting unreadable ones
 37fb4553 docs: record the sixth independent review's finding and this round's fix
 3656649c ebpf: sweep and fix every remaining unguarded external-command shape
+0189a5b2 docs: record the comprehensive sweep and its full-script verification
+ee74dd9f ebpf: guard the final summary's actual statistics read, not just readability
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
 (`.codex-remote-attachments/`, predating this work) and `outputs/` (the
 independent reviews' own artifact bundles — `outputs/ebpf-review/` through
-`outputs/ebpf-review-round6/` — left exactly as delivered) — see §12
-through §18 for how those reviews' findings, and the §18 self-directed
+`outputs/ebpf-review-round7/` — left exactly as delivered) — see §12
+through §19 for how those reviews' findings, and the §18 self-directed
 sweep, were addressed.
 
 ## 2. Environment
@@ -1353,5 +1355,95 @@ line-by-line audit described above.
 No production code, existing Go tests, or the acceptance evidence above §18
 was modified by this round beyond this comprehensive sweep. `outputs/ebpf-review/`
 through `outputs/ebpf-review-round6/` (each review's own artifact bundle)
+were read for context and left completely untouched, uncommitted, exactly
+as delivered.
+
+## 19. Response to a seventh independent code review
+
+A seventh independent review of the comprehensive sweep (`3656649c`
+through HEAD `0189a5b2`) ran the unmodified production script as a
+separate process with exported mock network/tool functions, confirming no
+function wrapper disabled `errexit`, and reproduced all six accepted
+scenarios from §18's own full-script harness table (clean, `ethtool`
+readback failure, unparseable ping, local `sha256sum` failure, and
+configured-but-unavailable diagnostics), each reaching all four
+combinations with a summary emitted. It found one more instance of the
+exact defect class this whole run of reviews has been chasing, in the one
+place §18 itself introduced: the final summary block.
+
+### P2 — the final summary's actual statistics read remained unguarded
+
+**Finding**: §18's `[[ -r "$REPORT" ]]` check only ever proves the report
+was readable at the instant it ran. The four `awk -F'\t' ... | wc -l`
+pipelines immediately after it that actually compute
+`PASS_COUNT`/`FAIL_COUNT`/`UNSUPPORTED_COUNT`/`NOT_TESTED_COUNT` remained
+bare, unguarded command substitutions — file readability is not proof
+that the subsequent read, or `wc`'s own count, will succeed; a later I/O
+error, the file disappearing between the check and the read, or a failed
+`awk`/`wc` invocation all still propagate straight out of the script under
+`set -e`. The review's own full-script harness made `awk` fail only when
+reading `report.tsv`, after every check across all four combinations had
+already completed successfully: the script exited `7` with no `FATAL`
+message and no summary line at all, directly contradicting the exit-`4`
+contract §17/§18 had just established for exactly this class of failure.
+The review stated plainly that this means the claim "no instances of this
+defect class remain" was not yet supported.
+
+**Fix** (`ee74dd9f`): the four separate `awk | wc -l` reads are replaced
+with one single guarded `awk` pass that computes all four counts from the
+same read of the report in one invocation, per the review's own
+suggestion ("prefer one guarded awk pass producing all four counts so
+every category comes from the same read"). The assignment is guarded with
+the same `if ! x=$(...); then ...; fi` pattern used throughout this file,
+and the result is validated as four plain integers via regex before being
+trusted. Any failure — the read itself failing, or a malformed result —
+now reaches the same `FATAL`/exit `4` the plain missing/unreadable case
+established, never a raw, undocumented exit code from `awk`'s own
+failure. The original `[[ ! -r "$REPORT" ]]` check is kept as a fast,
+clear first layer for the common case (a plainly missing or inaccessible
+report); the new guarded read is the second layer that catches everything
+the first layer cannot, including the TOCTOU race the review's own
+reproduction demonstrated.
+
+**Verified**: an ad hoc, uncommitted scratchpad harness extracts the real
+final-summary block verbatim (the same technique used throughout this
+engagement for narrow logic sections) and exercises it directly with a
+driver script, covering: a normal readable report (exit `0`, unchanged); a
+report that passes the readability check but whose actual `awk` read then
+fails — reproducing the review's exact scenario — now correctly produces
+`FATAL`/exit `4` instead of the raw exit `7` the review's own harness
+observed; an `awk` read that succeeds but returns a malformed result also
+produces `FATAL`/exit `4`; a missing report still produces `FATAL`/exit `4`
+unchanged from §17; and a mixed real report (one row each of
+`PASS`/`FAIL`/`UNSUPPORTED`/`NOT_TESTED`) still computes the correct
+counts and the correct `FAIL`-takes-priority exit code through the new
+single-pass logic. §18's own full-script simulation harness was re-run
+against this fix and all five of its scenarios still complete all four
+offload combinations and exit with the documented code. Every earlier
+round's extracted-function regression harness (§13 through §17) was
+re-run unchanged and still passes. `bash -n` and `shellcheck -x` both
+clean; the full `go test -race` suite for `common/ebpf` and
+`protocol/ebpf` still passes as root under WSL Debian. Never run against
+real hardware.
+
+### What this round does not resolve
+
+Unchanged from §18: real hardware remains unexecuted; the
+`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing` flake's root cause
+remains unconfirmed; real GitHub Actions, Android, and TCX-on-physical-
+silicon remain unverified; items 11 and 12 remain held. No further
+instances of this defect class are known to remain in this file; unlike
+§18's own closing claim, this section makes no claim beyond what this
+round's audit and the review's own reproduction actually covered.
+
+### Summary
+
+| Finding | Severity | Status | Live-verified |
+|---|---|---|---|
+| Final summary's statistics read unguarded (readability proved, read itself did not) | P2 | Fixed | Yes, reproduces the review's exact raw-exit-7 scenario, now FATAL/exit 4 |
+
+No production code, existing Go tests, or the acceptance evidence above §19
+was modified by this round beyond this one finding. `outputs/ebpf-review/`
+through `outputs/ebpf-review-round7/` (each review's own artifact bundle)
 were read for context and left completely untouched, uncommitted, exactly
 as delivered.
