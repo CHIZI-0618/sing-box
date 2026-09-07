@@ -12,10 +12,11 @@ from this branch; it is not part of the public documentation site under
 
 All code, test, and CI changes described in this document, including §12's
 response to the first independent code review through §17's response to a
-sixth, land at `3db6a2e36fcfa4ac1040177a220782fa73d3132d`. This section is
-updated in place each time this document itself is revised, rather than
-being re-derived — this document's own commit necessarily lands after the
-hash it names.
+sixth, plus §18's self-directed comprehensive sweep, land at
+`3656649c91f2805a0f809c177bf2d52949985d65`. This section is updated in
+place each time this document itself is revised, rather than being
+re-derived — this document's own commit necessarily lands after the hash
+it names.
 
 Full commit range for the code/test/CI work this document evidences (oldest
 first):
@@ -50,13 +51,16 @@ c92e38aa docs: record the fourth independent review's finding and this round's f
 7b843d0d ebpf: guard the remaining hash preparation/retrieval reads against set -e
 7e233406 docs: record the fifth independent review's finding and this round's fix
 3db6a2e3 ebpf: guard dut_counter reads and stop silently accepting unreadable ones
+37fb4553 docs: record the sixth independent review's finding and this round's fix
+3656649c ebpf: sweep and fix every remaining unguarded external-command shape
 ```
 
 Working tree at HEAD is clean except one untracked, unrelated directory
 (`.codex-remote-attachments/`, predating this work) and `outputs/` (the
 independent reviews' own artifact bundles — `outputs/ebpf-review/` through
 `outputs/ebpf-review-round6/` — left exactly as delivered) — see §12
-through §17 for how those reviews' findings were addressed.
+through §18 for how those reviews' findings, and the §18 self-directed
+sweep, were addressed.
 
 ## 2. Environment
 
@@ -1192,6 +1196,162 @@ engagement, not one made unilaterally here.
 
 No production code, existing Go tests, or the acceptance evidence above §17
 was modified by this round beyond this one finding. `outputs/ebpf-review/`
+through `outputs/ebpf-review-round6/` (each review's own artifact bundle)
+were read for context and left completely untouched, uncommitted, exactly
+as delivered.
+
+## 18. Comprehensive sweep of every remaining unguarded external-command shape
+
+§17 disclosed four candidate sites of the same recurring defect class
+(unguarded command substitution under this script's own `set -euo
+pipefail`) beyond what the sixth review had named, following the practice
+this whole engagement had used through five prior rounds: fix exactly what
+a review names, disclose anything adjacent, and wait. The user explicitly
+overrode that waiting pattern for this specific, already-well-understood
+defect class: fix every remaining instance now, in one unified pass, and
+stop waiting for a seventh, eighth, and ninth review to name each one in
+turn — "'每轮只能修一个点'不是我的限制" ("limiting each round to one fix is not my
+restriction"). This section documents that comprehensive sweep as its own
+self-directed round, held to the same rigor as every review-driven one:
+one coherent concern (this one defect class, comprehensively), its own
+commit, full regression evidence, and an explicit account of what was
+deliberately left out of scope.
+
+### Sites fixed
+
+A line-by-line audit of every `=$(...)` assignment and every bare external
+command in the script (not just the four §17 had already named) found
+exactly these remaining unguarded sites, all now fixed in `3656649c`:
+
+1. **`set_features`'s `actual=$(actual_feature_state "$feature")`** — a
+   local `ethtool -k | awk` read-back after `ethtool -K` applied a
+   feature. A failed or driver-confused read here previously aborted the
+   whole script; it is now guarded the same way as every SSH-based
+   evidence read, and an unreadable result marks that one combination
+   `COMBINATION_OK=0` (as an unconfirmed state) rather than killing the
+   run.
+2. **`check_local_fakeip_icmp`'s and `check_shared_fakeip_icmp`'s
+   `loss=$(echo "$out" | grep -oP '\d+(?=% packet loss)')`** — `grep -oP`
+   exits non-zero whenever `ping`'s output does not contain the expected
+   phrase at all (a different `ping` implementation's output format, not
+   merely an unusual number), which previously aborted the script. Both
+   are now guarded and validated as a plain integer, with a distinct
+   evidence-read `FAIL` — "packet-loss percentage could not be parsed" —
+   naming the raw ping output for that FAIL, rather than folding into
+   either a false PASS or a garbled loss-percentage message.
+3. **`check_local_tcp_rewrite`'s and `check_local_udp_rewrite`'s local
+   `sent_hash=$(sha256sum "$OUT_DIR/..." | cut -d' ' -f1)`** — computed
+   over a file the script had just written itself moments earlier, lower
+   likelihood than a remote SSH-based read but structurally identical.
+   Both are now guarded and validated as 64-character hex, matching every
+   remote hash read fixed in §15/§16.
+4. **The final summary's four `awk -F'\t' ... "$REPORT"` counts** —
+   `$REPORT` is a file this script itself has been writing throughout the
+   run, so failure here is the least likely of the four, but a failure at
+   this exact point would previously have aborted the script while
+   computing the very summary the whole run exists to produce, or (had it
+   been guarded the same way as the others) silently miscounted a
+   genuinely unreadable report as zero of everything — indistinguishable
+   from `INCONCLUSIVE`, which specifically means "read fine, nothing
+   passed." This is fixed differently from the other three: readability
+   is checked explicitly up front, and an unreadable report now produces
+   a new, fifth, distinct exit code — `4` (`FATAL`) — never confused with
+   `INCONCLUSIVE`.
+
+A follow-up re-check after applying these four fixes confirmed no other
+bare, unguarded external-command shape remains: every other command
+substitution in the file is already inside an `if`/`&&`/`||` guard or uses
+an explicit `|| true` fallback (`capture_original_state`'s and
+`restore_original_state`'s `ethtool` reads, `check_bypass_passthrough`'s
+SSH round trip, and every hash/counter/size read fixed in §15–§17).
+
+### Verified without real hardware
+
+Two layers of verification, matching this engagement's established
+techniques:
+
+- **Extracted-logic tests** for the new `$REPORT`-readability guard: a
+  missing report file, and (run as the non-root user specifically, since
+  root ignores `chmod 000`) a `chmod 000` report file, both correctly
+  produce `FATAL`/exit `4`; a normal, readable report with a `PASS` row
+  still computes exit `0` through the same guarded code path, confirming
+  no regression to the ordinary case.
+- **A new full-script simulation harness** — the first in this engagement
+  to run the real, unmodified script end to end rather than an extracted
+  function — over loopback, with a faked `ethtool`/`ssh`/`ping`/`curl`/`jq`
+  toolchain and real `nc`/`sha256sum`/`stat` for genuine content-matching
+  fidelity (this only exercises the script's own control-flow robustness;
+  it involves no real eBPF, FakeIP, or NIC offload anywhere, and does not
+  touch real hardware). Five full runs, each covering all four offload
+  combinations end to end:
+  - **Baseline, no faults**: 28/28 `PASS`, exit `0`.
+  - **`ethtool` read-back fails after the initial capture**: all four
+    combinations correctly `UNSUPPORTED`, `0` `PASS`, exit `2`
+    (`INCONCLUSIVE`) — the run completes instead of aborting on the first
+    failure.
+  - **`ping` output missing the expected phrase**: 8 distinct
+    evidence-read `FAIL`s (one per `local`/`shared` ICMP check per
+    combination), 20 `PASS` elsewhere, exit `1` — no false `PASS`, no
+    abort.
+  - **Local `sha256sum` unavailable**: 16 distinct evidence-preparation/
+    evidence-read `FAIL`s across every TCP/UDP rewrite check, 12 `PASS`
+    elsewhere (the ICMP checks, which do not depend on `sha256sum`), exit
+    `1` — no abort.
+  - **`DUT_DIAGNOSTICS_URL` configured with `curl` failing**: 8 distinct
+    evidence-read `FAIL`s naming exactly the diagnostics-dependent checks
+    (`shared_fakeip_icmp`'s and `shared_rewrite_tcp`'s `before` counter
+    reads), 20 `PASS` elsewhere including `shared_rewrite_udp` (which does
+    not use `dut_counter` at all), exit `1` — no abort.
+
+  Every one of the five runs completed all four offload combinations to
+  completion and computed the documented exit code correctly from the
+  report's own contents. This full-script layer is what directly answers
+  the request to confirm that "后续组合和最终汇总按预期执行" (the
+  remaining combinations and final summary run as expected) rather than
+  only the single function each earlier round's harness exercised in
+  isolation.
+
+The round-2 through round-6 extracted-function regression harnesses were
+re-run unchanged against this round's fixes and still pass, confirming no
+regression to any previously-verified behavior. `bash -n` and
+`shellcheck -x` both clean; the full `go test -race` suite for
+`common/ebpf` and `protocol/ebpf` still passes as root under WSL Debian.
+
+A harness-construction pitfall is worth recording for future rounds: the
+full-script harness's first draft reused the same hardcoded ports and the
+script's own hardcoded `/tmp/offload_check_*.bin` paths across all five
+cases without clearing them first, and a stale file left by an earlier,
+unrelated ad hoc test elsewhere in this session's history (this engagement
+has run many small extracted-function harnesses against these same
+hardcoded paths) was silently read back as if it were the current run's
+own fresh output when a listener transiently failed to bind. The harness
+now kills any lingering `nc` listeners, clears those hardcoded paths, and
+allocates a fresh port pair before every case. This was a flaw in the
+*test harness*, not in the script under test or in any of this round's
+guards — confirmed by an isolated, single-role reproduction using
+never-before-used ports, which passed cleanly before the harness hygiene
+fix was even applied.
+
+### What this round does not resolve
+
+Unchanged from §17: real hardware remains unexecuted; the
+`TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing` flake's root cause
+remains unconfirmed; real GitHub Actions, Android, and TCX-on-physical-
+silicon remain unverified; items 11 and 12 remain held. No further
+instances of this defect class are known to remain in this file after the
+line-by-line audit described above.
+
+### Summary
+
+| Site | Status | Live-verified |
+|---|---|---|
+| `set_features`'s `actual_feature_state` read | Fixed | Yes, full-script CASE 2 (all 4 combinations UNSUPPORTED, exit 2) |
+| `check_local_fakeip_icmp` / `check_shared_fakeip_icmp` packet-loss parse | Fixed | Yes, full-script CASE 3 (8 distinct FAILs, exit 1) |
+| `check_local_tcp_rewrite` / `check_local_udp_rewrite` local `sent_hash` | Fixed | Yes, full-script CASE 4 (16 distinct FAILs, exit 1) |
+| Final summary's `$REPORT` read-back (new exit 4) | Fixed | Yes, extracted-logic tests (missing file, chmod 000 as non-root) |
+
+No production code, existing Go tests, or the acceptance evidence above §18
+was modified by this round beyond this comprehensive sweep. `outputs/ebpf-review/`
 through `outputs/ebpf-review-round6/` (each review's own artifact bundle)
 were read for context and left completely untouched, uncommitted, exactly
 as delivered.
