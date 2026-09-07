@@ -213,6 +213,15 @@ actual_feature_state() {
 # not reset anything to a baseline first, so a combination that only names
 # the features it cares about would otherwise silently inherit whatever the
 # previous combination left every other feature at.
+#
+# actual_feature_state's own call site here is guarded the same way as
+# every evidence read elsewhere in this file: a comprehensive sweep,
+# prompted by a sixth independent review's finding that this same
+# unguarded-command-substitution-under-set-e shape kept recurring one site
+# at a time across five prior rounds, found this local `ethtool -k | awk`
+# read was the last remaining site of that shape -- a failed or driver-
+# confused ethtool read here would otherwise abort the whole script rather
+# than simply marking this one combination unreliable and moving on.
 COMBINATION_OK=1
 set_features() {
 	COMBINATION_OK=1
@@ -230,7 +239,14 @@ set_features() {
 			COMBINATION_OK=0
 			continue
 		fi
-		actual=$(actual_feature_state "$feature")
+		if ! actual=$(actual_feature_state "$feature"); then
+			actual=""
+		fi
+		if [[ -z "$actual" ]]; then
+			echo "warning: could not read back the state of $feature on $LOCAL_IFACE after setting it (the ethtool read itself failed) -- treating this combination as not confirmed" >&2
+			COMBINATION_OK=0
+			continue
+		fi
 		if [[ "$actual" != "$value"* ]]; then
 			echo "warning: requested $feature=$value on $LOCAL_IFACE but ethtool now reports '$actual'" >&2
 			COMBINATION_OK=0
@@ -267,6 +283,13 @@ dut_counter() {
 	curl -fsS "${auth[@]}" "$DUT_DIAGNOSTICS_URL" 2>/dev/null | jq -r ".ebpf[0].counters$1 // empty" 2>/dev/null
 }
 
+# check_local_fakeip_icmp's packet-loss parse is guarded the same way as
+# every other evidence read in this file -- the same comprehensive sweep
+# that fixed set_features's ethtool read found `grep -oP` here exits
+# non-zero whenever ping's output does not contain the expected "N% packet
+# loss" phrase at all (not merely an unexpected number), which a bare
+# assignment would have let abort the whole script under set -e instead of
+# recording a distinct, explicit "could not parse" failure.
 check_local_fakeip_icmp() {
 	local state_label="$1" family="$2" target="$3"
 	local ping_bin=ping
@@ -274,7 +297,13 @@ check_local_fakeip_icmp() {
 	local out
 	if out=$($ping_bin -c "$PING_COUNT" -q "$target" 2>&1); then
 		local loss
-		loss=$(echo "$out" | grep -oP '\d+(?=% packet loss)')
+		if ! loss=$(echo "$out" | grep -oP '\d+(?=% packet loss)'); then
+			loss=""
+		fi
+		if [[ ! "$loss" =~ ^[0-9]+$ ]]; then
+			record "$state_label" "local_fakeip_icmp_v${family}" FAIL "ping succeeded but its packet-loss percentage could not be parsed from the output -- evidence-read error, not a content judgment (output: $out)"
+			return
+		fi
 		if [[ "$loss" == "0" ]]; then
 			record "$state_label" "local_fakeip_icmp_v${family}" PASS "0% loss over $PING_COUNT pings to $target, originated from the DUT itself"
 		else
@@ -323,7 +352,12 @@ check_bypass_passthrough() {
 # not hex) is rejected the same way a failed call is, and is reported
 # explicitly as an evidence-read error rather than folded into a "content
 # mismatch" verdict, which would otherwise blame corruption for what is
-# actually an inability to read the evidence at all.
+# actually an inability to read the evidence at all. The same guard also
+# covers this function's (and check_local_udp_rewrite's) *local*
+# sent_hash computation over a file the script just wrote itself: lower
+# likelihood than a remote SSH call, but a comprehensive sweep across the
+# whole file found it has the identical unguarded shape, and it is no less
+# capable of aborting the script if sha256sum or cut are ever unavailable.
 check_local_tcp_rewrite() {
 	local state_label="$1"
 	[[ -z "$REMOTE_PORT_TCP" ]] && return
@@ -333,7 +367,14 @@ check_local_tcp_rewrite() {
 	sleep 1
 	head -c "$TRANSFER_BYTES" /dev/urandom > "$OUT_DIR/tcp_sent.bin"
 	local sent_hash
-	sent_hash=$(sha256sum "$OUT_DIR/tcp_sent.bin" | cut -d' ' -f1)
+	if ! sent_hash=$(sha256sum "$OUT_DIR/tcp_sent.bin" | cut -d' ' -f1); then
+		sent_hash=""
+	fi
+	if [[ ! "$sent_hash" =~ ^[0-9a-f]{64}$ ]]; then
+		record "$state_label" local_shared_rewrite_tcp FAIL "could not compute a valid SHA-256 of the payload this script itself just wrote to $OUT_DIR/tcp_sent.bin -- evidence-preparation error, not a content judgment"
+		wait "$remote_pid" 2>/dev/null || true
+		return
+	fi
 	if ! timeout 25 nc -q1 "$REMOTE_FAKEIP_TARGET" "$REMOTE_PORT_TCP" < "$OUT_DIR/tcp_sent.bin"; then
 		record "$state_label" local_shared_rewrite_tcp FAIL "the local nc transfer command itself failed or timed out"
 		wait "$remote_pid" 2>/dev/null || true
@@ -397,7 +438,13 @@ check_local_udp_rewrite() {
 	[[ -z "$REMOTE_PORT_UDP" ]] && return
 	head -c 65000 /dev/urandom > "$OUT_DIR/udp_sent.bin"
 	local sent_hash
-	sent_hash=$(sha256sum "$OUT_DIR/udp_sent.bin" | cut -d' ' -f1)
+	if ! sent_hash=$(sha256sum "$OUT_DIR/udp_sent.bin" | cut -d' ' -f1); then
+		sent_hash=""
+	fi
+	if [[ ! "$sent_hash" =~ ^[0-9a-f]{64}$ ]]; then
+		record "$state_label" local_shared_rewrite_udp FAIL "could not compute a valid SHA-256 of the payload this script itself just wrote to $OUT_DIR/udp_sent.bin -- evidence-preparation error, not a content judgment"
+		return
+	fi
 	local attempt send_status remote_size remote_hash
 	for attempt in 1 2 3; do
 		$SSH "${REMOTE_SSH_USER}@${REMOTE_HOST}" \
@@ -463,7 +510,12 @@ check_local_udp_rewrite() {
 # same as DUT_DIAGNOSTICS_URL being unset, which would let a configured but
 # broken diagnostics endpoint quietly downgrade this check to the weaker,
 # opt-out mode instead of reporting that the stronger mode it was
-# configured for could not actually run.
+# configured for could not actually run. Its packet-loss parse below is
+# guarded the same way, for the same reason as check_local_fakeip_icmp's
+# own parse (see that function's comment): a comprehensive sweep across
+# the whole file, prompted by how many rounds it took independent review
+# to find every prior instance of this same shape one at a time, found
+# this site too.
 check_shared_fakeip_icmp() {
 	local state_label="$1" family="$2" target="$3"
 	[[ -z "$DOWNSTREAM_HOST" ]] && return
@@ -486,7 +538,13 @@ check_shared_fakeip_icmp() {
 			return
 		fi
 		local loss
-		loss=$(echo "$out" | grep -oP '\d+(?=% packet loss)')
+		if ! loss=$(echo "$out" | grep -oP '\d+(?=% packet loss)'); then
+			loss=""
+		fi
+		if [[ ! "$loss" =~ ^[0-9]+$ ]]; then
+			record "$state_label" "shared_fakeip_icmp_v${family}" FAIL "ping from $DOWNSTREAM_HOST succeeded but its packet-loss percentage could not be parsed from the output -- evidence-read error, not a content judgment (output: $out)"
+			return
+		fi
 		if [[ "$loss" != "0" ]]; then
 			record "$state_label" "shared_fakeip_icmp_v${family}" FAIL "${loss}% loss over $PING_COUNT pings to $target from $DOWNSTREAM_HOST"
 			return
@@ -729,6 +787,19 @@ echo "report written to $REPORT" >&2
 # verified nothing, or verified less than the full matrix, with a
 # different exit status for each so a caller (or a human) cannot mistake
 # one for the other from the exit code alone.
+#
+# This read-back of $REPORT is guarded explicitly, unlike every other
+# guard in this file: rather than defaulting a failed read to an empty/zero
+# count (which would misreport a report that became unreadable at the very
+# last step as INCONCLUSIVE -- "nothing passed" -- when the real problem is
+# that the whole run's evidence could not be read back at all), an
+# unreadable report here is its own distinct, unambiguous fatal condition
+# with its own exit code, never confused with any of the four outcomes
+# that assume $REPORT was read successfully.
+if [[ ! -r "$REPORT" ]]; then
+	echo "FATAL: $REPORT is not readable -- cannot compute the final summary from a report this run itself was writing to throughout; this is not the same as INCONCLUSIVE (which means the report was read fine but nothing in it passed)" >&2
+	exit 4
+fi
 PASS_COUNT=$(awk -F'\t' 'NR>1 && $3=="PASS"' "$REPORT" | wc -l)
 FAIL_COUNT=$(awk -F'\t' 'NR>1 && $3=="FAIL"' "$REPORT" | wc -l)
 UNSUPPORTED_COUNT=$(awk -F'\t' 'NR>1 && $3=="UNSUPPORTED"' "$REPORT" | wc -l)

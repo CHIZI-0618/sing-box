@@ -218,25 +218,34 @@ the full list and defaults). The script:
    failed.
 6. Reads the report's own status column back — counting `PASS`, `FAIL`,
    `UNSUPPORTED`, and `NOT_TESTED` rows exactly, not by searching detail
-   messages for the word "FAIL" — and prints a summary with one of four exit
+   messages for the word "FAIL" — and prints a summary with one of five exit
    codes: `0` (at least one `PASS`, zero `FAIL`, zero `UNSUPPORTED` — a clean
    pass), `1` (at least one `FAIL`, checked first regardless of anything
    else), `2` (`INCONCLUSIVE`: zero `PASS` rows at all, meaning nothing was
    actually verified this run — every combination was `UNSUPPORTED`, for
    example an unsupported `ethtool` feature on every NIC/driver combination
-   tried), or `3` (`PARTIAL`: at least one `PASS` but also at least one
+   tried), `3` (`PARTIAL`: at least one `PASS` but also at least one
    `UNSUPPORTED`, meaning some but not all of the intended coverage actually
-   ran). An earlier version of this script only ever searched the report for
-   the literal word `FAIL`; if every combination came back `UNSUPPORTED`
-   (`ethtool` unavailable, or the NIC lacking a required feature) there was
-   no `FAIL` line to find, so the script printed "all recorded checks
-   PASSed" and exited `0` even though not one packet had actually been
-   checked. Exit code `0` from this script now specifically means real
-   traffic checks ran and every one of them passed — never "nothing failed
-   because nothing ran."
+   ran), or `4` (`FATAL`: the report file itself could not be read back at
+   this final step, even though the run wrote to it throughout — a
+   materially different claim from `INCONCLUSIVE`, which means the report
+   was read fine and genuinely contained no `PASS`). An earlier version of
+   this script only ever searched the report for the literal word `FAIL`;
+   if every combination came back `UNSUPPORTED` (`ethtool` unavailable, or
+   the NIC lacking a required feature) there was no `FAIL` line to find, so
+   the script printed "all recorded checks PASSed" and exited `0` even
+   though not one packet had actually been checked. Exit code `0` from this
+   script now specifically means real traffic checks ran and every one of
+   them passed — never "nothing failed because nothing ran."
 
 ## Reading a failure
 
+- **The run exits `4` (`FATAL`)**: the report file could not be read back
+  at the very last step, after this run had been writing to it throughout
+  every combination. This is not the same as `INCONCLUSIVE` and does not
+  mean nothing passed — it means the summary itself could not be computed.
+  Check whether `$OUT_DIR`/the report file was deleted, moved, or had its
+  permissions changed by something else while this script was running.
 - **The run exits `2` (`INCONCLUSIVE`)**: no check anywhere in this run
   actually passed — most likely every combination came back `UNSUPPORTED`.
   This is not evidence the eBPF rewrite is correct; nothing was verified.
