@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -179,8 +180,20 @@ func TestUDPReplySocketPoolSweepsIdleSockets(t *testing.T) {
 // check: hammering the pool with far more distinct destinations than its
 // total capacity, immediately releasing each one (matching the real
 // send-then-forget call pattern in tc_connection.go), must never let the
-// pool's total footprint exceed its fixed bound, and must never error --
-// there is always an idle entry to reclaim when nothing is held in use.
+// pool's total footprint exceed its fixed bound.
+//
+// It does not assert zero get() errors: a real GitHub Actions run surfaced
+// that, with `attempts` goroutines launched essentially at once racing
+// across only udpClientShardCount shards, more goroutines can genuinely be
+// simultaneously between get() returning and release() running on one shard
+// than that shard's udpReplySocketShardCapacity -- pure scheduling luck
+// under this much uncoordinated concurrency, not a bug in the pool. When
+// that happens, get() correctly refuses rather than let the shard grow past
+// its bound, which is exactly the guarantee this test exists to check. A
+// capacity-rejection is therefore expected and tolerated; anything else
+// (e.g. a real socket-creation failure) is still a hard failure, and every
+// capacity-rejection get() returns must still show up in the pool's own
+// CapacityRejected counter.
 func TestUDPReplySocketPoolStableUnderManyDestinations(t *testing.T) {
 	var pool udpReplySocketPool
 	t.Cleanup(func() { _ = pool.close() })
@@ -205,12 +218,21 @@ func TestUDPReplySocketPoolStableUnderManyDestinations(t *testing.T) {
 	}
 	wg.Wait()
 	close(errs)
+
+	var rejected int64
 	for err := range errs {
+		if strings.Contains(err.Error(), "at capacity") {
+			rejected++
+			continue
+		}
 		t.Error(err)
 	}
 
 	if got := pool.snapshot().Count; got > totalCapacity {
 		t.Fatalf("pool count = %d, want at most the total capacity %d", got, totalCapacity)
+	}
+	if got := pool.snapshot().CapacityRejected; got != rejected {
+		t.Fatalf("pool's own CapacityRejected counter = %d, but observed %d capacity errors from get() -- every rejection get() returns must be reflected in its own counter", got, rejected)
 	}
 }
 
