@@ -27,7 +27,9 @@ require (
 	github.com/libdns/libdns v1.1.1
 	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/mattn/go-runewidth v0.0.27
+	github.com/mdlayher/genetlink v1.4.0
 	github.com/mdlayher/netlink v1.11.2
+	github.com/mdlayher/wifi v0.9.0
 	github.com/metacubex/utls v1.8.7
 	github.com/mholt/acmez/v3 v3.1.6
 	github.com/miekg/dns v1.1.72
