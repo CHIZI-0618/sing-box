@@ -135,21 +135,33 @@ Support is path-specific only when the enabled combination still includes
 Use `local.data_plane: tc` for local replies. Either shared data plane answers
 shared clients; combining `local: tc` with either one covers both paths.
 
-A supported path still answers only addresses the client itself can actually
-receive on. `reply` for IPv6 depends on `shared.ipv6`/`local.ipv6` reaching a
-client that genuinely has working IPv6 at the time — on Android, a hotspot
-client's IPv6 comes from prefixes Android delegates from its own upstream
-network, and Android revokes them (sending a Router Advertisement with a
-zero lifetime, then eventually letting the client's address expire) whenever
-that upstream changes, for example switching between Wi-Fi and mobile data.
-While a client address is being deprecated or has already expired, a
-correctly-built reply addressed to it can be dropped by the client's own
-network stack, or filtered by Android's own tethering path — sing-box cannot
-distinguish this from a genuine failure, because a packet's destination
-address carries no record of the receiving host's address lifecycle state.
-This is a platform network capability change, not a `fakeip_icmp` defect: a
-client's link-local IPv6 address, which does not depend on any upstream
-delegation, remains usable across such a switch.
+A supported path still needs a usable client source address and a route that
+delivers the request to the responder. On Android, switching between mobile
+data and Wi-Fi can cause tethering to withdraw the hotspot's global IPv6
+prefix and default route. Whether IPv6 remains available depends on the
+device and the new upstream; using Wi-Fi alone does not imply its loss.
+
+A client may retain link-local IPv6 communication after this withdrawal.
+In a reported Android-to-Windows test, explicitly selecting a link-local
+source address and adding a diagnostic route through the hotspot produced
+four replies from four FakeIP IPv6 requests. With an old global source
+address, both the request and the generated reply were captured on Android,
+but the reply did not reach Windows. This distinguishes responder operation
+from delivery through the tested device's tethering path. Link-local tests
+do not establish that ordinary shared IPv6 traffic remains usable.
+
+When investigating an RA change, distinguish the Router Lifetime from the
+Prefix Information option's Preferred Lifetime and Valid Lifetime. A zero
+Router Lifetime withdraws the default-router role, not the client's address
+by itself. An address marked deprecated is still valid and must continue to
+accept packets; that state alone does not explain a lost reply. Check the
+addresses, routes, RA fields, and captures on both sides of the hotspot.
+See [RFC 4861 section 4.2](https://www.rfc-editor.org/rfc/rfc4861.html#section-4.2)
+and [RFC 4862 section 5.5.4](https://www.rfc-editor.org/rfc/rfc4862.html#section-5.5.4).
+
+An Echo Reply returns to the request's original source address. Rewriting
+its destination to a different client address is not a remedy for a withdrawn
+prefix and can prevent the client from matching the reply to its request.
 
 `local.data_plane: tc` has the equivalent dependency in the other direction:
 `local_reply` only ever sees a request that ordinary routing has already sent
@@ -299,13 +311,19 @@ when it becomes downstream again. Loopback is not accepted.
 Enable shared IPv6 interception. Default is `true`. When disabled, IPv6 traffic
 on shared interfaces bypasses this inbound.
 
-On Android, a hotspot client only has working IPv6 while Android is actually
-delegating a prefix to it from its own upstream network. Android revokes that
-prefix whenever the upstream changes (for example switching between Wi-Fi and
-mobile data), and the client's IPv6 becomes unusable until the new upstream
-delegates again — this is a platform network capability change outside
-sing-box's visibility, not something `shared.ipv6` or `fakeip_icmp` (see
-above) can compensate for.
+On Android, `shared.ipv6: true` enables interception; it does not assign IPv6
+addresses or send router advertisements to hotspot clients.
+Ordinary shared IPv6 use depends on Android actually providing usable IPv6
+addressing and routing to those clients. If an upstream change withdraws the
+hotspot's global prefix and default route, ordinary client IPv6 connectivity
+can be lost while link-local communication remains available. Enabling
+`shared.ipv6` or `fakeip_icmp` cannot restore the withdrawn network state.
+
+The reported mobile-data setup supports shared IPv4 and IPv6. With Wi-Fi as
+upstream, dual-stack use remains conditional on the hotspot retaining valid
+IPv6 configuration and a working delivery path; it is not established by
+the link-local diagnostic test above. IPv6 prefix or route withdrawal alone
+does not affect shared IPv4.
 
 #### shared.bypass_private_address
 

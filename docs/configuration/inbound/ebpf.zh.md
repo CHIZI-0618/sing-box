@@ -124,16 +124,26 @@ FakeIP 地址能够响应 `ping`，部分客户端以此判断目标是否可达
 本机流量需要使用 `local.data_plane: tc`。两种 shared 数据面都能响应 shared
 客户端；将 `local: tc` 与任一 shared 数据面组合即可覆盖两条路径。
 
-即使路径本身受支持，回复也只能送达客户端当下真正能收到的地址。`reply` 对 IPv6
-生效，依赖 `shared.ipv6`/`local.ipv6` 所指向的客户端在那一刻确实拥有可用的
-IPv6——以 Android 热点为例，客户端的 IPv6 来自 Android 从自身上游网络下发的前缀，
-一旦上游发生切换（例如在 Wi-Fi 和数据网络之间切换），Android 会撤销该前缀（先下发
-生命周期为 0 的 Router Advertisement，随后该地址逐渐失效），客户端的 IPv6 会随之
-不可用。在客户端地址处于弃用或已失效期间，一个构造完全正确的回复仍可能被客户端自身
-网络栈丢弃，或被 Android 的热点转发路径过滤——sing-box 无法区分这种情况和真正的
-功能缺陷，因为报文的目的地址本身不携带接收方地址生命周期的任何信息。这是平台网络
-能力发生了变化，不是 `fakeip_icmp` 的缺陷：客户端不依赖上游下发、始终可用的
-link-local IPv6 地址，在这种切换前后都不受影响。
+即使路径本身受支持，客户端仍需可用的源地址，以及能够将请求送到 responder 的路由。
+在 Android 上，移动数据和 Wi-Fi 之间的上游切换可能使热点撤销全局 IPv6 前缀和
+默认路由。IPv6 是否继续可用取决于设备和新的上游网络，不能仅凭连接了 Wi-Fi 就
+判断 IPv6 必然失效。
+
+撤销后，客户端仍可能保留 link-local IPv6 通信。在一组 Android 热点连接 Windows
+的实测中，显式指定 link-local 源地址并添加经过热点的诊断路由后，FakeIP IPv6
+请求获得了 4/4 个回复。改用旧的全局源地址时，Android 侧能抓到请求和已生成的回复，
+但回复未送达 Windows。这区分了 responder 的工作状态与所测设备热点路径的交付能力，
+link-local 测试成功并不代表普通客户端的 shared IPv6 流量仍然可用。
+
+排查 RA 变化时，应分别检查 Router Lifetime，以及前缀信息选项中的 Preferred
+Lifetime 和 Valid Lifetime。Router Lifetime 为 0 仅撤销默认路由器角色，不会
+单独使客户端地址失效。标记为 deprecated（弃用）的地址仍是有效地址，仍须正常接收
+报文，不能仅凭该状态解释丢包。应结合地址、路由、RA 字段和热点两端的抓包定位。
+参见 [RFC 4861 第 4.2 节](https://www.rfc-editor.org/rfc/rfc4861.html#section-4.2)
+和 [RFC 4862 第 5.5.4 节](https://www.rfc-editor.org/rfc/rfc4862.html#section-5.5.4)。
+
+Echo Reply 应返回请求的原始源地址。将回复目的地址改成客户端的另一个地址不能修复
+已撤销的前缀，还可能使客户端无法将回复关联到原请求。
 
 `local.data_plane: tc` 在另一个方向上有对应的前提：`local_reply` 只能看到系统
 路由已经正常发送到本机 TC 接口上的请求，所以本机 ping FakeIP 网段需要本机自己
@@ -261,10 +271,15 @@ UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 
 
 启用 shared IPv6 接管，默认 `true`。禁用后，shared 接口上的 IPv6 流量绕过此入站。
 
-在 Android 上，热点客户端只有在 Android 确实从自身上游网络下发了前缀给它的时候，
-IPv6 才是可用的。上游一旦切换（例如在 Wi-Fi 和数据网络之间切换），Android 会撤销
-该前缀，客户端的 IPv6 会随之不可用，直到新的上游重新下发——这是 sing-box 观测不到
-的平台网络能力变化，不是 `shared.ipv6` 或 `fakeip_icmp`（见前文）能够弥补的。
+在 Android 上，`shared.ipv6: true` 只启用接管，不会为热点客户端分配 IPv6 地址
+或发送路由器通告。普通客户端使用 shared IPv6，依赖 Android 实际向客户端提供
+可用的 IPv6 地址和路由。若上游切换撤销了热点的全局前缀和默认路由，客户端的普通
+IPv6 连通性可能丢失，而 link-local 通信仍可能可用。启用 `shared.ipv6` 或
+`fakeip_icmp` 无法恢复这些已撤销的网络配置。
+
+已报告的移动数据上游实测支持 shared IPv4 和 IPv6。Wi-Fi 上游下能否双栈工作，
+仍取决于热点是否保留有效的 IPv6 配置和可用的交付路径，不能由上述 link-local
+诊断测试推导为已验证。仅撤销 IPv6 前缀或路由不会影响 shared IPv4。
 
 #### shared.bypass_private_address
 
