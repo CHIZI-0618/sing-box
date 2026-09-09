@@ -54,7 +54,14 @@ check:
 	cp $(GENERATED) "$$temporary/$(GENERATED_DIR)"; \
 	$(MAKE) generate; \
 	for file in $(GENERATED); do \
-		cmp -s "$$file" "$$temporary/$$file" || { echo "$$file is stale; run 'make generate' in common/ebpf" >&2; exit 1; }; \
+		cmp -s "$$file" "$$temporary/$$file" || { \
+			echo "$$file is stale; run 'make generate' in common/ebpf" >&2; \
+			case "$$file" in \
+				*.txt) diff -u "$$temporary/$$file" "$$file" >&2 || true ;; \
+				*) cmp "$$temporary/$$file" "$$file" >&2 || true ;; \
+			esac; \
+			exit 1; \
+		}; \
 	done
 
 clean:
