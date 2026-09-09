@@ -81,6 +81,23 @@ func tcFilterAttached(
 	handle uint16,
 	priority uint16,
 ) (bool, error) {
+	return tcFilterAttachedByHandle(link, parent, programName, netlink.MakeHandle(0, handle), priority)
+}
+
+// tcFilterAttachedByHandle reports whether the named direct-action BPF filter
+// is still installed, matching on the full 32-bit filter handle.
+//
+// Callers that only know the minor part of the handle should use
+// tcFilterAttached; callers holding a live *netlink.BpfFilter must pass
+// FilterAttrs.Handle verbatim, because truncating it to 16 bits and rebuilding
+// it with MakeHandle(0, …) is only lossless while the major part is zero.
+func tcFilterAttachedByHandle(
+	link netlink.Link,
+	parent uint32,
+	programName string,
+	filterHandle uint32,
+	priority uint16,
+) (bool, error) {
 	filters, err := netlink.FilterList(link, parent)
 	if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENODEV) || errors.Is(err, unix.ESRCH) {
 		return false, nil
@@ -88,7 +105,6 @@ func tcFilterAttached(
 	if err != nil {
 		return false, err
 	}
-	filterHandle := netlink.MakeHandle(0, handle)
 	for _, existing := range filters {
 		bpfFilter, isBPF := existing.(*netlink.BpfFilter)
 		if !isBPF {
@@ -120,10 +136,22 @@ func detachTCFilter(filter *netlink.BpfFilter) error {
 		// once a fresh filter listing confirms it is absent.
 		link, linkErr := netlink.LinkByIndex(filter.LinkIndex)
 		if linkErr != nil {
-			return nil
+			// Only a vanished interface implies the filter is gone with it;
+			// any other netlink failure leaves the state unknown, so report
+			// the original EINVAL instead of assuming success.
+			if errors.Is(linkErr, unix.ENODEV) || errors.Is(linkErr, unix.ENOENT) {
+				return nil
+			}
+			return err
 		}
-		attached, checkErr := tcFilterAttached(link, filter.Parent, filter.Name, uint16(filter.Handle&0xffff), filter.Priority)
-		if checkErr != nil || !attached {
+		attached, checkErr := tcFilterAttachedByHandle(link, filter.Parent, filter.Name, filter.Handle, filter.Priority)
+		if checkErr != nil {
+			// A failed listing cannot prove that the filter disappeared. Keep the
+			// original delete error so callers retain ownership instead of racing a
+			// possibly live filter after a transient netlink failure.
+			return err
+		}
+		if !attached {
 			return nil
 		}
 	}
