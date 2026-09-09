@@ -2,7 +2,7 @@ name: Verify eBPF program loading
 
 on:
   workflow_dispatch:
-  pull_request:
+  push:
     paths:
       - '.github/workflows/ebpf-verifier.yml'
       - 'box.go'
@@ -53,17 +53,59 @@ jobs:
             ./adapter ./common/dialer ./common/listener ./common/ebpf ./protocol/ebpf .
           go test -run '^$' -tags with_ebpf,with_gvisor ./protocol/tailscale
 
-      - name: Load program matrix
+      # This used to run only four tests named explicitly by an anchored -run
+      # regex. That list was never widened as more ebpf_integration tests
+      # were added to this package, so it silently stopped exercising them in
+      # CI at all -- concretely, TestTCIPv6PathIsolationIntegration (whose
+      # nil-program panic aborted the whole test binary before it was fixed)
+      # and the packet-rewrite/FakeIP-ICMP counter tests
+      # (TestFakeIPICMPStatsCountsPassThroughNotOrdinaryTraffic,
+      # TestFakeIPICMPStatsZeroWhenDisabled,
+      # TestSharedNetworkStatsReadCleanlyWithNoFailures,
+      # TestSharedNetworkStatsIndependent) never ran here as root, which is
+      # the only way any of them exercises a real kernel/map instead of just
+      # its own skip path. Every ebpf_integration test in this package needs
+      # a privileged run the same way protocol/ebpf's own step below runs
+      # unfiltered, so this drops the filter instead of extending the list
+      # again.
+      - name: Run common/ebpf real-kernel tests
         shell: bash
         run: |
           set -euo pipefail
           sudo env \
             "PATH=$PATH" \
             SING_BOX_EBPF_INTEGRATION=1 \
-            go test -v -count=1 \
-              -run '^Test(TCProgramRun|MapBatch|LRUFallbackBounded)Integration$' \
+            go test -v -count=1 -race \
               -tags with_ebpf,ebpf_integration \
               ./common/ebpf 2>&1 | tee -a verifier.log
+
+      # protocol/ebpf's own real-kernel tests (network namespaces, real TC
+      # attachments, real packets) are gated at runtime by os.Geteuid() == 0,
+      # not by a build tag, so the unprivileged "Test sing-box integration"
+      # step above only ever exercises their skip path. Without a privileged
+      # run of this package specifically, netns/TCX/real-ping/real-repair
+      # coverage never actually executes in CI at all.
+      #
+      # SING_BOX_EBPF_REQUIRE_TCX=1 turns every TCX attachment test's
+      # fallback-to-clsact-or-skip path into a hard failure instead (see
+      # requireOrSkipTCX in tc_fakeip_icmp_tcx_netns_test.go). ubuntu-24.04's
+      # kernel (6.8+, TCX has shipped since 6.6) is expected to support TCX,
+      # so on this specific runner a TCX test quietly degrading to clsact --
+      # or skipping outright -- is a regression to catch, not a legitimate
+      # environment limitation to route around. This is deliberately not set
+      # for any environment whose kernel is not already known to support
+      # TCX; those still skip cleanly with the variable unset.
+      - name: Run protocol/ebpf real-kernel tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env \
+            "PATH=$PATH" \
+            SING_BOX_EBPF_INTEGRATION=1 \
+            SING_BOX_EBPF_REQUIRE_TCX=1 \
+            go test -v -count=1 -race \
+              -tags with_ebpf,ebpf_integration \
+              ./protocol/ebpf 2>&1 | tee -a verifier.log
 
       - name: Upload verifier log
         if: always()
