@@ -37,6 +37,9 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 }
 
 func (i *Inbound) startInbound() error {
+	if err := i.closeTCDataPlane(); err != nil {
+		return E.Cause(err, "reclaim previous TC data plane")
+	}
 	if i.localEnabled && i.androidUIDOptions != nil {
 		if err := i.resolveAndroidUIDPolicy(); err != nil {
 			return E.Cause(err, "resolve Android UID policy")
@@ -118,6 +121,7 @@ func (i *Inbound) startInbound() error {
 		Policy:           i.compiledPolicy,
 		SelfBypassMap:    i.selfBypass.Map(),
 		TrackProcess:     i.processTracker != nil,
+		FakeIPICMPReply:  i.fakeIPICMPReply,
 	}
 	var backend *commonEBPF.TCBackend
 	if localTCEnabled || sharedSocketAssignEnabled {
@@ -138,7 +142,8 @@ func (i *Inbound) startInbound() error {
 	}
 	if backend != nil {
 		if err = i.listeners.registerTCTCPListeners(backend); err != nil {
-			return E.Errors(err, backend.Close())
+			i.setTCDataPlane(&tcDataPlane{backend: backend})
+			return E.Errors(err, i.closeTCDataPlane())
 		}
 	}
 	var dataPlane *tcDataPlane
@@ -154,17 +159,19 @@ func (i *Inbound) startInbound() error {
 			len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
 			i.tcPriority,
 		)
+		i.setTCDataPlane(dataPlane)
 		if err != nil {
 			return err
 		}
-		i.setTCDataPlane(dataPlane)
+		i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
 	}
 	if err = i.startBypassRuleSets(); err != nil {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")
 	}
 	if sharedRewriteEnabled {
-		i.sharedRewrite = newSharedRewrite(i, i.sharedOptions)
-		if err = i.sharedRewrite.Start(sharedInterfaces, hostAddresses); err != nil {
+		shared := newSharedRewrite(i, i.sharedOptions)
+		i.setSharedRewrite(shared)
+		if err = shared.Start(sharedInterfaces, hostAddresses); err != nil {
 			return err
 		}
 	}
@@ -178,7 +185,7 @@ func (i *Inbound) startInbound() error {
 			return err
 		}
 	}
-	if backend != nil || i.cgroupBackendInstance() != nil || i.sharedRewrite != nil {
+	if backend != nil || i.cgroupBackendInstance() != nil || i.sharedRewriteInstance() != nil {
 		if err = i.startTCInterfaceMonitor(); err != nil {
 			return err
 		}
@@ -189,7 +196,7 @@ func (i *Inbound) startInbound() error {
 	} else if i.enableUDP {
 		network = "udp"
 	}
-	if dataPlane == nil && i.sharedRewrite == nil {
+	if dataPlane == nil && i.sharedRewriteInstance() == nil {
 		cgroupBackend := i.cgroupBackendInstance()
 		i.logger.Debug(
 			"eBPF cgroup active: network=", network,
@@ -204,6 +211,7 @@ func (i *Inbound) startInbound() error {
 			", self_bypass=", i.selfBypassMode(),
 			", process_tracking=", i.processTrackingMode(),
 		)
+		i.logStartupSummary()
 		return nil
 	}
 	i.logger.Debug(
@@ -254,8 +262,8 @@ func (i *Inbound) startInbound() error {
 			if dataPlane != nil {
 				attachments = append(attachments, dataPlane.attachmentDescriptions()...)
 			}
-			if i.sharedRewrite != nil && i.sharedRewrite.dataPlane != nil {
-				attachments = append(attachments, i.sharedRewrite.dataPlane.attachmentDescriptions()...)
+			if shared := i.sharedRewriteInstance(); shared != nil {
+				attachments = append(attachments, shared.dataPlaneInstance().attachmentDescriptions()...)
 			}
 			return strings.Join(attachments, ", ")
 		}(), "]",
@@ -263,10 +271,11 @@ func (i *Inbound) startInbound() error {
 		", local_uid_include=", formatUIDRanges(i.localPolicy.IncludeUID),
 		", local_uid_exclude=", formatUIDRanges(i.localPolicy.ExcludeUID),
 		", shared_rewrite_listeners=[", func() string {
-			if i.sharedRewrite == nil {
+			shared := i.sharedRewriteInstance()
+			if shared == nil {
 				return ""
 			}
-			return i.sharedRewrite.listeners.String()
+			return shared.listeners.String()
 		}(), "]",
 		", tcp_listener_lookup=", func() string {
 			if backend == nil {
@@ -302,6 +311,8 @@ func (i *Inbound) startInbound() error {
 		", process_tracking=", i.processTrackingMode(),
 		", tc_priority=", i.tcPriority,
 	)
+	i.udpReplySockets.startSweeper(i.ctx)
+	i.logStartupSummary()
 	return nil
 }
 
@@ -404,6 +415,7 @@ func (i *Inbound) checkKernelCapabilities() error {
 			((sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0)) ||
 			len(i.bypassRuleSet) > 0,
 		NeedProcessTracking: localSelected && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
+		FakeIPICMPReply:     i.fakeIPICMPReply,
 	})
 	if err != nil {
 		return E.Cause(err, "probe eBPF kernel capabilities")
@@ -435,9 +447,8 @@ func (i *Inbound) closeResources() error {
 	monitorErr := i.stopTCInterfaceMonitor()
 	i.stopBypassRuleSets()
 	sharedRewriteErr := error(nil)
-	if i.sharedRewrite != nil {
-		sharedRewriteErr = i.sharedRewrite.Close()
-		i.sharedRewrite = nil
+	if shared := i.takeSharedRewrite(); shared != nil {
+		sharedRewriteErr = shared.Close()
 	}
 	dataPlane := i.takeTCDataPlane()
 	disableErr := dataPlane.disable()
@@ -445,11 +456,23 @@ func (i *Inbound) closeResources() error {
 	cgroupErr := error(nil)
 	if cgroupBackend != nil {
 		cgroupErr = cgroupBackend.Close()
+		// Close keeps the runtime when a program could not be detached, because a
+		// legacy cgroup attachment is owned by the cgroup rather than by the
+		// program handle: dropping the handles would leave that program attached
+		// with nothing able to detach it. Take the backend back so a later close
+		// can retry the slots that failed.
+		if !cgroupBackend.IsClosed() {
+			i.setCgroupBackend(cgroupBackend)
+			if cgroupErr == nil {
+				cgroupErr = E.New("cgroup eBPF backend remained open after close")
+			}
+		}
 	}
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()
+	i.udpReplySockets.stopSweeper()
 	udpReplySocketErr := i.udpReplySockets.close()
-	dataPlaneErr := dataPlane.Close()
+	dataPlaneErr := i.closeTakenTCDataPlane(dataPlane)
 	routeErr := i.removeLocalRoutes()
 	selfBypassErr := error(nil)
 	if i.selfBypass != nil {
@@ -470,6 +493,9 @@ func (i *Inbound) closeResources() error {
 }
 
 func (i *Inbound) prepareCgroupBackend() error {
+	if err := i.reclaimCgroupBackend(); err != nil {
+		return err
+	}
 	backend, err := commonEBPF.PrepareCgroup(commonEBPF.CgroupConfig{
 		Path:          i.cgroupPath,
 		EnableTCP:     i.enableTCP,
@@ -496,6 +522,60 @@ func (i *Inbound) tcBackend() *commonEBPF.TCBackend {
 		return nil
 	}
 	return i.tcDataPlane.backend
+}
+
+// cgroupBackendCloser is the part of a retained backend the reclaim needs, so
+// the decision can be exercised without loading one.
+type cgroupBackendCloser interface {
+	Close() error
+	IsClosed() bool
+	CgroupPath() string
+}
+
+// reclaimCgroupBackendState retries the close of a retained backend and reports
+// whether it finished. It is a variable so tests can drive both outcomes.
+var reclaimCgroupBackendState = func(backend cgroupBackendCloser) (bool, error) {
+	closeErr := backend.Close()
+	if backend.IsClosed() {
+		return true, closeErr
+	}
+	return false, E.Errors(
+		E.New("cgroup eBPF backend from a previous run is still attached to ", backend.CgroupPath()),
+		closeErr,
+	)
+}
+
+// reclaimCgroupBackend finishes with a backend a previous close could not,
+// before a new one is prepared.
+//
+// Close keeps its runtime when a program could not be detached, so the handles a
+// retry needs stay owned, and closeResources hands the backend back for that
+// reason. Nothing retries it on its own. Two things follow from leaving it
+// alone, and they are different problems.
+//
+// On the same cgroup, the retained handle still holds the exclusive lock
+// PrepareCgroup takes, so preparing a replacement fails at the lock and reports
+// the cgroup as belonging to someone else. Nothing is overwritten there, because
+// the assignment only happens once PrepareCgroup has succeeded; the start simply
+// cannot proceed. On a different cgroup, PrepareCgroup does succeed and the
+// assignment then replaces the retained backend, which is where a reference is
+// genuinely dropped.
+//
+// Retrying here covers both: starting up is when the lifecycle is available
+// again, and this is the same close it already performs. A backend that still
+// will not close is handed back rather than dropped, and the error says what is
+// actually wrong instead of letting the lock failure report it as somebody
+// else's cgroup.
+func (i *Inbound) reclaimCgroupBackend() error {
+	retained := i.takeCgroupBackend()
+	if retained == nil {
+		return nil
+	}
+	reclaimed, err := reclaimCgroupBackendState(retained)
+	if !reclaimed {
+		i.setCgroupBackend(retained)
+	}
+	return err
 }
 
 func (i *Inbound) cgroupBackendInstance() *commonEBPF.CgroupBackend {
@@ -526,6 +606,32 @@ func (i *Inbound) isCgroupRedirectAddress(address netip.Addr) bool {
 	return address.Is6() && i.redirectIPv6Prefix.IsValid() && i.redirectIPv6Prefix.Contains(address)
 }
 
+// sharedRewriteInstance, setSharedRewrite, and takeSharedRewrite guard
+// i.sharedRewrite the same way tcDataPlaneAccess guards i.tcDataPlane below:
+// Diagnostics can be called at any time from an HTTP handler with no
+// relationship to this inbound's own lifecycle, so a plain field read there
+// races against closeResources' plain field write with nothing else
+// coincidentally serializing the two -- confirmed with go test -race.
+func (i *Inbound) sharedRewriteInstance() *sharedRewrite {
+	i.sharedRewriteAccess.RLock()
+	defer i.sharedRewriteAccess.RUnlock()
+	return i.sharedRewrite
+}
+
+func (i *Inbound) setSharedRewrite(shared *sharedRewrite) {
+	i.sharedRewriteAccess.Lock()
+	i.sharedRewrite = shared
+	i.sharedRewriteAccess.Unlock()
+}
+
+func (i *Inbound) takeSharedRewrite() *sharedRewrite {
+	i.sharedRewriteAccess.Lock()
+	shared := i.sharedRewrite
+	i.sharedRewrite = nil
+	i.sharedRewriteAccess.Unlock()
+	return shared
+}
+
 func (i *Inbound) setTCDataPlane(dataPlane *tcDataPlane) {
 	i.tcDataPlaneAccess.Lock()
 	i.tcDataPlane = dataPlane
@@ -547,4 +653,20 @@ func (i *Inbound) reconcileTCDataPlane(localInterface string, sharedInterfaces [
 		return nil
 	}
 	return i.tcDataPlane.reconcile(localInterface, sharedInterfaces, hostAddresses)
+}
+
+// Keep the owner reachable after both normal shutdown and startup cleanup.
+func (i *Inbound) closeTakenTCDataPlane(dataPlane *tcDataPlane) error {
+	err := dataPlane.Close()
+	if !dataPlane.IsClosed() {
+		i.setTCDataPlane(dataPlane)
+		if err == nil {
+			err = E.New("TC eBPF data plane remained open after close")
+		}
+	}
+	return err
+}
+
+func (i *Inbound) closeTCDataPlane() error {
+	return i.closeTakenTCDataPlane(i.takeTCDataPlane())
 }

@@ -62,6 +62,26 @@ type sharedUDPOriginalDestination struct {
 
 const sharedUDPReplyAliasLimit = 64
 
+// count reports the number of tracked shared packet-rewrite UDP clients,
+// for diagnostics -- udpClientTable.count()'s counterpart for the local/TC
+// client table, which Diagnostics' own UDPSessionCount previously reported
+// alone: a shared.data_plane: packet_rewrite inbound with no local role at
+// all keeps its live UDP clients exclusively in this table, so
+// UDPSessionCount always read 0 for it regardless of how many clients were
+// actually active. Like udpClientTable.count(), this locks each shard in
+// turn rather than all at once, so it is a point-in-time estimate under
+// concurrent traffic, not a value consistent with any single instant.
+func (t *sharedUDPClientTable) count() int {
+	total := 0
+	for index := range t.clientShards {
+		shard := &t.clientShards[index]
+		shard.access.RLock()
+		total += len(shard.clients)
+		shard.access.RUnlock()
+	}
+	return total
+}
+
 func (t *sharedUDPClientTable) load(client netip.AddrPort) (*sharedUDPClientState, bool) {
 	shard := t.clientShard(client)
 	shard.access.RLock()
@@ -101,9 +121,7 @@ func (s *sharedUDPClientShard) loadOrCreateLocked(client netip.AddrPort) *shared
 }
 
 func (t *sharedUDPClientTable) clientShard(client netip.AddrPort) *sharedUDPClientShard {
-	port := client.Port()
-	index := (port ^ port>>8) & (sharedUDPClientShardCount - 1)
-	return &t.clientShards[index]
+	return &t.clientShards[shardIndexForAddrPort(client, sharedUDPClientShardCount)]
 }
 
 func (t *sharedUDPClientTable) cachedOriginal(client netip.AddrPort, redirectAddress netip.Addr) (sharedUDPOriginalDestination, bool) {

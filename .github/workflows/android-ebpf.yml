@@ -1,4 +1,4 @@
-name: Build Android eBPF
+name: Build Android eBPF test
 
 on:
   workflow_dispatch:
