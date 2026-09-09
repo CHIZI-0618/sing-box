@@ -328,11 +328,14 @@ func replaceHostAddressPolicy(
 		return E.Cause(err, "update TC eBPF IPv4 host addresses")
 	}
 	if err := replaceHostAddressMap(ipv6Map, currentIPv6, nextIPv6); err != nil {
-		rollbackErr := replaceHostAddressMap(ipv4Map, nextIPv4, currentIPv4)
-		return E.Errors(
-			E.Cause(err, "update TC eBPF IPv6 host addresses"),
-			E.Cause(rollbackErr, "rollback TC eBPF IPv4 host addresses"),
-		)
+		updateErr := E.Cause(err, "update TC eBPF IPv6 host addresses")
+		if rollbackErr := replaceHostAddressMap(ipv4Map, nextIPv4, currentIPv4); rollbackErr != nil {
+			// Report a failed rollback distinguishably so the caller can mark the
+			// backend unusable instead of trusting its own in-memory copy of the
+			// policy, which the maps no longer match.
+			return policyUpdateError(updateErr, E.Cause(rollbackErr, "rollback TC eBPF IPv4 host addresses"))
+		}
+		return updateErr
 	}
 	return nil
 }
@@ -365,7 +368,7 @@ func replaceHostAddressMap[K comparable](mapInstance *CiliumEBPF.Map, current, n
 			for _, addedKey := range added[:index] {
 				rollbackErr = E.Errors(rollbackErr, mapInstance.Delete(&addedKey))
 			}
-			return E.Errors(err, E.Cause(rollbackErr, "rollback added host addresses"))
+			return policyUpdateError(err, E.Cause(rollbackErr, "rollback added host addresses"))
 		}
 	}
 	for index, key := range removed {
@@ -378,7 +381,7 @@ func replaceHostAddressMap[K comparable](mapInstance *CiliumEBPF.Map, current, n
 			for _, addedKey := range added {
 				rollbackErr = E.Errors(rollbackErr, mapInstance.Delete(&addedKey))
 			}
-			return E.Errors(err, E.Cause(rollbackErr, "rollback host address update"))
+			return policyUpdateError(err, E.Cause(rollbackErr, "rollback host address update"))
 		}
 	}
 	return nil

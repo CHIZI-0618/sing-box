@@ -23,6 +23,7 @@ import (
 const (
 	sharedRewriteIngressFilterHandle = 0x5342
 	sharedRewriteEgressFilterHandle  = 0x5343
+	sharedRewriteICMPFilterHandle    = 0x5349
 )
 
 var sharedRewriteAttachmentSequence atomic.Uint32
@@ -45,7 +46,26 @@ type sharedRewriteDataPlane struct {
 	priority      uint16
 	enabled       bool
 	ready         bool
+	// hooks is nil in production. Tests set it to drive and observe the paths
+	// that otherwise need a kernel.
+	hooks *sharedRewriteDataPlaneHooks
 }
+
+type sharedRewriteDataPlaneHooks struct {
+	attach      sharedRewriteAttachFunc
+	setEnabled  func(enabled bool) error
+	purgeUDPNat func()
+	// backendState stands in for the backend's own health reporting, which a
+	// test cannot put into the "still open but has to be rebuilt" state from
+	// outside the package that owns it.
+	backendState func() (closed bool, requiresRebuild bool)
+}
+
+type sharedRewriteAttachFunc func(
+	device netlink.Link,
+	backend *commonEBPF.SharedNetworkBackend,
+	priority uint16,
+) (*sharedRewriteAttachment, error)
 
 type sharedRewriteAttachment struct {
 	interfaceName   string
@@ -61,6 +81,12 @@ type sharedRewriteAttachment struct {
 	egressLink      link.Link
 	restoreLocalnet bool
 	attachmentType  string
+	// icmpFilter/icmpLink are the fakeip_icmp shared-reply filter, attached
+	// alongside ingressFilter/ingressLink (same interface, same direction)
+	// only when backend.FakeIPICMPEnabled(); nil whenever that feature is
+	// off, the same as every other field here is nil when it does not apply.
+	icmpFilter *netlink.BpfFilter
+	icmpLink   link.Link
 }
 
 func newSharedRewriteDataPlane(owner *sharedRewrite, priority uint16) *sharedRewriteDataPlane {
@@ -77,6 +103,15 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	changed := false
+	// Runs before the unlock on every return, including an early error exit,
+	// so a rollback that already detached something never leaves stale NAT
+	// entries behind just because reconcile gave up partway.
+	defer func() {
+		if changed {
+			d.owner.udpNat.Purge()
+		}
+	}()
 
 	desired := make(map[string]netlink.Link, len(interfaceNames))
 	for _, interfaceName := range interfaceNames {
@@ -127,7 +162,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	candidate := make(map[string]*sharedRewriteAttachment, len(desired))
 	created := make([]*sharedRewriteAttachment, 0, len(desired))
 	retired := make([]*sharedRewriteAttachment, 0, len(d.attachments))
-	changed := hostChanged
+	changed = hostChanged
 	names := make([]string, 0, len(desired))
 	for name := range desired {
 		names = append(names, name)
@@ -161,7 +196,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 			if localnetChanged {
 				previous.restoreLocalnet = true
 			}
-			healthy, err := previous.healthy(device, d.priority)
+			healthy, err := previous.healthy(device, d.priority, backend.FakeIPICMPEnabled())
 			if err != nil {
 				return cleanupCandidates(E.Cause(err, "inspect shared packet-rewrite attachment on ", name))
 			}
@@ -243,13 +278,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	d.attachments = candidate
 	d.hostAddresses = slices.Clone(hostAddresses)
 	d.enabled = wantEnabled
-	if changed {
-		d.owner.udpNat.Purge()
-	}
-	if d.enabled && !d.ready {
-		d.ready = true
-		d.owner.sharedRewriteReadyLocked(d.attachmentDescriptionsLocked())
-	}
+
 	return closeErr
 }
 
@@ -297,6 +326,34 @@ func (d *sharedRewriteDataPlane) attachmentDescriptionsLocked() []string {
 	}
 	slices.Sort(descriptions)
 	return descriptions
+}
+
+// attachmentDiagnostics is attachmentDescriptions' structured sibling, for
+// item 7's runtime status query -- see tcDataPlane.attachmentDiagnostics,
+// which this mirrors. Every shared packet-rewrite attachment reports
+// role="shared" and framing="ethernet", since reconcile already refuses any
+// interface that is not Ethernet-framed.
+func (d *sharedRewriteDataPlane) attachmentDiagnostics() []EBPFAttachmentDiagnostics {
+	if d == nil {
+		return nil
+	}
+	d.access.Lock()
+	defer d.access.Unlock()
+	diagnostics := make([]EBPFAttachmentDiagnostics, 0, len(d.attachments))
+	for _, attachment := range d.attachments {
+		diagnostics = append(diagnostics, EBPFAttachmentDiagnostics{
+			InterfaceName:  attachment.interfaceName,
+			InterfaceIndex: attachment.interfaceIndex,
+			Role:           "shared",
+			Framing:        "ethernet",
+			Mechanism:      attachment.attachmentType,
+			FakeIPICMP:     attachment.icmpFilter != nil || attachment.icmpLink != nil,
+		})
+	}
+	slices.SortFunc(diagnostics, func(a, b EBPFAttachmentDiagnostics) int {
+		return strings.Compare(a.InterfaceName, b.InterfaceName)
+	})
+	return diagnostics
 }
 
 func (d *sharedRewriteDataPlane) Close() error {
@@ -376,6 +433,13 @@ func attachSharedRewriteInterfaceWithOptions(
 				Attach:    CiliumEBPF.AttachTCXIngress,
 			})
 		}
+		if err == nil && backend.FakeIPICMPEnabled() {
+			attachment.icmpLink, err = link.AttachTCX(link.TCXOptions{
+				Interface: device.Attrs().Index,
+				Program:   backend.FakeIPICMPSharedReplyProgram(commonEBPF.TCLinkFramingEthernet),
+				Attach:    CiliumEBPF.AttachTCXIngress,
+			})
+		}
 		if err == nil {
 			tcxSupport.Store(tcxSupportAvailable)
 			attachment.attachmentType = "tcx"
@@ -398,23 +462,44 @@ func attachSharedRewriteInterfaceWithOptions(
 	if err != nil {
 		return cleanup(err)
 	}
+	if backend.FakeIPICMPEnabled() {
+		attachment.icmpFilter, err = attachTCFilter(
+			device,
+			netlink.HANDLE_MIN_INGRESS,
+			backend.FakeIPICMPSharedReplyProgramFD(commonEBPF.TCLinkFramingEthernet),
+			"sb_icmp_share",
+			sharedRewriteICMPFilterHandle,
+			priority,
+		)
+		if err != nil {
+			return cleanup(err)
+		}
+	}
 	attachment.attachmentType = "clsact"
 	return attachment, nil
 }
 
-func (a *sharedRewriteAttachment) healthy(device netlink.Link, priority uint16) (bool, error) {
+func (a *sharedRewriteAttachment) healthy(device netlink.Link, priority uint16, fakeIPICMPEnabled bool) (bool, error) {
 	if a.ingressLink != nil || a.egressLink != nil {
 		ingress, err := tcxLinkAttached(a.ingressLink, a.interfaceIndex, CiliumEBPF.AttachTCXIngress)
 		if err != nil || !ingress {
 			return false, err
 		}
-		return tcxLinkAttached(a.egressLink, a.interfaceIndex, CiliumEBPF.AttachTCXEgress)
+		egress, err := tcxLinkAttached(a.egressLink, a.interfaceIndex, CiliumEBPF.AttachTCXEgress)
+		if err != nil || !egress || !fakeIPICMPEnabled {
+			return egress, err
+		}
+		return tcxLinkAttached(a.icmpLink, a.interfaceIndex, CiliumEBPF.AttachTCXIngress)
 	}
 	ingress, err := tcFilterAttached(device, netlink.HANDLE_MIN_INGRESS, a.ingressName, a.ingressHandle, priority)
 	if err != nil || !ingress {
 		return false, err
 	}
-	return tcFilterAttached(device, netlink.HANDLE_MIN_EGRESS, a.egressName, a.egressHandle, priority)
+	egress, err := tcFilterAttached(device, netlink.HANDLE_MIN_EGRESS, a.egressName, a.egressHandle, priority)
+	if err != nil || !egress || !fakeIPICMPEnabled {
+		return egress, err
+	}
+	return tcFilterAttached(device, netlink.HANDLE_MIN_INGRESS, "sb_icmp_share", sharedRewriteICMPFilterHandle, priority)
 }
 
 func (a *sharedRewriteAttachment) closeLinks() error {
@@ -427,6 +512,10 @@ func (a *sharedRewriteAttachment) closeLinks() error {
 		closeErr = E.Errors(closeErr, a.egressLink.Close())
 		a.egressLink = nil
 	}
+	if a.icmpLink != nil {
+		closeErr = E.Errors(closeErr, a.icmpLink.Close())
+		a.icmpLink = nil
+	}
 	return closeErr
 }
 
@@ -434,9 +523,15 @@ func (a *sharedRewriteAttachment) Close() error {
 	if a == nil {
 		return nil
 	}
-	closeErr := E.Errors(a.closeLinks(), detachTCFilter(a.ingressFilter), detachTCFilter(a.egressFilter))
+	closeErr := E.Errors(
+		a.closeLinks(),
+		detachTCFilter(a.ingressFilter),
+		detachTCFilter(a.egressFilter),
+		detachTCFilter(a.icmpFilter),
+	)
 	a.ingressFilter = nil
 	a.egressFilter = nil
+	a.icmpFilter = nil
 	if a.restoreLocalnet {
 		closeErr = E.Errors(closeErr, restoreSharedRewriteLocalnet(a.interfaceName))
 		a.restoreLocalnet = false
@@ -490,4 +585,34 @@ func restoreSharedRewriteLocalnet(interfaceName string) error {
 		return E.Cause(err, "restore route_localnet for ", interfaceName)
 	}
 	return nil
+}
+
+// retryOutcome classifies a failed reconcile for the recovery backoff. Repeating
+// an attach can only help while the backend is still usable: once it is closed
+// or has to be rebuilt, every later attempt fails the same way, and recovery has
+// to come from a restart instead.
+func (d *sharedRewriteDataPlane) retryOutcome() tcSharedRewriteOutcome {
+	if d == nil {
+		return tcSharedRewriteUnrecoverable
+	}
+	d.access.Lock()
+	defer d.access.Unlock()
+	closed, requiresRebuild := d.backendStateLocked()
+	if closed || requiresRebuild {
+		return tcSharedRewriteUnrecoverable
+	}
+	return tcSharedRewriteRecoverable
+}
+
+// backendStateLocked reports the two conditions that make another attach
+// pointless. A backend that has not been built yet is neither: the next attempt
+// may manage to build it.
+func (d *sharedRewriteDataPlane) backendStateLocked() (closed bool, requiresRebuild bool) {
+	if d.hooks != nil && d.hooks.backendState != nil {
+		return d.hooks.backendState()
+	}
+	if d.backend == nil {
+		return false, false
+	}
+	return d.backend.IsClosed(), d.backend.RequiresRebuild()
 }

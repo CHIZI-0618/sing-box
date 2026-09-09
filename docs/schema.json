@@ -6346,6 +6346,13 @@
             },
             "shared": {
               "$ref": "#/$defs/EBPFSharedOptions"
+            },
+            "fakeip_icmp": {
+              "type": "string",
+              "enum": [
+                "off",
+                "reply"
+              ]
             }
           },
           "required": [

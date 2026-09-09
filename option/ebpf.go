@@ -14,6 +14,14 @@ type EBPFInboundOptions struct {
 	BypassRuleSet badoption.Listable[string] `json:"bypass_rule_set,omitempty" reference:"rule_set"`
 	Local         EBPFLocalOptions           `json:"local,omitempty"`
 	Shared        EBPFSharedOptions          `json:"shared,omitempty"`
+	// FakeIPICMP, when "reply", answers ICMP Echo Request packets addressed to
+	// a FakeIP so a client's ping sees that address as reachable, without the
+	// request ever leaving this box. It applies to whichever of local/shared
+	// is enabled and has a TC data plane (local.data_plane=tc, or any shared
+	// data plane) — local.data_plane=cgroup has no TC attachment for this to
+	// ride on and is rejected explicitly rather than silently doing nothing.
+	// The default, "off", changes nothing about existing network semantics.
+	FakeIPICMP string `json:"fakeip_icmp,omitempty" enum:"off,reply"`
 }
 
 type EBPFLocalOptions struct {

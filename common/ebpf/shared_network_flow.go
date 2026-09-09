@@ -605,7 +605,30 @@ func deleteMapIfExists(mapFD int, key unsafe.Pointer) error {
 	return err
 }
 
+// sharedNetworkStatCount mirrors native/shared_network.h's SB_SHARED_STAT_COUNT;
+// the two indices below mirror SB_SHARED_STAT_TOKEN_RESERVATION_FAILURE and
+// SB_SHARED_STAT_REWRITE_FAILURE. There is no generated binding for either
+// side's constants, so this comment is the ABI contract between them.
+const sharedNetworkStatCount = 2
+
+const (
+	sharedNetworkStatTokenReservationFailure uint32 = 0
+	sharedNetworkStatRewriteFailure          uint32 = 1
+)
+
 func (b *SharedNetworkBackend) TokenReservationFailures() (uint64, error) {
+	return b.sharedStat(sharedNetworkStatTokenReservationFailure)
+}
+
+// RewriteFailures reports how many times rewrite_ipv4/rewrite_ipv6
+// (native/shared_network_rewrite.h) failed to patch a packet's header in
+// place -- a dropped packet the kernel side could not safely rewrite, as
+// opposed to one this backend's Go side ever decided to drop.
+func (b *SharedNetworkBackend) RewriteFailures() (uint64, error) {
+	return b.sharedStat(sharedNetworkStatRewriteFailure)
+}
+
+func (b *SharedNetworkBackend) sharedStat(index uint32) (uint64, error) {
 	if b == nil {
 		return 0, errBackendClosed
 	}
@@ -618,7 +641,6 @@ func (b *SharedNetworkBackend) TokenReservationFailures() (uint64, error) {
 	if statsMap == nil {
 		return 0, errBackendClosed
 	}
-	var index uint32
 	var perCPU []uint64
 	if err := statsMap.Lookup(&index, &perCPU); err != nil {
 		return 0, err
