@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/sagernet/netlink"
+	"github.com/sagernet/netlink/nl"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	E "github.com/sagernet/sing/common/exceptions"
 
@@ -56,7 +57,11 @@ func startTCPolicyRouting(enableIPv6 bool) (*tcPolicyRouting, error) {
 	}
 	routing := &tcPolicyRouting{lock: lock}
 	cleanup := func(startErr error) (*tcPolicyRouting, error) {
-		return nil, E.Errors(startErr, routing.Close())
+		closeErr := routing.Close()
+		if !routing.IsClosed() {
+			return routing, E.Errors(startErr, closeErr)
+		}
+		return nil, E.Errors(startErr, closeErr)
 	}
 	loopback, err := netlink.LinkByName("lo")
 	if err != nil {
@@ -144,17 +149,17 @@ func (r *tcPolicyRouting) ensure() (bool, error) {
 		}
 
 		expectedRule := tcPolicyRuleFor(family, r.mark, r.table, r.priority)
-		rules, err := netlink.RuleList(family)
+		entries, err := listTCPolicyRules(family, *expectedRule)
 		if err != nil {
 			return changed, E.Cause(err, "inspect TC eBPF policy rules")
 		}
 		rulePresent := false
-		for _, rule := range rules {
-			if matchesTCPolicyRule(rule, *expectedRule) {
+		for _, rule := range entries {
+			if rule.owned {
 				rulePresent = true
 				continue
 			}
-			if rule.Table == r.table {
+			if rule.table == r.table {
 				return changed, E.New("TC eBPF routing table ", r.table, " is referenced by another policy rule")
 			}
 		}
@@ -186,18 +191,17 @@ func inspectTCPolicyRoutingFamily(loopbackIndex int, family int, routing *tcPoli
 		staleRoutes = append(staleRoutes, routes[index])
 	}
 	expectedRule := tcPolicyRuleFor(family, routing.mark, routing.table, routing.priority)
-	rules, err := netlink.RuleList(family)
+	entries, err := listTCPolicyRules(family, *expectedRule)
 	if err != nil {
 		return tcStalePolicyRouting{}, E.Cause(err, "inspect TC eBPF policy rules")
 	}
 	staleRule := false
-	for index := range rules {
-		rule := &rules[index]
-		if matchesTCPolicyRule(*rule, *expectedRule) {
+	for _, rule := range entries {
+		if rule.owned {
 			staleRule = true
 			continue
 		}
-		if rule.Table == routing.table {
+		if rule.table == routing.table {
 			return tcStalePolicyRouting{}, E.New("TC eBPF routing table ", routing.table, " is referenced by another policy rule")
 		}
 	}
@@ -286,7 +290,18 @@ func allocateTCPolicyIdentifiers(loopbackIndex int, families []int) (tcPolicyIde
 	var usedMarkBits uint32
 	allFamilies := []int{unix.AF_INET, unix.AF_INET6}
 	for _, family := range allFamilies {
-		routes, err := netlink.RouteList(nil, family)
+		// This has to see every table in use, not just the main one: the
+		// candidate table numbers this function picks from never include the
+		// main table, so a collision only ever exists in some other,
+		// already-used table. netlink.RouteList(nil, family) looks like it
+		// would show that, but two of its default behaviors work against it
+		// here: its filter mask always includes RT_FILTER_OIF even without a
+		// link argument, comparing against a zero LinkIndex and silently
+		// returning next to nothing; and even past that, its default scope is
+		// the main table only. RT_FILTER_TABLE with Table: RT_TABLE_UNSPEC
+		// asks for every table instead, and a non-nil empty filter avoids a
+		// nil-pointer panic routeHandle takes an actual nil filter into.
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_UNSPEC}, netlink.RT_FILTER_TABLE)
 		if err != nil {
 			if family == unix.AF_INET6 && (errors.Is(err, unix.EAFNOSUPPORT) || errors.Is(err, unix.EOPNOTSUPP)) {
 				continue
@@ -335,15 +350,15 @@ func allocateTCPolicyIdentifiers(loopbackIndex int, families []int) (tcPolicyIde
 			}
 			managedStateFound = true
 		}
-		rules, err := netlink.RuleList(family)
+		entries, err := listTCPolicyRules(family, *tcPolicyRuleFor(family, preferred.mark, preferred.table, preferred.priority))
 		if err != nil {
 			return tcPolicyIdentifiers{}, E.Cause(err, "inspect TC eBPF policy state")
 		}
-		for _, rule := range rules {
-			if rule.Table != preferred.table {
+		for _, rule := range entries {
+			if rule.table != preferred.table {
 				continue
 			}
-			if matchesTCPolicyRule(rule, *tcPolicyRuleFor(family, preferred.mark, preferred.table, preferred.priority)) {
+			if rule.owned {
 				managedStateFound = true
 				break
 			}
@@ -457,16 +472,135 @@ func routeDestination(destination *net.IPNet) netip.Prefix {
 	return netip.PrefixFrom(address, bits).Masked()
 }
 
-func matchesTCPolicyRule(rule netlink.Rule, expected netlink.Rule) bool {
-	return rule.Priority == expected.Priority &&
-		rule.Family == expected.Family &&
-		rule.Table == expected.Table &&
-		rule.Mark == expected.Mark &&
-		rule.Mask == expected.Mask
+// tcPolicyRuleEntry is one rule as the kernel dumped it, carrying the two things
+// the callers need: whether this process may claim it, and which table it points
+// at so an unclaimable rule on this table can be reported as a conflict.
+type tcPolicyRuleEntry struct {
+	priority int
+	table    int
+	owned    bool
+}
+
+// tcPolicyRuleAttributeProtocol is FRA_PROTOCOL. The kernel records which
+// program installed a rule and emits it for every rule; the vendored netlink
+// constants do not name it.
+const tcPolicyRuleAttributeProtocol = 21
+
+// listTCPolicyRules dumps the policy rules of a family and decides ownership
+// from each dump message on its own.
+//
+// netlink.RuleList cannot answer this. It drops the rule action:
+// fib_rule_hdr.action overlays rtmsg.rtm_type in the message header and the list
+// parser only walks attributes, so a blackhole rule reads back looking exactly
+// like this process's own. Reading the action from a second dump and joining it
+// to the first by priority is not a fix either — between the two dumps a rule
+// can be replaced, and the fields of the old one would be joined to the action
+// of the new one, which can manufacture an ownership claim over two rules that
+// each should have been rejected. Fields and action therefore come out of the
+// same message.
+func listTCPolicyRules(family int, expected netlink.Rule) ([]tcPolicyRuleEntry, error) {
+	request := nl.NewNetlinkRequest(unix.RTM_GETRULE, unix.NLM_F_DUMP|unix.NLM_F_REQUEST)
+	request.AddData(nl.NewIfInfomsg(family))
+	messages, err := request.Execute(unix.NETLINK_ROUTE, unix.RTM_NEWRULE)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]tcPolicyRuleEntry, 0, len(messages))
+	for _, message := range messages {
+		entry, ok, parseErr := parseTCPolicyRuleMessage(message, expected)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if !ok {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// parseTCPolicyRuleMessage turns one RTM_NEWRULE message into an entry, and
+// reports whether the message was long enough to be one at all.
+//
+// Ownership is decided by rejection: the message has to carry the action, the
+// selector and the attributes this process installs, and nothing else. An
+// attribute this code does not set is a condition someone else attached, and an
+// attribute a future kernel adds is unknown rather than harmless, so both disown
+// the rule. Values are compared as the kernel sent them, in uint32, so no
+// sentinel has to survive a conversion to int — the reason a high-bit option
+// cannot be mistaken for "absent" on a 32-bit build.
+func parseTCPolicyRuleMessage(message []byte, expected netlink.Rule) (tcPolicyRuleEntry, bool, error) {
+	if len(message) < unix.SizeofRtMsg {
+		return tcPolicyRuleEntry{}, false, nil
+	}
+	native := nl.NativeEndian()
+	header := nl.DeserializeRtMsg(message)
+	attributes, err := nl.ParseRouteAttr(message[header.Len():])
+	if err != nil {
+		return tcPolicyRuleEntry{}, false, err
+	}
+	entry := tcPolicyRuleEntry{priority: -1, table: int(header.Table)}
+	owned := int(header.Family) == expected.Family &&
+		header.Type == nl.FR_ACT_TO_TBL &&
+		header.Flags&netlink.FibRuleInvert == 0 &&
+		header.Tos == 0 && header.Src_len == 0 && header.Dst_len == 0
+	var mark, mask int64 = -1, -1
+	// The attributes read below are 32-bit; a short one is malformed and reading
+	// it would be out of bounds, so it disowns the rule instead.
+	word := func(value []byte) (uint32, bool) {
+		if len(value) < 4 {
+			owned = false
+			return 0, false
+		}
+		return native.Uint32(value[:4]), true
+	}
+	for _, attribute := range attributes {
+		value := attribute.Value
+		switch attribute.Attr.Type {
+		case tcPolicyRuleAttributeProtocol:
+			// Informational, present on every rule, and a single byte rather than
+			// a word, so it is deliberately not length-checked here.
+		case unix.RTA_TABLE:
+			if table, ok := word(value); ok {
+				entry.table = int(table)
+			}
+		case nl.FRA_PRIORITY:
+			if priority, ok := word(value); ok {
+				entry.priority = int(priority)
+			}
+		case nl.FRA_FWMARK:
+			if fwmark, ok := word(value); ok {
+				mark = int64(fwmark)
+			}
+		case nl.FRA_FWMASK:
+			if fwmask, ok := word(value); ok {
+				mask = int64(fwmask)
+			}
+		case nl.FRA_SUPPRESS_PREFIXLEN, nl.FRA_SUPPRESS_IFGROUP:
+			// Emitted for every rule whether or not suppression is configured, so
+			// presence means nothing and the value has to be read: anything other
+			// than the all-ones sentinel is a real suppression setting.
+			if suppress, ok := word(value); ok && suppress != ^uint32(0) {
+				owned = false
+			}
+		default:
+			owned = false
+		}
+	}
+	entry.owned = owned &&
+		entry.priority == expected.Priority &&
+		entry.table == expected.Table &&
+		mark == int64(expected.Mark) &&
+		mask == int64(expected.Mask)
+	return entry, true, nil
 }
 
 func tcPolicyDeleteIgnored(err error) bool {
 	return err == nil || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ESRCH)
+}
+
+func (r *tcPolicyRouting) IsClosed() bool {
+	return r == nil || len(r.rules) == 0 && len(r.routes) == 0 && r.lock == nil
 }
 
 func (r *tcPolicyRouting) Close() error {
@@ -474,21 +608,25 @@ func (r *tcPolicyRouting) Close() error {
 		return nil
 	}
 	var closeErr error
-	for index := range slices.Backward(r.rules) {
+	for index := len(r.rules) - 1; index >= 0; index-- {
 		if err := netlink.RuleDel(r.rules[index]); !tcPolicyDeleteIgnored(err) {
 			closeErr = E.Errors(closeErr, err)
+		} else {
+			r.rules = slices.Delete(r.rules, index, index+1)
 		}
 	}
-	r.rules = nil
-	for index := range slices.Backward(r.routes) {
+	if len(r.rules) != 0 {
+		return closeErr
+	}
+	for index := len(r.routes) - 1; index >= 0; index-- {
 		if err := netlink.RouteDel(&r.routes[index]); !tcPolicyDeleteIgnored(err) {
 			closeErr = E.Errors(closeErr, err)
+		} else {
+			r.routes = slices.Delete(r.routes, index, index+1)
 		}
 	}
-	r.routes = nil
-	if r.lock != nil {
-		closeErr = E.Errors(closeErr, r.lock.Close())
-		r.lock = nil
+	if len(r.routes) != 0 {
+		return closeErr
 	}
-	return closeErr
+	return E.Errors(closeErr, closeOwned(&r.lock))
 }
