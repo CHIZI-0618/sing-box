@@ -164,15 +164,8 @@ func TestDiagnosticsIncludesBypassRuleSetRecovery(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsUnrecoverableSurvivesAnUnknownRound proves the companion
-// gap the same review flagged: updateTCInterfaces can return before
-// re-evaluating every component this round (see its own doc comment,
-// e.g. an early return after a local-interface-topology failure leaves
-// sharedRewrite at its zero value, tcSharedRewriteUnknown, without having
-// touched it at all) -- and recordTCUpdateOutcome's plain overwrite of
-// lastOutcome would otherwise silently replace a genuinely still-broken
-// Unrecoverable component with "nothing is known", reporting normal/
-// recovering instead of needs_attention for a fault nothing has resolved.
+// TestDiagnosticsUnrecoverableSurvivesAnUnknownRound ensures an unevaluated
+// component cannot erase a previously reported unrecoverable state.
 func TestDiagnosticsUnrecoverableSurvivesAnUnknownRound(t *testing.T) {
 	inbound := &Inbound{}
 	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
@@ -198,13 +191,8 @@ func TestDiagnosticsUnrecoverableSurvivesAnUnknownRound(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients is an
-// independent review's finding: UDPSessionCount only ever read
-// i.udpClientTable (the local/TC path's own client table), never
-// sharedRewrite.sharedUDPClientTable -- a shared.data_plane: packet_rewrite
-// inbound with no local role at all keeps its live UDP clients exclusively
-// in the latter table, so this metric read 0 for it no matter how many
-// clients were actually active.
+// TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients covers a
+// packet-rewrite-only inbound with no local UDP client table.
 func TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients(t *testing.T) {
 	inbound := &Inbound{udpTimeout: time.Minute}
 	shared := newSharedRewrite(inbound, option.EBPFSharedOptions{})
@@ -264,9 +252,7 @@ func TestDiagnosticsWriteJSONRoundTrips(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsWriteTextIncludesTheKeyFields is a light sanity check that
-// the text writer actually names item 7's required fields rather than
-// silently dropping one while json.Marshal would still succeed.
+// TestDiagnosticsWriteTextIncludesTheKeyFields covers the text-only fields.
 func TestDiagnosticsWriteTextIncludesTheKeyFields(t *testing.T) {
 	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
 	diagnostics := inbound.Diagnostics()

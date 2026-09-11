@@ -160,19 +160,8 @@ func openRawLinkLayerSocket(t *testing.T, interfaceIndex int, etherType uint16, 
 	return fd
 }
 
-// TestFakeIPICMPSharedReplyAnswersARealClientPing is shared_reply's first
-// real end-to-end proof: every other fakeip_icmp test to date only checks
-// that the shared reply filter/link attaches (TestAttachTCInterfaceAddsTheFakeIPICMPFilterWhenEnabled),
-// never that a genuine LAN client's Echo Request crossing it actually comes
-// back reflected, correctly addressed and checksummed, with its Ethernet
-// addresses swapped so the frame actually reaches the client that sent it.
-//
-// The request is transmitted directly onto a raw link-layer socket bound to
-// the veth's peer rather than sent through any routing-aware socket API,
-// because the whole point is a source address (a "LAN client") this host
-// does not itself own and has no route to — sending it any other way would
-// either fail outright or never reach the ingress side this test attaches
-// shared_reply to.
+// TestFakeIPICMPSharedReplyAnswersARealClientPing injects a raw frame so its
+// source behaves like a LAN client not owned by the test host.
 func TestFakeIPICMPSharedReplyAnswersARealClientPing(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPBackend(t)

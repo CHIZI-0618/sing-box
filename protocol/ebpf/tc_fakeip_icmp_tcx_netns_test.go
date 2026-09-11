@@ -332,11 +332,8 @@ func pingFakeIPICMPTargetV6(t *testing.T, fakeIPTarget string, deadline time.Dur
 	return nil
 }
 
-// TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaTCX is the IPv6 local
-// reply's first real end-to-end proof: every other fakeip_icmp test to date
-// either forces clsact (the IPv4 test) or never leaves the parser/pass-through
-// level (fakeip_icmp_program_run_integration_test.go's IPv6 cases). Skips on
-// a kernel without TCX support, the same as the IPv4 TCX test.
+// TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaTCX covers the IPv6 local
+// reply through a real TCX attachment.
 func TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaTCX(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPBackendWithIPv6(t)

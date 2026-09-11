@@ -173,12 +173,8 @@ func TestRetryLoopBypassRuleSetComponentBacksOffIndependently(t *testing.T) {
 	}
 }
 
-// TestRetryLoopComponentsAreIndependent is the core requirement item 5 names
-// explicitly: one component succeeding must not clear another's pending
-// failure. sharedRewrite fails, then settles while general is still failing;
-// the scheduler must still have a retry outstanding for general afterward,
-// and general's own backoff must not have been disturbed by sharedRewrite's
-// unrelated recovery.
+// TestRetryLoopComponentsAreIndependent ensures one component's recovery
+// cannot clear or disturb another component's pending retry.
 func TestRetryLoopComponentsAreIndependent(t *testing.T) {
 	harness := newComponentRetryLoopHarness(t)
 

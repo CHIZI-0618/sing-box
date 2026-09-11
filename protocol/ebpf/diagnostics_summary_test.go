@@ -41,11 +41,8 @@ func (l *captureLogger) ErrorContext(context.Context, ...any) {}
 func (l *captureLogger) FatalContext(context.Context, ...any) {}
 func (l *captureLogger) PanicContext(context.Context, ...any) {}
 
-// TestLogStartupSummaryNamesEachRequiredFact proves item 9's four required
-// facts (enabled paths, actual mount, waiting interfaces, fakeip_icmp
-// coverage) each appear in the one Debug line, for a local TC path that has
-// no interface yet and fakeip_icmp enabled but consequently not covering
-// anything.
+// TestLogStartupSummaryNamesEachRequiredFact checks enabled paths, mounts,
+// waiting interfaces, and FakeIP coverage in the single Debug line.
 func TestLogStartupSummaryNamesEachRequiredFact(t *testing.T) {
 	logger := &captureLogger{}
 	inbound := &Inbound{
