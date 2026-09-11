@@ -162,6 +162,104 @@ func testTCLink(name string, index int) netlink.Link {
 	return &netlink.Device{LinkAttrs: attributes}
 }
 
+func TestReconcileStagesLocalReplacementBeforeClosingPrevious(t *testing.T) {
+	const oldIndex = testTCInterfaceLockIndex + 20
+	const newIndex = testTCInterfaceLockIndex + 21
+	previous := newTestTCAttachment(t, "wlan0", oldIndex)
+	previous.role = tcInterfaceRole{local: true}
+	var previousWasLiveDuringAttach bool
+	dataPlane := &tcDataPlane{
+		backend:     &commonEBPF.TCBackend{},
+		attachments: []*tcInterfaceAttachment{previous},
+		priority:    defaultTCPriority,
+		hooks: &tcDataPlaneHooks{
+			linkByName: func(name string) (netlink.Link, error) {
+				if name == "rmnet_data0" {
+					return testTCLink(name, newIndex), nil
+				}
+				return nil, netlink.LinkNotFoundError{}
+			},
+			attach: func(
+				interfaceName string,
+				state tcAttachmentState,
+				lock io.Closer,
+				lockOwned bool,
+			) (*tcInterfaceAttachment, error) {
+				previousWasLiveDuringAttach = tcLockHeld(t, oldIndex)
+				return &tcInterfaceAttachment{
+					interfaceName:  interfaceName,
+					interfaceIndex: state.index,
+					framing:        state.framing,
+					role:           state.role,
+					lock:           lock,
+					lockOwned:      lockOwned,
+					attachmentType: "clsact",
+				}, nil
+			},
+		},
+	}
+	t.Cleanup(func() { _ = dataPlane.Close() })
+
+	if err := dataPlane.reconcile("rmnet_data0", nil, nil); err != nil {
+		t.Fatalf("reconcile local handover: %v", err)
+	}
+	if !previousWasLiveDuringAttach {
+		t.Fatal("the previous local attachment was closed before its replacement was live")
+	}
+	if !previous.IsClosed() || tcLockHeld(t, oldIndex) {
+		t.Fatal("the previous local attachment was not closed after the replacement became live")
+	}
+	if len(dataPlane.attachments) != 1 || dataPlane.attachments[0].interfaceName != "rmnet_data0" {
+		t.Fatalf("attachments = %+v, want only the staged replacement", dataPlane.attachments)
+	}
+}
+
+func TestReconcileKeepsLocalAttachmentWhenReplacementFails(t *testing.T) {
+	const oldIndex = testTCInterfaceLockIndex + 22
+	const newIndex = testTCInterfaceLockIndex + 23
+	previous := newTestTCAttachment(t, "wlan0", oldIndex)
+	previous.role = tcInterfaceRole{local: true}
+	dataPlane := &tcDataPlane{
+		backend:     &commonEBPF.TCBackend{},
+		attachments: []*tcInterfaceAttachment{previous},
+		priority:    defaultTCPriority,
+		hooks: &tcDataPlaneHooks{
+			linkByName: func(name string) (netlink.Link, error) {
+				if name == "rmnet_data1" {
+					return testTCLink(name, newIndex), nil
+				}
+				return nil, netlink.LinkNotFoundError{}
+			},
+			attach: func(
+				_ string,
+				_ tcAttachmentState,
+				lock io.Closer,
+				lockOwned bool,
+			) (*tcInterfaceAttachment, error) {
+				if !tcLockHeld(t, oldIndex) {
+					t.Fatal("the previous local attachment was closed before the candidate attach")
+				}
+				if lockOwned && lock != nil {
+					_ = lock.Close()
+				}
+				return nil, E.New("synthetic replacement failure")
+			},
+		},
+	}
+	t.Cleanup(func() { _ = dataPlane.Close() })
+
+	err := dataPlane.reconcile("rmnet_data1", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "synthetic replacement failure") {
+		t.Fatalf("reconcile error = %v, want the injected failure", err)
+	}
+	if previous.IsClosed() || !tcLockHeld(t, oldIndex) {
+		t.Fatal("the working local attachment was not retained after the candidate failed")
+	}
+	if len(dataPlane.attachments) != 1 || dataPlane.attachments[0] != previous {
+		t.Fatalf("attachments = %+v, want the previous attachment retained", dataPlane.attachments)
+	}
+}
+
 // TestReconcileOrderReleasesBeforeLockingAReusedIndex drives the real
 // reconciliation order and the real interface locks. The netlink lookup and the
 // final attach are substituted, so this is not a test of attaching to a kernel
