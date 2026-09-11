@@ -21,6 +21,7 @@ var (
 	commandEBPFStatusIPv6       bool
 	commandEBPFStatusJSON       bool
 	commandEBPFStatusFakeIPICMP bool
+	commandEBPFStatusProcess    bool
 )
 
 var commandEBPF = &cobra.Command{
@@ -48,6 +49,7 @@ func init() {
 	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusIPv6, "ipv6", true, "Inspect IPv6 support for the selected data path")
 	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusJSON, "json", false, "Write the report as JSON")
 	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusFakeIPICMP, "fakeip-icmp", false, "Also inspect fakeip_icmp=reply support")
+	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusProcess, "process-tracking", false, "Also inspect optional process tracking support")
 	commandEBPF.AddCommand(commandEBPFStatus)
 	commandTools.AddCommand(commandEBPF)
 }
@@ -59,14 +61,15 @@ func runEBPFStatus() error {
 		interfaceNames = []string{commandEBPFStatusInterface}
 	}
 	report, err := commonEBPF.ProbeKernel(commonEBPF.KernelProbeOptions{
-		Mode:             mode,
-		LocalDataPlane:   commonEBPF.KernelProbeDataPlane(commandEBPFStatusLocal),
-		SharedDataPlane:  commonEBPF.KernelProbeDataPlane(commandEBPFStatusShared),
-		Network:          commandEBPFStatusNetwork,
-		InterfaceNames:   interfaceNames,
-		EnableIPv6:       commandEBPFStatusIPv6,
-		FakeIPICMPReply:  commandEBPFStatusFakeIPICMP,
-		VerifyObjectLoad: true,
+		Mode:                mode,
+		LocalDataPlane:      commonEBPF.KernelProbeDataPlane(commandEBPFStatusLocal),
+		SharedDataPlane:     commonEBPF.KernelProbeDataPlane(commandEBPFStatusShared),
+		Network:             commandEBPFStatusNetwork,
+		InterfaceNames:      interfaceNames,
+		EnableIPv6:          commandEBPFStatusIPv6,
+		FakeIPICMPReply:     commandEBPFStatusFakeIPICMP,
+		NeedProcessTracking: commandEBPFStatusProcess,
+		VerifyObjectLoad:    true,
 	})
 	if err != nil {
 		return err

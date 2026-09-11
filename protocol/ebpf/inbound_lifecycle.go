@@ -342,7 +342,10 @@ func (i *Inbound) processTrackingMode() string {
 		return "off"
 	}
 	if i.processTracker != nil {
-		return "cgroup_socket"
+		if i.processTracker.ReleaseCleanup() {
+			return "cgroup_socket_release"
+		}
+		return "cgroup_socket_lru"
 	}
 	return "userspace"
 }
