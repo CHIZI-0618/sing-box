@@ -129,31 +129,9 @@ FakeIP 地址能够响应 `ping`，部分客户端以此判断目标是否可达
 默认路由。IPv6 是否继续可用取决于设备和新的上游网络，不能仅凭连接了 Wi-Fi 就
 判断 IPv6 必然失效。
 
-撤销后，客户端仍可能保留 link-local IPv6 通信。在一组 Android 热点连接 Windows
-的实测中，显式指定 link-local 源地址并添加经过热点的诊断路由后，FakeIP IPv6
-请求获得了 4/4 个回复。改用旧的全局源地址时，Android 侧能抓到请求和已生成的回复，
-但回复未送达 Windows。这区分了 responder 的工作状态与所测设备热点路径的交付能力，
-link-local 测试成功并不代表普通客户端的 shared IPv6 流量仍然可用。
-
-排查 RA 变化时，应分别检查 Router Lifetime，以及前缀信息选项中的 Preferred
-Lifetime 和 Valid Lifetime。Router Lifetime 为 0 仅撤销默认路由器角色，不会
-单独使客户端地址失效。标记为 deprecated（弃用）的地址仍是有效地址，仍须正常接收
-报文，不能仅凭该状态解释丢包。应结合地址、路由、RA 字段和热点两端的抓包定位。
-参见 [RFC 4861 第 4.2 节](https://www.rfc-editor.org/rfc/rfc4861.html#section-4.2)
-和 [RFC 4862 第 5.5.4 节](https://www.rfc-editor.org/rfc/rfc4862.html#section-5.5.4)。
-
-Echo Reply 应返回请求的原始源地址。将回复目的地址改成客户端的另一个地址不能修复
-已撤销的前缀，还可能使客户端无法将回复关联到原请求。
-
 `local.data_plane: tc` 在另一个方向上有对应的前提：`local_reply` 只能看到系统
-路由已经正常发送到本机 TC 接口上的请求，所以本机 ping FakeIP 网段需要本机自己
-在该接口上有某条 IPv6 路由——哪怕只是一条默认路由就够了，跟 IPv4 场景一样，不
-需要专门匹配 FakeIP 前缀的路由。当 `local.ipv6` 和 `fakeip_icmp: reply` 都启用、
-但没有这样一条路由时，sing-box 会在启动时、以及之后每次本机接口发生变化时，打
-一条指明具体接口名的警告日志，而不是让本机 IPv6 ping 静默超时、日志里什么线索
-都没有。这是警告而不是启动报错，因为路由缺失属于普通的、会自行变化的网络状态
-（不同于 `local.data_plane: cgroup`——那种情况下无论什么网络都不可能支持
-`fakeip_icmp`），一旦本机获得真正的 IPv6 连通性就会自动恢复。
+路由已经将 FakeIP IPv6 前缀内的目标发送到本机 TC 接口。匹配该前缀的路由或经过
+该接口的默认路由均可；没有可用路由时 sing-box 会记录警告。
 
 ### local
 
@@ -321,133 +299,15 @@ FakeIP 和 DNS 的优先级与 `local.bypass_port` 相同，配置 53 端口时�
     请在 Android、Linux 或路由器系统中配置这些功能。可以同时配置 Wi-Fi、USB
     网络共享等多个下游接口。
 
-### 示例
-
-以下三种配置均通过了 `sing-box check` 验证；它们所选用的接管路径
-（`local.data_plane: tc`/`cgroup`、`shared.data_plane: socket_assign`/
-`packet_rewrite`）均由本项目自身的真实内核网络命名空间测试覆盖。`check` 只验证
-配置结构与对象构造是否正确，并不会附加到真实网络接口上。
-
-##### 仅本机代理
-
-接管本机自身产生的流量。`local.data_plane` 默认是 `cgroup`；若本机流量需要
-`fakeip_icmp: reply`，请显式设置为 `tc`。
-
-```json
-{
-  "type": "ebpf",
-  "tag": "ebpf-in",
-  "local": {
-    "enabled": true
-  }
-}
-```
-
-##### 仅热点/网络共享
-
-接管从 `wlan1`（请替换为实际的热点/网络共享接口名）下游客户端到达的流量，不启用
-本机接管。`shared.data_plane` 默认是 `packet_rewrite`，要求以太网帧；对于
-PPP/PPPoE、raw-IP 或隧道接口，请改用 `socket_assign`。两种 shared 数据面都
-支持为这些客户端启用 `fakeip_icmp: reply`（参见上文支持矩阵）——按下方组合
-示例的方式加上它和 FakeIP DNS 传输方式即可，无需其他改动。
-
-```json
-{
-  "type": "ebpf",
-  "tag": "ebpf-in",
-  "shared": {
-    "enabled": true,
-    "interface": ["wlan1"]
-  }
-}
-```
-
-##### 本机与热点组合
-
-两条路径同时启用，各自使用默认值。`local: tc` 加任一 shared 数据面即可让
-`fakeip_icmp: reply` 同时覆盖两条路径——参见上文的支持矩阵；只有 `local: cgroup`
-会让本机流量得不到响应。`fakeip_icmp: reply` 要求 `dns.servers` 中配置了
-FakeIP DNS 传输方式，因此以下示例给出了完整配置，因为缺少该项 `sing-box check`
-会拒绝 `reply`。
-
-```json
-{
-  "inbounds": [
-    {
-      "type": "ebpf",
-      "tag": "ebpf-in",
-      "fakeip_icmp": "reply",
-      "local": {
-        "enabled": true,
-        "data_plane": "tc"
-      },
-      "shared": {
-        "enabled": true,
-        "data_plane": "socket_assign",
-        "interface": ["wlan1"]
-      }
-    }
-  ],
-  "dns": {
-    "servers": [
-      { "type": "udp", "tag": "remote", "server": "8.8.8.8" },
-      { "type": "fakeip", "tag": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
-    ],
-    "rules": [
-      { "query_type": ["A", "AAAA"], "server": "fakeip" }
-    ],
-    "final": "remote"
-  },
-  "outbounds": [
-    { "type": "direct" }
-  ]
-}
-```
-
-### 资源限制
-
-- **UDP 应答 socket**：客户端通过 TC/shared 数据面（不包括
-  `local.data_plane: cgroup`，它从不打开这类 socket）到达的每个不同目的地会
-  占用一个透明 UDP 应答 socket，按内部分片限制为每片 256 个（共 16 片，合计
-  4096 个）。达到容量上限时优先回收一个空闲 socket；若没有可回收的，新目的地
-  的应答会被拒绝而不是继续扩容。此外，一个空闲达 5 分钟的 socket 会被后台每
-  分钟一次的清扫任务独立回收，无需等待容量压力触发。以上均不可配置；默认值
-  是按常规客户端规模设定的，并未针对具体部署调优。
-- **绕行 CIDR / 主机地址策略**：各后端编译后的绕行 CIDR 与主机地址策略表都有
-  容量上限（数万条目级别）；超出上限会在启动或更新时报错，而不是被静默截断。
-- 上述限制的目的是在持续负载和会引发状态漂移的事件（网络变化、反复失败）下
-  保持内存与内核表使用量有界；运行时对应的压力指标见下方"诊断"一节的计数器。
-
 ### 诊断
 
-以下两种工具回答的是两个不同的问题：
-
-- **`sing-box tools ebpf status`** 探测的是*运行该命令的内核*支持什么——程序
-  类型、helper、map 类型——不需要一个正在运行的 sing-box 实例。它无法判断一个
-  *正在运行*的 eBPF 入站是否真的在接管流量，因为它从来没有一个运行中的实例可
-  供读取。
-- **Clash API 的 `GET /ebpf`** 端点（当配置了 Clash API 服务器时）从运行中的
-  进程内部报告每个 eBPF 入站的实时状态：启用了哪些路径、每条路径实际挂载的
-  接口与机制（`tcx` 或 `clsact`）、是否有路径仍在等待接口或正在从故障中恢复、
-  最近一次警告及故障最近一次自行恢复的时间、各后端间 bypass_rule_set 的一致
-  性、UDP 会话数与应答 socket 池状态，以及下文所述的分类计数器。例如：
+- `sing-box tools ebpf status` 探测当前内核所需的 eBPF 能力，不检查运行中的入站。
+- 启用 Clash API 后，`GET /ebpf` 可查看运行中的 eBPF 入站、attachment、恢复状态、
+  资源使用量与失败计数：
 
   ```
   curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
   ```
-
-  同样这几项事实的简要版本（启用的路径、实际挂载方式、仍在等待接口的路径、
-  `fakeip_icmp` 实际覆盖的范围）也会在启动时以默认可见的日志级别记录一次。
-
-上报的计数器包括：TC assignment 查找失败次数、shared packet-rewrite 令牌
-（token）分配失败次数与改写（rewrite）失败次数、shared packet-rewrite
-reconcile 失败次数、恢复尝试/成功/失败次数，以及（启用 `fakeip_icmp: reply`
-时）FakeIP ICMP 已发送的回复数、已检查但未回答而放行的 Echo Request 数、
-改写失败数。这些计数从进程启动起累计，不会自行重置；要计算速率，取两次读数
-相减即可。它们刻意不按客户端或目的地拆分（那样会随客户端来去无限增长），
-也不会记录单个数据包。FakeIP ICMP 的放行计数只统计本对象检查过但未回答的
-ICMP/ICMPv6 Echo Request（分片、带选项、类型/代码不符，或目的地不在 FakeIP
-范围内）——绝不统计同一接口上的普通非 ICMP 流量。
 
 ### 限制
 
@@ -456,13 +316,6 @@ ICMP/ICMPv6 Echo Request（分片、带选项、类型/代码不符，或目的�
 - 已分片的 IPv4 和 IPv6 数据报绕过接管；IPv6 atomic fragment 作为普通 IPv6
   报文处理。
 - 网络变化后会自动恢复接管状态。
-- 每一个原地改写报文的 TC 程序（bypass_rule_set CIDR 匹配、
-  `shared.data_plane: packet_rewrite`、`fakeip_icmp: reply`）都已针对
-  network namespace 和 veth pair 测试验证过，但这两种环境都不会触发真实网卡
-  的校验和或分段卸载（veth 完全没有硬件卸载路径，软件回环无论网卡特性如何
-  声明，都会如实计算校验和）。在依赖此入站运行于尚未验证过硬件卸载与 eBPF
-  改写报文交互行为的实体机之前，请阅读
-  [eBPF 校验和/卸载验证](/zh/manual/misc/ebpf-checksum-offload-verification/)。
 
 在供应商内核或 Android 内核上启用前，请阅读
 [eBPF 内核要求](/zh/manual/misc/ebpf-kernel-requirements/)。
