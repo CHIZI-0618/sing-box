@@ -177,30 +177,9 @@ func TestFakeIPICMPSharedReplyAnswersARealClientPing(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPBackend(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
-	attributes := netlink.NewLinkAttrs()
-	attributes.Name = "sbicmpw0"
-	veth := &netlink.Veth{LinkAttrs: attributes, PeerName: "sbicmpw1"}
-	if err := netlink.LinkAdd(veth); err != nil {
-		t.Fatalf("create veth pair: %v", err)
-	}
-	self, err := netlink.LinkByName("sbicmpw0")
-	if err != nil {
-		t.Fatalf("find veth: %v", err)
-	}
-	peer, err := netlink.LinkByName("sbicmpw1")
-	if err != nil {
-		t.Fatalf("find veth peer: %v", err)
-	}
-	for _, link := range []netlink.Link{self, peer} {
-		if err = netlink.LinkSetUp(link); err != nil {
-			t.Fatalf("bring up %s: %v", link.Attrs().Name, err)
-		}
-	}
+	self, peer := createTestVethPair(t, "sbicmpw0", "sbicmpw1")
 
 	const priority = 2 // force clsact; see TestFakeIPICMPLocalReplyAnswersARealPingViaTCX for the TCX case.
 	lock, err := acquireTCInterfaceLock("sbicmpw0", self.Attrs().Index)
@@ -246,68 +225,11 @@ func TestFakeIPICMPSharedReplyAnswersARealClientPing(t *testing.T) {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
-	buffer := make([]byte, 1500)
-	var reply *parsedICMPEchoReply
-	var replyLength int
-	for attempt := 0; attempt < 8; attempt++ {
-		n, readErr := unix.Read(peerSocket, buffer)
-		if readErr != nil {
-			t.Fatalf("read a reply: %v (the request may have gone unanswered)", readErr)
-		}
-		candidate := parseEthernetIPv4ICMP(t, buffer[:n])
-		if candidate.icmpType == 8 {
-			// The kernel's own loopback of the frame this test just
-			// transmitted on the same raw socket, not a reply; keep reading.
-			continue
-		}
-		reply = candidate
-		replyLength = n
-		break
-	}
-	if reply == nil {
-		t.Fatal("only saw the echoed request on the raw socket, never a reply")
-	}
-
-	if replyLength > len(requestFrame) {
-		t.Fatalf("reply is %d bytes, longer than the %d-byte request — an amplification, not a reply",
-			replyLength, len(requestFrame))
-	}
-	if reply.icmpType != 0 {
-		t.Fatalf("reply ICMP type = %d, want 0 (Echo Reply)", reply.icmpType)
-	}
-	if reply.icmpCode != 0 {
-		t.Fatalf("reply ICMP code = %d, want 0", reply.icmpCode)
-	}
-	if reply.identifier != identifier || reply.sequence != sequence {
-		t.Fatalf("reply identifier/sequence = %d/%d, want %d/%d", reply.identifier, reply.sequence, identifier, sequence)
-	}
-	if string(reply.payload) != string(payload) {
-		t.Fatalf("reply payload = %q, want %q unchanged", reply.payload, payload)
-	}
-	if !reply.srcIP.Equal(net.ParseIP(fakeIPTarget)) {
-		t.Fatalf("reply source = %v, want it to still carry the FakeIP address %s", reply.srcIP, fakeIPTarget)
-	}
-	if !reply.dstIP.Equal(net.ParseIP(clientIP)) {
-		t.Fatalf("reply destination = %v, want the client address %s", reply.dstIP, clientIP)
-	}
-	if reply.dstMAC.String() != peer.Attrs().HardwareAddr.String() {
-		t.Fatalf("reply Ethernet destination = %s, want the client's MAC %s (the reflected frame must actually reach the client)",
-			reply.dstMAC, peer.Attrs().HardwareAddr)
-	}
-	if reply.srcMAC.String() != self.Attrs().HardwareAddr.String() {
-		t.Fatalf("reply Ethernet source = %s, want this interface's own MAC %s", reply.srcMAC, self.Attrs().HardwareAddr)
-	}
-	if !reply.ipChecksumOK {
-		t.Fatal("reply IPv4 header checksum does not validate")
-	}
-	if !reply.icmpChecksumOK {
-		t.Fatal("reply ICMP checksum does not validate")
-	}
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 8, parseEthernetIPv4ICMP)
+	assertFakeIPICMPReply(
+		t, reply, replyLength, len(requestFrame), 0,
+		identifier, sequence, payload, fakeIPTarget, clientIP,
+		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, true,
+	)
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
