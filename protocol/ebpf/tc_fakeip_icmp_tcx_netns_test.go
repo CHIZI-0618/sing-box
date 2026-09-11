@@ -105,23 +105,7 @@ func TestTCXAttachmentOutcome(t *testing.T) {
 // exists so TCX itself is not left completely unverified against a real
 // packet. Skips (does not fail) on a kernel without TCX support.
 func TestFakeIPICMPLocalReplyAnswersARealPingViaTCX(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPBackend(t)
-	t.Cleanup(func() { _ = backend.Close() })
-
-	const fakeIPTarget = "198.18.0.1"
-	self := setupFakeIPICMPPingVeth(t, "sbicmpx0", "sbicmpx1", fakeIPTarget)
-
-	const priority = 1 // default: TCX is attempted.
-	attachment := attachFakeIPICMPOrSkip(t, backend, "sbicmpx0", self.Attrs().Index, tcInterfaceRole{local: true}, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.localICMPLink == nil {
-		t.Fatal("the fakeip_icmp TCX link was not attached alongside the ordinary one")
-	}
-
-	if err := pingFakeIPICMPTarget(t, fakeIPTarget, 5*time.Second); err != nil {
-		t.Fatalf("read a reply: %v (the request may have gone to the wire instead of being answered)", err)
-	}
+	runFakeIPLocalTCXReplyCase(t, false, "sbicmpx0", "sbicmpx1")
 }
 
 // TestFakeIPICMPHealthCheckDetectsAndRepairsAMissingTCXLink is the TCX
@@ -335,21 +319,5 @@ func pingFakeIPICMPTargetV6(t *testing.T, fakeIPTarget string, deadline time.Dur
 // TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaTCX covers the IPv6 local
 // reply through a real TCX attachment.
 func TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaTCX(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPBackendWithIPv6(t)
-	t.Cleanup(func() { _ = backend.Close() })
-
-	const fakeIPTarget = "fc00::1"
-	self := setupFakeIPICMPPingVethIPv6(t, "sbicmpz0", "sbicmpz1", fakeIPTarget)
-
-	const priority = 1
-	attachment := attachFakeIPICMPOrSkip(t, backend, "sbicmpz0", self.Attrs().Index, tcInterfaceRole{local: true}, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.localICMPLink == nil {
-		t.Fatal("the fakeip_icmp TCX link was not attached alongside the ordinary one")
-	}
-
-	if err := pingFakeIPICMPTargetV6(t, fakeIPTarget, 5*time.Second); err != nil {
-		t.Fatalf("read a reply: %v (the request may have gone to the wire instead of being answered)", err)
-	}
+	runFakeIPLocalTCXReplyCase(t, true, "sbicmpz0", "sbicmpz1")
 }
