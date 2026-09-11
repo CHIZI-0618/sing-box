@@ -330,6 +330,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		&i.udpWarnings.packetInfo,
 		&i.udpWarnings.originalDestination,
 		&i.udpWarnings.cleanup,
+		&i.udpWarnings.replySocketCapacity,
 	} {
 		message, at := limiter.last()
 		if at.After(lastErrorAt) {
