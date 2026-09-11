@@ -311,11 +311,22 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 	for _, attachment := range d.attachments {
 		current[attachment.interfaceName] = attachment
 	}
+	// Reconcile the selected local interface first. During an uplink handover
+	// this adds the replacement local role before the previous interface loses
+	// it, including when the replacement was already attached for shared
+	// traffic.
 	names := make([]string, 0, len(desired))
-	for interfaceName := range desired {
-		names = append(names, interfaceName)
+	sortStart := 0
+	if _, loaded := desired[localInterface]; localInterface != "" && loaded {
+		names = append(names, localInterface)
+		sortStart = 1
 	}
-	slices.Sort(names)
+	for interfaceName := range desired {
+		if interfaceName != localInterface {
+			names = append(names, interfaceName)
+		}
+	}
+	slices.Sort(names[sortStart:])
 	attachments := make([]*tcInterfaceAttachment, 0, len(desired))
 	created := make([]*tcInterfaceAttachment, 0)
 	previousRoles := make(map[string]tcInterfaceRole, len(d.attachments))
@@ -328,10 +339,9 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 			return err
 		}
 	}
-	// Release what no longer describes its interface before anything is attached,
-	// so no stale interface lock is still held when the attach pass takes one.
-	// The shared packet-rewrite data plane releases in this order for the same
-	// reason.
+	// Release stale attachments whose interface index is needed by a candidate
+	// before the attach pass takes its lock. A working local attachment whose
+	// index is not reused stays active until its replacement has been attached.
 	if err = d.closeStaleTCAttachmentsLocked(current, desired); err != nil {
 		if hostChanged {
 			err = E.Errors(err, d.backend.UpdateHostAddresses(d.hostAddresses))
@@ -446,7 +456,13 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 		}
 		attachments = append(attachments, attachment)
 		created = append(created, attachment)
-		delete(current, interfaceName)
+		// A mismatched previous attachment may have been deliberately retained to
+		// keep local interception active while this replacement was staged. Leave
+		// it in current so the commit pass below closes it only after the new
+		// attachment is live.
+		if previous == nil {
+			delete(current, interfaceName)
+		}
 	}
 	var closeErr error
 	for _, previous := range current {
@@ -985,7 +1001,9 @@ func (d *tcDataPlane) closeStaleTCAttachmentsLocked(
 	stale := make([]string, 0, len(current))
 	for interfaceName, attachment := range current {
 		state, wanted := desired[interfaceName]
-		if attachment.closing || !wanted || state.index != attachment.interfaceIndex || state.framing != attachment.framing {
+		if attachment.closing ||
+			((!wanted || state.index != attachment.interfaceIndex || state.framing != attachment.framing) &&
+				!canStageTCLocalReplacement(attachment, desired)) {
 			stale = append(stale, interfaceName)
 		}
 	}
@@ -1011,6 +1029,27 @@ func (d *tcDataPlane) closeStaleTCAttachmentsLocked(
 	}
 	d.attachments = remaining
 	return closeErr
+}
+
+// canStageTCLocalReplacement reports whether attachment can keep intercepting
+// local traffic while a replacement is attached. The old attachment cannot be
+// retained when its index is needed by the replacement: interface locks are
+// keyed by index and the old interface has already ceased to be a usable
+// handover path in that case.
+func canStageTCLocalReplacement(attachment *tcInterfaceAttachment, desired map[string]tcAttachmentState) bool {
+	if attachment == nil || attachment.closing || !attachment.role.local {
+		return false
+	}
+	for interfaceName, state := range desired {
+		if !state.role.local {
+			continue
+		}
+		if state.index == attachment.interfaceIndex {
+			return false
+		}
+		return !tcAttachmentIndexClaimed(desired, interfaceName, attachment.interfaceIndex)
+	}
+	return false
 }
 
 func closeTCInterfaceAttachments(attachments []*tcInterfaceAttachment) error {
