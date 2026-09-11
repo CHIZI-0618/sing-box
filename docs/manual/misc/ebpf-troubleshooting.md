@@ -75,11 +75,10 @@ log that stops before the fault.
 
 ## Logs and runtime state
 
-A successful startup always emits a brief `eBPF inbound started` summary at
-the log level normally shown by default: enabled paths, each attachment's
-actual interface and mechanism, any path still waiting for an interface, and
-what `fakeip_icmp` actually covers. At Debug log level, startup additionally
-emits an `eBPF cgroup active` or `eBPF TC active` summary containing the
+A successful startup emits a brief `eBPF inbound started` summary at Debug
+level: enabled paths, each attachment's actual interface and mechanism, any
+path still waiting for an interface, and what `fakeip_icmp` actually covers.
+Debug logging also includes an `eBPF cgroup active` or `eBPF TC active` summary containing the
 selected data planes and their effective runtime paths. TC summaries also include the default interface, attachments,
 internal listeners, routing state, and delivery interface when applicable. Each
 attachment includes its local/shared role and framing. A network event emits a
