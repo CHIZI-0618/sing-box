@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newLoopbackUDPSocket(netip.AddrPort) (*net.UDPConn, error) {
@@ -232,11 +233,32 @@ func TestUDPReplySocketPoolStableUnderManyDestinations(t *testing.T) {
 	}
 }
 
-// TestUDPReplySocketPoolSweeperStartStop confirms startSweeper/stopSweeper
-// are idempotent and that a stopped sweeper does not keep running: sweepIdle
-// is invoked directly here rather than waiting a real udpReplySocketSweepInterval,
-// so this only exercises the start/stop bookkeeping, not the ticker's own
-// timing.
+func TestUDPReplySocketPoolReclaimsAtIdleDeadline(t *testing.T) {
+	pool := udpReplySocketPool{idleTimeout: 20 * time.Millisecond}
+	t.Cleanup(func() {
+		pool.stopSweeper()
+		_ = pool.close()
+	})
+	pool.startSweeper(context.Background())
+	if _, release, err := pool.get(destinationOnShard(&pool, 4, 0), newLoopbackUDPSocket); err != nil {
+		t.Fatalf("get: %v", err)
+	} else {
+		release()
+	}
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for pool.snapshot().Count != 0 {
+		select {
+		case <-deadline.C:
+			t.Fatal("idle socket was not reclaimed at its deadline")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// TestUDPReplySocketPoolSweeperStartStop confirms startSweeper/stopSweeper are
+// idempotent and that stop waits for the deadline worker to exit.
 func TestUDPReplySocketPoolSweeperStartStop(t *testing.T) {
 	var pool udpReplySocketPool
 	t.Cleanup(func() { _ = pool.close() })
