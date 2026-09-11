@@ -303,8 +303,8 @@ FakeIP 和 DNS 的优先级与 `local.bypass_port` 相同，配置 53 端口时�
 ### 诊断
 
 - `sing-box tools ebpf status` 探测当前内核所需的 eBPF 能力，不检查运行中的入站。
-- 启用 Clash API 后，`GET /ebpf` 可查看运行中的 eBPF 入站、attachment、恢复状态、
-  资源使用量与失败计数：
+- 启用 Clash API 且至少存在一个 eBPF 入站后，`GET /ebpf` 可查看运行中的
+  eBPF 入站、attachment、恢复状态、资源使用量与失败计数：
 
   ```
   curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf

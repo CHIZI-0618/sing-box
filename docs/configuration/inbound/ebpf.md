@@ -346,8 +346,9 @@ inclusive.
 
 - `sing-box tools ebpf status` probes the current kernel's required eBPF
   capabilities. It does not inspect a running inbound.
-- When the Clash API is enabled, `GET /ebpf` reports the running eBPF
-  inbounds, attachments, recovery state, resource usage, and failure counters:
+- When the Clash API and at least one eBPF inbound are enabled, `GET /ebpf`
+  reports the running eBPF inbounds, attachments, recovery state, resource
+  usage, and failure counters:
 
   ```
   curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf

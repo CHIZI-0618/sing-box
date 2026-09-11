@@ -1,3 +1,5 @@
+//go:build with_ebpf && (linux || android)
+
 package clashapi
 
 import (
@@ -32,6 +34,18 @@ func ebpfRouter(manager adapter.InboundManager) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", getEBPFDiagnostics(manager))
 	return r
+}
+
+func mountEBPFRouter(router chi.Router, manager adapter.InboundManager) {
+	if manager == nil {
+		return
+	}
+	for _, inbound := range manager.Inbounds() {
+		if _, loaded := inbound.(ebpfDiagnosticsProvider); loaded {
+			router.Mount("/ebpf", ebpfRouter(manager))
+			return
+		}
+	}
 }
 
 func getEBPFDiagnostics(manager adapter.InboundManager) func(w http.ResponseWriter, r *http.Request) {
