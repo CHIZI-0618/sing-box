@@ -58,9 +58,9 @@ func newComponentRetryLoopHarness(t *testing.T) *componentRetryLoopHarness {
 
 	// A health check this short would otherwise fire spuriously mid-test;
 	// tests that want to exercise it set it back down explicitly.
-	previousInterval := tcHealthCheckInterval
-	tcHealthCheckInterval = time.Hour
-	t.Cleanup(func() { tcHealthCheckInterval = previousInterval })
+	previousInterval := tcDriftCheckInterval
+	tcDriftCheckInterval = time.Hour
+	t.Cleanup(func() { tcDriftCheckInterval = previousInterval })
 
 	harness := &componentRetryLoopHarness{
 		updates:  make(chan struct{}, 1),
@@ -284,9 +284,9 @@ func TestRetryLoopHealthCheckRunsWithNothingOutstanding(t *testing.T) {
 	previousFactory := tcRetryTimerFactory
 	tcRetryTimerFactory = func() tcRetryTimer { return timer }
 	t.Cleanup(func() { tcRetryTimerFactory = previousFactory })
-	previousInterval := tcHealthCheckInterval
-	tcHealthCheckInterval = 10 * time.Millisecond
-	t.Cleanup(func() { tcHealthCheckInterval = previousInterval })
+	previousInterval := tcDriftCheckInterval
+	tcDriftCheckInterval = 10 * time.Millisecond
+	t.Cleanup(func() { tcDriftCheckInterval = previousInterval })
 
 	ran := make(chan struct{}, 64)
 	finished := make(chan struct{})

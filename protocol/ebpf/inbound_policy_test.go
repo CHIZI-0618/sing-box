@@ -443,7 +443,7 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 // its own comment claiming retryBypassRuleSetIfNeededLocked would "pick
 // this back up" the same way other TC failures get retried. The scheduler
 // only runs a round on a network event or its own ten-minute health-check
-// tick (tcHealthCheckInterval) -- setting the flag alone does not cause
+// tick (tcDriftCheckInterval) -- setting the flag alone does not cause
 // either, so the very first retry attempt for a rule-set update failure
 // would otherwise sit unnoticed for up to ten minutes, not the seconds
 // -scale exponential backoff every other TC failure in this package gets.
