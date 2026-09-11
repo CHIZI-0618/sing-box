@@ -70,7 +70,7 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 		// for a retry: nothing about this ruleset is guaranteed to change
 		// again. retryBypassRuleSetIfNeededLocked picks this back up on the
 		// scheduler's next round, but the scheduler only runs a round on a
-		// network event or its own health-check tick (tcHealthCheckInterval,
+		// network event or its own drift-check tick (tcDriftCheckInterval,
 		// ten minutes) -- setting the flag alone does not make one happen.
 		// notifyTCInterfaceUpdate is the same non-blocking wake this
 		// package's other event sources already use to get an immediate

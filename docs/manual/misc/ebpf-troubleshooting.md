@@ -87,7 +87,7 @@ Debug entry only when attachments or managed network state are changed; repair
 failures produce rate-limited warnings. Userspace handoff failures produce
 rate-limited Warn or Error entries. BPF packet return paths do not emit
 per-packet logs. Interface lifecycle handling is event-driven with a
-low-frequency health check for silent kernel-state drift. Shared
+low-frequency drift check for silent kernel-state changes. Shared
 `packet_rewrite` runs bounded maintenance when flow events, release deadlines,
 or map pressure require it. These tasks do not emit periodic status records.
 
