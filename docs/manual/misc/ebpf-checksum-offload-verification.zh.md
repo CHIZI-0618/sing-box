@@ -9,7 +9,7 @@ veth pair 上，而 veth 完全没有硬件卸载路径——软件回环无论�
 的改写。
 
 **这套流程尚未实际执行过。** 在完成本轮工作期间，没有可用的、由真实网卡连接
-两台真实 Linux 主机的环境。它以脚本加文档的形式交付，供拥有该硬件的人直接
+两台真实 Linux 主机的环境。它以 Go 工具加文档的形式交付，供拥有该硬件的人直接
 运行，而不是声称硬件行为已经验证过。
 
 ## 为什么必须是真实网卡
@@ -31,7 +31,7 @@ SR-IOV/直通到虚拟机、背后是物理网卡的虚拟功能）才具备本�
 到来的流量。现在这套流程明确区分三种角色：
 
 - **DUT（被测主机）**：运行待测 eBPF 入站的主机，接到 `$LOCAL_IFACE`
-  网卡。脚本本身就在这台主机上运行。
+  网卡。验证工具本身就在这台主机上运行。
 - **`$REMOTE_HOST`**：DUT 可达的一个真实、非 FakeIP 的目的地，可通过
   SSH 访问。用于 `bypass_rule_set` 的对照场景（预期完全不受影响的流量），
   以及在检查 `local.data_plane` 时，作为 DUT 自身经由 local egress
@@ -68,9 +68,8 @@ shared 部署的 DUT 就能被干净地验证，而不必为了迁就本脚本�
   `$DOWNSTREAM_HOST`，能从 DUT 面向下游的接口访问到。
 - 涉及的每台主机都要有 root 权限，且 DUT 能以非交互方式（密钥认证）
   SSH 到 `$REMOTE_HOST`，如果用到 `$DOWNSTREAM_HOST` 也要能 SSH 过去。
-- DUT 上安装 `ethtool` 和 `tcpdump`；涉及的每台主机都要安装 `nc`
-  （netcat）。如果设置了 `$DUT_DIAGNOSTICS_URL`，DUT 上还要有 `jq` 和
-  `curl`。
+- DUT 上安装 Go、`ethtool`、`tcpdump` 和 `nc`（netcat）；远端安装
+  `tcpdump` 和 `nc`；运行 shared 检查时下游主机也需安装 `nc`。
 - DUT 已经运行着接到 `$LOCAL_IFACE` 网卡的 sing-box eBPF 入站，其配置
   覆盖本流程要检查的路径：
   - 启用 `fakeip_icmp: reply`，其 FakeIP 前缀与下面的 `$FAKEIP_PREFIX` 一致。
@@ -87,6 +86,8 @@ shared 部署的 DUT 就能被干净地验证，而不必为了迁就本脚本�
 ## 运行方式
 
 ```sh
+go build -o /tmp/sing-box-checksumoffload ./common/ebpf/testing/checksumoffload
+
 sudo LOCAL_IFACE=eth0 \
     REMOTE_HOST=192.0.2.10 \
     REMOTE_SSH_USER=root \
@@ -99,7 +100,7 @@ sudo LOCAL_IFACE=eth0 \
     REMOTE_PORT_TCP=15000 \
     REMOTE_PORT_UDP=15001 \
     TEST_ROLE=both \
-    common/ebpf/testing/checksum_offload_verify.sh
+    /tmp/sing-box-checksumoffload
 ```
 
 只有 `LOCAL_IFACE`、`REMOTE_HOST`、`FAKEIP_PREFIX`、`REMOTE_FAKEIP_TARGET`
@@ -116,8 +117,10 @@ sudo LOCAL_IFACE=eth0 \
 
 被排除的角色会在报告里记为 `NOT_TESTED`，而不是被默默省略，因此一次
 只测 `local` 或只测 `shared` 的运行，其报告仍然会明确说明自己没有检查
-什么。其余变量用于收窄或扩大检查范围（完整列表及默认值见脚本自身的头部
-注释）。该脚本会：
+什么。`REMOTE_SSH_USER` 和 `DOWNSTREAM_SSH_USER` 默认是 `root`；`SSH`
+和 `DOWNSTREAM_SSH` 可覆盖 SSH 命令与参数。`PING_COUNT` 默认 20，
+`TRANSFER_BYTES` 默认 8 MiB，`OUT_DIR` 默认 `./checksum-offload-report`；
+`DUT_DIAGNOSTICS_TOKEN` 可提供 bearer token。该工具会：
 
 1. 通过 `ethtool -k` 读取并记录 `$LOCAL_IFACE` 当前的卸载特性标志，以便在
    退出时（包括 Ctrl-C 中断时）精确恢复。
@@ -130,8 +133,8 @@ sudo LOCAL_IFACE=eth0 \
    显式列出全部六种已识别特性的取值——早期版本里，一个组合如果只写出自己
    关心的特性，会悄悄继承上一个组合遗留下来的其他特性状态，导致"只关闭
    TX 校验和、其余全开"和"只关闭 TX 校验和、其余保持上一轮遗留状态"在报告
-   里完全无法区分。如果某块网卡或驱动需要更细的覆盖，可在脚本中扩展
-   `OFFLOAD_MATRIX`，但每一条都要保持这种完整写法。
+   里完全无法区分。如果某块网卡或驱动需要更细的覆盖，可在 Go 工具中扩展
+   `offloadMatrix`。
 3. 每次尝试设置后都用 `ethtool -k` 把状态读回来核对。如果网卡最终并未
    真正进入某个组合名称所声称的状态——这块网卡不支持该特性，或者驱动
    悄悄拒绝/忽略了这次修改——该组合会在报告里整体记为 `UNSUPPORTED`，
@@ -244,17 +247,16 @@ sudo LOCAL_IFACE=eth0 \
 - Android 硬件。本流程是按 Linux 主机的场景编写的；Android 的网络栈、
   驱动模型和可用工具（`nc`、`tcpdump` 是否可用、`ethtool` 支持程度）差异
   大到需要在真实设备上单独走一遍，而不是直接照搬本脚本。
-- TCX 相关的卸载交互。脚本本身不选择挂载机制（TCX 还是 `clsact`）——这由
-  DUT 上已经在运行的 sing-box 配置决定，而不是由本脚本决定。如果同一
+- TCX 相关的卸载交互。工具本身不选择挂载机制（TCX 还是 `clsact`）——这由
+  DUT 上已经在运行的 sing-box 配置决定，而不是由本工具决定。如果同一
   硬件上两种机制都需要检查，请分别各运行一遍本流程。
-- `ethtool -k` 报告的、不在脚本已识别的六种特性（`rx-checksumming`、
+- `ethtool -k` 报告的、不在工具已识别的六种特性（`rx-checksumming`、
   `tx-checksumming`、`generic-segmentation-offload`、
   `tcp-segmentation-offload`、`generic-receive-offload`、
   `tx-udp-segmentation`）之列的其他卸载特性。如果某块网卡暴露了其他相关
   特性（例如某些厂商特有的 `rx-udp-gro-forwarding` 或
-  `tx-checksum-ip-generic` 标志），请在脚本中扩展 `RELEVANT_FEATURES` 和
-  `OFFLOAD_MATRIX`——一旦扩展，`OFFLOAD_MATRIX` 里每一条都要继续显式
-  列出 `RELEVANT_FEATURES` 的全部取值。
+  `tx-checksum-ip-generic` 标志），请在 Go 工具中扩展 `offloadFeatures` 和
+  `offloadMatrix`，并为每个组合明确指定全部特性的状态。
 - DUT 上同时启用 `local.data_plane` 和 `shared.data_plane` 时的完整归因：
   `$DUT_DIAGNOSTICS_URL` 的计数器是所有承载 `fakeip_icmp` 的数据面
   加总得到的，不按角色拆分。如果需要明确的判定，请在 DUT 上关闭当前
