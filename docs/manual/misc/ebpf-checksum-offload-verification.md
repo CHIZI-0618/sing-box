@@ -13,7 +13,7 @@ NIC's firmware or driver would mishandle.
 
 **This procedure has not been run.** No environment with two real Linux
 hosts joined by a real NIC was available while this round of work was done.
-It ships as a documented, ready-to-run script and procedure for whoever has
+It ships as a documented, ready-to-run Go tool and procedure for whoever has
 that hardware, not as a claim that hardware behavior has been checked.
 
 ## Why a real NIC, specifically
@@ -40,7 +40,7 @@ which an independent review pointed out cannot actually verify
 downstream client. This procedure now names three roles explicitly:
 
 - **DUT**: the host running the eBPF inbound under test, attached to
-  `$LOCAL_IFACE`. This script itself runs here.
+  `$LOCAL_IFACE`. The verification tool itself runs here.
 - **`$REMOTE_HOST`**: a real, non-FakeIP destination the DUT can reach,
   reachable over ssh. Used for the `bypass_rule_set` control case (a flow
   it is expected to leave completely untouched) and, when checking
@@ -82,8 +82,8 @@ this script.
   additionally required to check `shared.data_plane` at all.
 - Root on every host involved, and non-interactive (key-based) SSH from the
   DUT to `$REMOTE_HOST` and, if used, to `$DOWNSTREAM_HOST`.
-- `ethtool` and `tcpdump` on the DUT; `nc` (netcat) on every host involved.
-  `jq` and `curl` on the DUT if `$DUT_DIAGNOSTICS_URL` is set.
+- Go, `ethtool`, `tcpdump`, and `nc` (netcat) on the DUT; `tcpdump` and `nc`
+  on `$REMOTE_HOST`; and `nc` on `$DOWNSTREAM_HOST` when shared checks run.
 - sing-box built with the eBPF inbound already running on the DUT, attached
   to the NIC named `$LOCAL_IFACE`, with a configuration that exercises the
   paths this procedure checks:
@@ -103,6 +103,8 @@ this script.
 ## Running it
 
 ```sh
+go build -o /tmp/sing-box-checksumoffload ./common/ebpf/testing/checksumoffload
+
 sudo LOCAL_IFACE=eth0 \
     REMOTE_HOST=192.0.2.10 \
     REMOTE_SSH_USER=root \
@@ -115,7 +117,7 @@ sudo LOCAL_IFACE=eth0 \
     REMOTE_PORT_TCP=15000 \
     REMOTE_PORT_UDP=15001 \
     TEST_ROLE=both \
-    common/ebpf/testing/checksum_offload_verify.sh
+    /tmp/sing-box-checksumoffload
 ```
 
 Only `LOCAL_IFACE`, `REMOTE_HOST`, `FAKEIP_PREFIX`, and
@@ -134,9 +136,11 @@ run actually checks and defaults to `both`:
 
 Whichever role is excluded is recorded `NOT_TESTED` in the report, not
 silently omitted, so a report from a `local`- or `shared`-only run still
-states plainly what it did not check. The rest of the environment variables
-narrow or widen what gets checked (see the script's own header comment for
-the full list and defaults). The script:
+states plainly what it did not check. `REMOTE_SSH_USER` and
+`DOWNSTREAM_SSH_USER` default to `root`; `SSH` and `DOWNSTREAM_SSH` can
+override their command and options. `PING_COUNT` defaults to 20,
+`TRANSFER_BYTES` to 8 MiB, and `OUT_DIR` to `./checksum-offload-report`.
+`DUT_DIAGNOSTICS_TOKEN` supplies an optional bearer token. The tool:
 
 1. Reads `$LOCAL_IFACE`'s current offload feature flags via `ethtool -k` and
    records them, to restore exactly on exit (including on Ctrl-C).
@@ -154,9 +158,8 @@ the full list and defaults). The script:
    cared about silently inherit whatever the *previous* combination left
    every other feature at, so "TX checksum off, everything else on" and "TX
    checksum off, everything else however the last run left it" were
-   impossible to tell apart from the report. Extend `OFFLOAD_MATRIX` in the
-   script if a specific NIC or driver needs finer coverage, keeping every
-   entry complete the same way.
+   impossible to tell apart from the report. Extend `offloadMatrix` in the
+   Go tool if a specific NIC or driver needs finer coverage.
 3. Reads every feature back with `ethtool -k` after attempting to set it. If
    the interface did not actually end up in the state a combination's name
    claims — a feature this NIC does not support, or the driver silently
@@ -295,19 +298,19 @@ the full list and defaults). The script:
   Android's networking stack, driver model, and available tooling (`nc`,
   `tcpdump` availability, `ethtool` support) differ enough that it needs its
   own pass on a real device, not an adaptation of this script.
-- TCX-specific offload interaction. The script does not select attachment
+- TCX-specific offload interaction. The tool does not select attachment
   mechanism (TCX vs `clsact`) — that is controlled by the sing-box
-  configuration already running on the DUT, not by this script. Run the
+  configuration already running on the DUT, not by this tool. Run the
   procedure once per mechanism if both need checking on the same hardware.
 - Any offload feature `ethtool -k` does not report as one of the six the
-  script recognizes (`rx-checksumming`, `tx-checksumming`,
+  tool recognizes (`rx-checksumming`, `tx-checksumming`,
   `generic-segmentation-offload`, `tcp-segmentation-offload`,
   `generic-receive-offload`, `tx-udp-segmentation`). Extend
-  `RELEVANT_FEATURES` and `OFFLOAD_MATRIX` in the script for a NIC that
+  `offloadFeatures` and `offloadMatrix` in the Go tool for a NIC that
   exposes something else relevant (for example a vendor-specific
   `rx-udp-gro-forwarding` or `tx-checksum-ip-generic` flag) — every
-  `OFFLOAD_MATRIX` entry has to keep naming every entry in
-  `RELEVANT_FEATURES` explicitly once it changes.
+  combination has to keep naming every entry in `offloadFeatures` once it
+  changes.
 - Full attribution when `local.data_plane` and `shared.data_plane` are both
   enabled on the DUT: `$DUT_DIAGNOSTICS_URL`'s counters are summed across
   every data plane hosting `fakeip_icmp`, not broken down per role. Disable
