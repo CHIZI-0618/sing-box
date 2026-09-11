@@ -16,8 +16,7 @@ func (b *CgroupBackend) Close() error {
 	if err := b.detachProgramsLocked(); err != nil {
 		return E.Cause(err, "detach eBPF inbound")
 	}
-	closeErr := closePrograms(b.runtime.programs)
-	closeErr = E.Errors(closeErr, closeMaps(b.runtime.maps))
+	closeErr := closeObjectResources(b.runtime.programs, b.runtime.maps)
 	if b.runtime.cgroupFile != nil {
 		closeErr = E.Errors(closeErr, b.runtime.cgroupFile.Close())
 	}
