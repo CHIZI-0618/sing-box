@@ -15,7 +15,9 @@ shared `socket_assign` or `packet_rewrite`. The defaults are local `cgroup` and
 shared `packet_rewrite`; the inbound may enable either path independently.
 `sing-box tools ebpf status` accepts the same choices through
 `--local-data-plane` and `--shared-data-plane`; its `--mode` flags select the
-default local `cgroup` and shared `packet_rewrite` paths.
+default local `cgroup` and shared `packet_rewrite` paths. The status command
+loads and closes the selected generated objects, but leaves attachment and
+network-state validation to a real startup.
 
 Local traffic is selected at TC egress on the current default interface.
 Forwarded packets are excluded through `ingress_ifindex`; sockets created by

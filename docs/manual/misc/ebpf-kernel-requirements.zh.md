@@ -163,11 +163,12 @@ sing-box tools ebpf status --local-data-plane tc --shared-data-plane socket_assi
 探测会针对所选协议、地址族、数据面和 shared 接口。local TC 模式会报告必需的 TC socket-cookie
 helper 以及可选的 cgroup socket-cookie hook，同时报告可选的 socket-address 进程
 追踪能力。启动时会判断进程 cgroup 是否独占，能挂载时使用内核登记，否则启用用户态
-cookie 登记路径。明确缺少
+cookie 登记路径。命令还会加载并立即关闭这些选项实际选择的 eBPF 对象，在不挂载程序的
+前提下验证真实 map ABI 和 verifier 可见的程序变体。明确缺少
 能力会报告 `FAIL`，安全策略
 拒绝探测等无法判断的情况会报告 `UNKNOWN`；必需检查出现任一状态时命令都会以非零
-状态退出。请用实际运行 sing-box 的权限重新探测。非变更型探测不会挂载 TC filter、
-创建 veth 或修改 sysctl；这些操作会在启动时实际检查，失败则启动退出。
+状态退出。请用实际运行 sing-box 的权限重新探测。非变更型探测不会挂载 TC filter 或
+cgroup hook、创建 veth、安装路由或修改 sysctl；这些操作会在启动时实际检查，失败则启动退出。
 如果目标配置禁用了 IPv6，请使用 `--ipv6=false`。
 
 ## 报文限制

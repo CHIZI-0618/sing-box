@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/sagernet/netlink"
@@ -61,6 +62,10 @@ type KernelProbeOptions struct {
 	EnableIPv6          bool
 	NeedLPMPolicy       bool
 	NeedProcessTracking bool
+	// VerifyObjectLoad loads and immediately closes the exact generated
+	// programs selected by the requested data planes. It never attaches a
+	// program or changes qdiscs, routes, sysctls, or traffic.
+	VerifyObjectLoad bool
 	// FakeIPICMPReply probes the fakeip_icmp object's own helper requirements.
 	// Left false (the default), nothing about this feature is probed, the
 	// same way nothing about it is loaded when TCConfig.FakeIPICMPReply is
@@ -73,14 +78,32 @@ type kernelProbePlan struct {
 	localCgroup         bool
 	sharedSocketAssign  bool
 	sharedPacketRewrite bool
+	enableTCP           bool
+	enableUDP           bool
+	enableIPv6          bool
+	needLPMPolicy       bool
+	needProcessTracking bool
+	fakeIPICMPReply     bool
+	interfaceNames      []string
 }
 
-func newKernelProbePlan(localPlane, sharedPlane KernelProbeDataPlane) kernelProbePlan {
+func newKernelProbePlan(
+	localPlane, sharedPlane KernelProbeDataPlane,
+	enableTCP, enableUDP bool,
+	options KernelProbeOptions,
+) kernelProbePlan {
 	return kernelProbePlan{
 		localTC:             localPlane == KernelProbeDataPlaneTC,
 		localCgroup:         localPlane == KernelProbeDataPlaneCgroup,
 		sharedSocketAssign:  sharedPlane == KernelProbeDataPlaneSocketAssign,
 		sharedPacketRewrite: sharedPlane == KernelProbeDataPlanePacketRewrite,
+		enableTCP:           enableTCP,
+		enableUDP:           enableUDP,
+		enableIPv6:          options.EnableIPv6,
+		needLPMPolicy:       options.NeedLPMPolicy,
+		needProcessTracking: options.NeedProcessTracking,
+		fakeIPICMPReply:     options.FakeIPICMPReply,
+		interfaceNames:      slices.Clone(options.InterfaceNames),
 	}
 }
 
@@ -119,6 +142,7 @@ type KernelProbeReport struct {
 	Findings        []KernelProbeFinding
 	ActivePrograms  []KernelProbeProgram
 	ActiveStateErr  error
+	ExactObjectLoad bool
 }
 
 func (r *KernelProbeReport) Add(
@@ -206,6 +230,7 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 		reportMode = KernelProbeModeShared
 	}
 	memlockErr := raiseMemlockLimit()
+	plan := newKernelProbePlan(localPlane, sharedPlane, enableTCP, enableUDP, options)
 
 	report := &KernelProbeReport{
 		Platform:        kernelProbePlatform(),
@@ -217,18 +242,19 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 		Network:         network,
 		IPv6:            options.EnableIPv6,
 	}
-	needLocal := localPlane != ""
-	needShared := sharedPlane != ""
-	probeCommonCapabilities(report, memlockErr, options.EnableIPv6, enableTCP, enableUDP,
-		localPlane, sharedPlane, options.NeedLPMPolicy, options.NeedProcessTracking)
-	if needLocal {
-		probeLocalCapabilities(report, localPlane, enableTCP, enableUDP)
+	probeCommonCapabilities(report, memlockErr, plan)
+	if localPlane != "" {
+		probeLocalCapabilities(report, localPlane, plan.enableTCP, plan.enableUDP)
 	}
-	if needShared {
-		probeSharedCapabilities(report, sharedPlane, options.InterfaceNames)
+	if sharedPlane != "" {
+		probeSharedCapabilities(report, sharedPlane, plan.interfaceNames)
 	}
-	if options.FakeIPICMPReply {
+	if plan.fakeIPICMPReply {
 		probeFakeIPICMPCapabilities(report)
+	}
+	if options.VerifyObjectLoad {
+		probeSelectedObjectLoads(report, plan)
+		report.ExactObjectLoad = true
 	}
 	report.ActivePrograms, report.ActiveStateErr = probeActivePrograms()
 	return report, nil
@@ -262,16 +288,14 @@ func normalizeProbeDataPlanes(options KernelProbeOptions) (KernelProbeDataPlane,
 	return local, shared, nil
 }
 
-func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enableIPv6, enableTCP, enableUDP bool,
-	localPlane, sharedPlane KernelProbeDataPlane, needLPMPolicy, needProcessTracking bool) {
-	plan := newKernelProbePlan(localPlane, sharedPlane)
-	needLocal := localPlane != ""
+func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, plan kernelProbePlan) {
+	needLocal := plan.localTC || plan.localCgroup
 	needSocketAssignment := plan.needsSocketAssignment()
 	needPacketRewrite := plan.sharedPacketRewrite
 	needCgroup := plan.localCgroup
 	needSelfBypass := needLocal
 	needTCProgram := plan.needsTCProgram()
-	probeLPMTrieUpdateSafety(report, needLPMPolicy)
+	probeLPMTrieUpdateSafety(report, plan.needLPMPolicy)
 
 	probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.Array,
 		"Stores runtime controls.")
@@ -287,7 +311,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 		probeMapType(report, "shared", KernelProbeRequired, CiliumEBPF.PerCPUArray,
 			"Provides per-CPU packet-rewrite scratch and counters.")
 	}
-	if enableTCP && needSocketAssignment {
+	if plan.enableTCP && needSocketAssignment {
 		probeMapType(report, "common", KernelProbePerformance, CiliumEBPF.SockMap,
 			"Enables the preferred TCP listener fallback; TC loading falls back to direct socket lookup when unavailable.")
 	}
@@ -339,7 +363,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			helpers = append(helpers, helper)
 		}
 	}
-	if needCgroup && enableUDP {
+	if needCgroup && plan.enableUDP {
 		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
 			asm.FnKtimeGetCoarseNs, "bpf_ktime_get_coarse_ns",
 			"Uses coarse monotonic time for the UDP flow-cache expiry fast path when available; the precise helper remains the fallback.")
@@ -364,16 +388,16 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			"bpf_map_update_elem", "Registers socket cookies in the optional cgroup self-bypass tracker.")
 		probeProgramHelper(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSock, asm.FnMapDeleteElem,
 			"bpf_map_delete_elem", "Releases socket cookies in the optional cgroup self-bypass tracker.")
-		if localPlane == KernelProbeDataPlaneCgroup {
+		if plan.localCgroup {
 			probeProgramType(report, "local", KernelProbeRequired, CiliumEBPF.CGroupSockAddr,
 				"Applies local TCP connect and UDP sendmsg interception in the selected cgroup.")
-			for _, helper := range cgroupRequiredHelpers(enableUDP) {
+			for _, helper := range cgroupRequiredHelpers(plan.enableUDP) {
 				probeProgramHelper(report, "local", KernelProbeRequired, CiliumEBPF.CGroupSockAddr,
 					helper.fn, helper.name, helper.detail)
 			}
 		}
 	}
-	if needProcessTracking {
+	if plan.needProcessTracking {
 		probeProgramType(report, "local", KernelProbePerformance, CiliumEBPF.CGroupSockAddr,
 			"Tracks socket ownership at connect and UDP sendmsg for process-aware routing without a procfs descriptor scan.")
 		for _, helper := range []struct {
@@ -390,21 +414,21 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 				helper.fn, helper.name, helper.detail)
 		}
 	}
-	if enableTCP && needSocketAssignment {
+	if plan.enableTCP && needSocketAssignment {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
 			detail string
 		}{asm.FnSkcLookupTcp, "bpf_skc_lookup_tcp", "Finds transparent TCP listeners and established sockets."})
 	}
-	if enableUDP && needSocketAssignment {
+	if plan.enableUDP && needSocketAssignment {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
 			detail string
 		}{asm.FnSkLookupUdp, "bpf_sk_lookup_udp", "Finds the transparent UDP listener."})
 	}
-	if (enableTCP || enableUDP) && needSocketAssignment {
+	if (plan.enableTCP || plan.enableUDP) && needSocketAssignment {
 		helpers = append(helpers, struct {
 			fn     asm.BuiltinFunc
 			name   string
@@ -435,7 +459,7 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 			probeProgramHelper(report, scope, KernelProbeRequired, CiliumEBPF.SchedCLS, helper.fn, helper.name, helper.detail)
 		}
 	}
-	probeSocketCapabilities(report, enableIPv6, enableTCP, enableUDP)
+	probeSocketCapabilities(report, plan.enableIPv6, plan.enableTCP, plan.enableUDP)
 	probeNetlinkAccess(report)
 
 	probeMemlockLimit(report, memlockErr)
