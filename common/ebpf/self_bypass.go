@@ -281,6 +281,10 @@ func selfBypassCreateInstructions(mapFD int) asm.Instructions {
 }
 
 func selfBypassReleaseInstructions(mapFD int) asm.Instructions {
+	return socketCookieDeleteInstructions(mapFD)
+}
+
+func socketCookieDeleteInstructions(mapFD int) asm.Instructions {
 	return asm.Instructions{
 		asm.FnGetSocketCookie.Call(),
 		asm.JEq.Imm(asm.R0, 0, "allow"),
