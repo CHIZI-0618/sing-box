@@ -164,6 +164,42 @@ type bypassRuleSetBackendVersion struct {
 	known   bool
 }
 
+type bypassCIDRPolicyBackend interface {
+	UpdateCompiledBypassCIDR(policy commonEBPF.BypassCIDRPolicy) (bool, error)
+	RequiresRebuild() bool
+}
+
+func (i *Inbound) applyBypassCIDRBackend(
+	name string,
+	backend bypassCIDRPolicyBackend,
+	state *bypassRuleSetBackendVersion,
+	policy commonEBPF.BypassCIDRPolicy,
+	previous commonEBPF.BypassCIDRPolicy,
+	version uint64,
+	previousVersion uint64,
+) (bypassCIDRAppliedBackend, error) {
+	if _, err := backend.UpdateCompiledBypassCIDR(policy); err != nil {
+		if backend.RequiresRebuild() {
+			state.known = false
+			i.bypassRuleSetInconsistent = true
+		}
+		return bypassCIDRAppliedBackend{}, err
+	}
+	*state = bypassRuleSetBackendVersion{version: version, known: true}
+	return bypassCIDRAppliedBackend{
+		name: name,
+		revert: func() error {
+			_, err := backend.UpdateCompiledBypassCIDR(previous)
+			if err != nil {
+				state.known = false
+				return err
+			}
+			*state = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+			return nil
+		},
+	}, nil
+}
+
 // revertBypassCIDRBackends reverts every already-applied backend, most
 // recently applied first, and reports the name of each one whose own revert
 // call also failed. It always attempts every entry rather than stopping at
@@ -272,60 +308,24 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	}
 	var err error
 	if backend := i.tcBackend(); backend != nil {
-		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
-			// UpdateCompiledBypassCIDR's own internal rollback can itself
-			// fail, in which case the backend marks itself as requiring a
-			// rebuild before returning here -- its maps and control flags no
-			// longer agree, and there is no known-good state left to
-			// diff the next update against. That backend was never added
-			// to applied (it never got past this call), so the fail()
-			// below's revert pass never reaches it either; without this
-			// check, its previous known=true would be left standing, and
-			// bypassRuleSetInconsistent would only be set if some *other*
-			// backend's own revert failed, not from this one's forward
-			// apply having wrecked it outright.
-			if backend.RequiresRebuild() {
-				i.bypassRuleSetTC.known = false
-				i.bypassRuleSetInconsistent = true
-			}
+		var appliedBackend bypassCIDRAppliedBackend
+		appliedBackend, err = i.applyBypassCIDRBackend(
+			"TC", backend, &i.bypassRuleSetTC, policy, previous, version, previousVersion,
+		)
+		if err != nil {
 			return fail(err)
 		}
-		i.bypassRuleSetTC = bypassRuleSetBackendVersion{version: version, known: true}
-		applied = append(applied, bypassCIDRAppliedBackend{
-			name: "TC",
-			revert: func() error {
-				_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
-				if revertErr == nil {
-					i.bypassRuleSetTC = bypassRuleSetBackendVersion{version: previousVersion, known: true}
-				} else {
-					i.bypassRuleSetTC.known = false
-				}
-				return revertErr
-			},
-		})
+		applied = append(applied, appliedBackend)
 	}
 	if backend := i.cgroupBackendInstance(); backend != nil {
-		if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
-			// Same reasoning as TC's own case above.
-			if backend.RequiresRebuild() {
-				i.bypassRuleSetCgroup.known = false
-				i.bypassRuleSetInconsistent = true
-			}
+		var appliedBackend bypassCIDRAppliedBackend
+		appliedBackend, err = i.applyBypassCIDRBackend(
+			"cgroup", backend, &i.bypassRuleSetCgroup, policy, previous, version, previousVersion,
+		)
+		if err != nil {
 			return fail(err)
 		}
-		i.bypassRuleSetCgroup = bypassRuleSetBackendVersion{version: version, known: true}
-		applied = append(applied, bypassCIDRAppliedBackend{
-			name: "cgroup",
-			revert: func() error {
-				_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
-				if revertErr == nil {
-					i.bypassRuleSetCgroup = bypassRuleSetBackendVersion{version: previousVersion, known: true}
-				} else {
-					i.bypassRuleSetCgroup.known = false
-				}
-				return revertErr
-			},
-		})
+		applied = append(applied, appliedBackend)
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
 		if backend := shared.sharedBackendInstance(); backend != nil {
@@ -348,27 +348,15 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 						return revertErr
 					},
 				})
-			} else if _, err = backend.UpdateCompiledBypassCIDR(policy); err != nil {
-				// Same reasoning as TC's own case above.
-				if backend.RequiresRebuild() {
-					i.bypassRuleSetShared.known = false
-					i.bypassRuleSetInconsistent = true
-				}
-				return fail(err)
 			} else {
-				i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}
-				applied = append(applied, bypassCIDRAppliedBackend{
-					name: "shared",
-					revert: func() error {
-						_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
-						if revertErr == nil {
-							i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: previousVersion, known: true}
-						} else {
-							i.bypassRuleSetShared.known = false
-						}
-						return revertErr
-					},
-				})
+				var appliedBackend bypassCIDRAppliedBackend
+				appliedBackend, err = i.applyBypassCIDRBackend(
+					"shared", backend, &i.bypassRuleSetShared, policy, previous, version, previousVersion,
+				)
+				if err != nil {
+					return fail(err)
+				}
+				applied = append(applied, appliedBackend)
 			}
 		}
 	}
