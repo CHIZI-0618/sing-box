@@ -26,12 +26,9 @@ const (
 	// each shard so hash distribution cannot reject work below this limit.
 	udpReplySocketCapacity = 4096
 
-	// udpReplySocketIdleTimeout and udpReplySocketSweepInterval govern the
-	// background reclaim in addition to the capacity-triggered one in get():
-	// a socket unused for this long is closed even before its shard fills up,
-	// so idle sockets do not simply wait for capacity pressure to be reclaimed.
-	udpReplySocketIdleTimeout   = 5 * time.Minute
-	udpReplySocketSweepInterval = time.Minute
+	// Idle sockets are reclaimed at their next actual expiry deadline in
+	// addition to capacity-triggered eviction in get().
+	udpReplySocketIdleTimeout = 5 * time.Minute
 )
 
 var errUDPReplySocketCapacity = errors.New("UDP eBPF reply socket pool is at capacity")
@@ -302,7 +299,10 @@ type udpReplySocketPool struct {
 	stats        udpReplySocketPoolStats
 	sweepAccess  sync.Mutex
 	sweepCancel  context.CancelFunc
-	capacity     int64 // test override; zero uses udpReplySocketCapacity
+	sweepWake    chan struct{}
+	sweepDone    chan struct{}
+	capacity     int64         // test override; zero uses udpReplySocketCapacity
+	idleTimeout  time.Duration // test override; zero uses udpReplySocketIdleTimeout
 }
 
 type udpReplySocketShard struct {
@@ -402,6 +402,7 @@ func (p *udpReplySocketPool) get(
 	shard.sockets[source] = entry
 	shard.access.Unlock()
 	p.addCount(1)
+	p.requestSweep()
 	return socket, releaseUDPReplySocketEntry(entry), nil
 }
 
@@ -472,19 +473,23 @@ func (p *udpReplySocketPool) shardIndex(source netip.AddrPort) int {
 	return shardIndexForAddrPort(source, udpClientShardCount)
 }
 
-// startSweeper starts the background idle-socket reclaim, tied to ctx so it
-// stops on its own if the inbound's own context is ever canceled without an
-// explicit stopSweeper call. A second call before stopSweeper is a no-op:
-// the pool already has a sweeper running.
+// startSweeper starts deadline-driven idle-socket reclaim. A second call before
+// stopSweeper is a no-op.
 func (p *udpReplySocketPool) startSweeper(ctx context.Context) {
 	p.sweepAccess.Lock()
-	defer p.sweepAccess.Unlock()
 	if p.sweepCancel != nil {
+		p.sweepAccess.Unlock()
 		return
 	}
 	sweepCtx, cancel := context.WithCancel(ctx)
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
 	p.sweepCancel = cancel
-	go p.runSweeper(sweepCtx)
+	p.sweepWake = wake
+	p.sweepDone = done
+	p.sweepAccess.Unlock()
+	go p.runSweeper(sweepCtx, wake, done)
+	p.requestSweep()
 }
 
 // stopSweeper stops the background idle-socket reclaim. Safe to call even if
@@ -492,24 +497,76 @@ func (p *udpReplySocketPool) startSweeper(ctx context.Context) {
 func (p *udpReplySocketPool) stopSweeper() {
 	p.sweepAccess.Lock()
 	cancel := p.sweepCancel
+	done := p.sweepDone
 	p.sweepCancel = nil
+	p.sweepWake = nil
+	p.sweepDone = nil
 	p.sweepAccess.Unlock()
 	if cancel != nil {
 		cancel()
+		<-done
 	}
 }
 
-func (p *udpReplySocketPool) runSweeper(ctx context.Context) {
-	ticker := time.NewTicker(udpReplySocketSweepInterval)
-	defer ticker.Stop()
+func (p *udpReplySocketPool) requestSweep() {
+	p.sweepAccess.Lock()
+	wake := p.sweepWake
+	p.sweepAccess.Unlock()
+	if wake == nil {
+		return
+	}
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
+}
+
+func (p *udpReplySocketPool) runSweeper(ctx context.Context, wake <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
+	var timerChannel <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			p.sweepIdle(udpReplySocketIdleTimeout)
+		case <-wake:
+		case <-timerChannel:
 		}
+		next, available := p.sweepIdleAt(time.Now(), p.socketIdleTimeout())
+		if !available {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timerChannel = nil
+			continue
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		delay := time.Until(next)
+		if delay < 0 {
+			delay = 0
+		}
+		timer.Reset(delay)
+		timerChannel = timer.C
 	}
+}
+
+func (p *udpReplySocketPool) socketIdleTimeout() time.Duration {
+	if p.idleTimeout > 0 {
+		return p.idleTimeout
+	}
+	return udpReplySocketIdleTimeout
 }
 
 // sweepIdle closes every socket that has been idle (unused, and not
@@ -517,15 +574,34 @@ func (p *udpReplySocketPool) runSweeper(ctx context.Context) {
 // destination that stops being contacted does not simply hold its socket
 // until the shard happens to fill up.
 func (p *udpReplySocketPool) sweepIdle(idleTimeout time.Duration) {
+	p.sweepIdleAt(time.Now(), idleTimeout)
+}
+
+func (p *udpReplySocketPool) sweepIdleAt(now time.Time, idleTimeout time.Duration) (time.Time, bool) {
 	if p.closed.Load() {
-		return
+		return time.Time{}, false
 	}
-	deadline := time.Now().Add(-idleTimeout).UnixNano()
+	deadline := now.Add(-idleTimeout).UnixNano()
+	var next time.Time
 	for index := range p.shards {
 		shard := &p.shards[index]
 		shard.access.Lock()
 		for source, entry := range shard.sockets {
-			if entry.inUse.Load() > 0 || entry.lastUsed.Load() > deadline {
+			lastUsed := entry.lastUsed.Load()
+			expires := time.Unix(0, lastUsed).Add(idleTimeout)
+			if entry.inUse.Load() > 0 {
+				if !expires.After(now) {
+					expires = now.Add(idleTimeout)
+				}
+				if next.IsZero() || expires.Before(next) {
+					next = expires
+				}
+				continue
+			}
+			if lastUsed > deadline {
+				if next.IsZero() || expires.Before(next) {
+					next = expires
+				}
 				continue
 			}
 			_ = entry.conn.Close()
@@ -535,6 +611,7 @@ func (p *udpReplySocketPool) sweepIdle(idleTimeout time.Duration) {
 		}
 		shard.access.Unlock()
 	}
+	return next, !next.IsZero()
 }
 
 func (p *udpReplySocketPool) close() error {
@@ -567,6 +644,7 @@ func (p *udpReplySocketPool) closeSockets() error {
 		}
 		shard.access.Unlock()
 	}
+	p.requestSweep()
 	return closeErr
 }
 
