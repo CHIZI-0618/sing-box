@@ -122,13 +122,6 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		return nil, E.New("missing shared-network redirect address")
 	}
 	memlockErr := raiseMemlockLimit()
-	if err := checkKernelCapabilities("shared-network", ""); err != nil {
-		if memlockErr != nil {
-			return nil, E.Errors(err, E.Cause(memlockErr, "remove memlock limit"))
-		}
-		return nil, err
-	}
-
 	runtimeState := &sharedNetworkRuntime{
 		maps:                        make(map[string]*CiliumEBPF.Map),
 		programs:                    make([]*CiliumEBPF.Program, sharedNetworkProgramCount),

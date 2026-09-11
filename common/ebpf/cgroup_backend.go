@@ -177,7 +177,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		}
 	}
 	memlockErr := raiseMemlockLimit()
-	if err = checkKernelCapabilities("cgroup", cgroupPath); err != nil {
+	if err = validateCgroup2Mount("cgroup", cgroupPath); err != nil {
 		if memlockErr != nil {
 			return nil, E.Errors(err, E.Cause(memlockErr, "remove memlock limit"))
 		}

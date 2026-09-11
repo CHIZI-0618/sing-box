@@ -59,13 +59,14 @@ func runEBPFStatus() error {
 		interfaceNames = []string{commandEBPFStatusInterface}
 	}
 	report, err := commonEBPF.ProbeKernel(commonEBPF.KernelProbeOptions{
-		Mode:            mode,
-		LocalDataPlane:  commonEBPF.KernelProbeDataPlane(commandEBPFStatusLocal),
-		SharedDataPlane: commonEBPF.KernelProbeDataPlane(commandEBPFStatusShared),
-		Network:         commandEBPFStatusNetwork,
-		InterfaceNames:  interfaceNames,
-		EnableIPv6:      commandEBPFStatusIPv6,
-		FakeIPICMPReply: commandEBPFStatusFakeIPICMP,
+		Mode:             mode,
+		LocalDataPlane:   commonEBPF.KernelProbeDataPlane(commandEBPFStatusLocal),
+		SharedDataPlane:  commonEBPF.KernelProbeDataPlane(commandEBPFStatusShared),
+		Network:          commandEBPFStatusNetwork,
+		InterfaceNames:   interfaceNames,
+		EnableIPv6:       commandEBPFStatusIPv6,
+		FakeIPICMPReply:  commandEBPFStatusFakeIPICMP,
+		VerifyObjectLoad: true,
 	})
 	if err != nil {
 		return err
