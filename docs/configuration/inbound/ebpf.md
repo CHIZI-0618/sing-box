@@ -139,43 +139,12 @@ A supported path still needs a usable client source address and a route that
 delivers the request to the responder. On Android, switching between mobile
 data and Wi-Fi can cause tethering to withdraw the hotspot's global IPv6
 prefix and default route. Whether IPv6 remains available depends on the
-device and the new upstream; using Wi-Fi alone does not imply its loss.
-
-A client may retain link-local IPv6 communication after this withdrawal.
-In a reported Android-to-Windows test, explicitly selecting a link-local
-source address and adding a diagnostic route through the hotspot produced
-four replies from four FakeIP IPv6 requests. With an old global source
-address, both the request and the generated reply were captured on Android,
-but the reply did not reach Windows. This distinguishes responder operation
-from delivery through the tested device's tethering path. Link-local tests
-do not establish that ordinary shared IPv6 traffic remains usable.
-
-When investigating an RA change, distinguish the Router Lifetime from the
-Prefix Information option's Preferred Lifetime and Valid Lifetime. A zero
-Router Lifetime withdraws the default-router role, not the client's address
-by itself. An address marked deprecated is still valid and must continue to
-accept packets; that state alone does not explain a lost reply. Check the
-addresses, routes, RA fields, and captures on both sides of the hotspot.
-See [RFC 4861 section 4.2](https://www.rfc-editor.org/rfc/rfc4861.html#section-4.2)
-and [RFC 4862 section 5.5.4](https://www.rfc-editor.org/rfc/rfc4862.html#section-5.5.4).
-
-An Echo Reply returns to the request's original source address. Rewriting
-its destination to a different client address is not a remedy for a withdrawn
-prefix and can prevent the client from matching the reply to its request.
+device and the new upstream.
 
 `local.data_plane: tc` has the equivalent dependency in the other direction:
-`local_reply` only ever sees a request that ordinary routing has already sent
-out the local TC interface, so a local ping to the FakeIP range needs this
-host itself to have some IPv6 route out that interface — a plain default
-route is enough, exactly as for IPv4, matching a route to the FakeIP prefix
-specifically is not required. When `local.ipv6` and `fakeip_icmp: reply` are
-both enabled but no such route exists, sing-box logs a warning naming the
-local interface at startup and again whenever the local interface changes,
-rather than leaving a local IPv6 ping to time out with nothing in the log to
-explain why. This is a warning, not a startup error, because the missing
-route is ordinary transient network state (unlike `local.data_plane: cgroup`,
-which can never support `fakeip_icmp` on any network) that resolves itself
-once the host gains real IPv6 connectivity.
+ordinary routing must select the local TC interface for an address in the
+FakeIP IPv6 prefix. A matching route or a default route through that interface
+is sufficient. sing-box logs a warning when no such route is available.
 
 ### local
 
@@ -372,152 +341,16 @@ inclusive.
     Linux, or the router operating system. Multiple downstream interfaces may be
     configured for Wi-Fi, USB tethering, and similar links.
 
-### Examples
-
-Each of these three configurations passes `sing-box check` as shown; the
-underlying interception paths they select (`local.data_plane: tc`/`cgroup`,
-`shared.data_plane: socket_assign`/`packet_rewrite`) are each covered by this
-project's real-kernel network-namespace tests. `check` validates configuration
-structure and construction, not a live network — it does not itself attach
-anything to a real interface.
-
-##### Local proxy only
-
-Intercepts traffic this host itself generates. `local.data_plane` defaults to
-`cgroup`; set it to `tc` if `fakeip_icmp: reply` is needed for local traffic.
-
-```json
-{
-  "type": "ebpf",
-  "tag": "ebpf-in",
-  "local": {
-    "enabled": true
-  }
-}
-```
-
-##### Hotspot/tethering sharing only
-
-Intercepts traffic arriving from downstream clients on `wlan1` (adjust to the
-actual hotspot/tethering interface name), with no local interception.
-`shared.data_plane` defaults to `packet_rewrite`, which requires Ethernet
-framing; use `socket_assign` for PPP/PPPoE, raw-IP, or tunnel interfaces
-instead. Both shared data planes support `fakeip_icmp: reply` for these
-clients (see the support matrix above) — add it and a FakeIP DNS transport
-the same way the combined example below does, with no other change needed.
-
-```json
-{
-  "type": "ebpf",
-  "tag": "ebpf-in",
-  "shared": {
-    "enabled": true,
-    "interface": ["wlan1"]
-  }
-}
-```
-
-##### Local and hotspot combined
-
-Both paths at once, each with its own defaults. `local: tc` plus either shared
-data plane covers both paths with `fakeip_icmp: reply` — see the support
-matrix above; only `local: cgroup` would leave local traffic unanswered.
-`fakeip_icmp: reply` requires a FakeIP DNS transport to be configured
-somewhere in `dns.servers`, shown here for completeness since `sing-box check`
-rejects `reply` without one.
-
-```json
-{
-  "inbounds": [
-    {
-      "type": "ebpf",
-      "tag": "ebpf-in",
-      "fakeip_icmp": "reply",
-      "local": {
-        "enabled": true,
-        "data_plane": "tc"
-      },
-      "shared": {
-        "enabled": true,
-        "data_plane": "socket_assign",
-        "interface": ["wlan1"]
-      }
-    }
-  ],
-  "dns": {
-    "servers": [
-      { "type": "udp", "tag": "remote", "server": "8.8.8.8" },
-      { "type": "fakeip", "tag": "fakeip", "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18" }
-    ],
-    "rules": [
-      { "query_type": ["A", "AAAA"], "server": "fakeip" }
-    ],
-    "final": "remote"
-  },
-  "outbounds": [
-    { "type": "direct" }
-  ]
-}
-```
-
-### Resource limits
-
-- **UDP reply sockets**: each distinct destination a client reaches through
-  the TC/shared data planes (not `local.data_plane: cgroup`, which never opens
-  one of these) gets one transparent UDP reply socket, bounded at 256 per
-  internal shard (16 shards, so 4096 total). At capacity, an idle socket is
-  reclaimed first; if none is reclaimable, the new destination's reply is
-  rejected rather than growing the pool further. Independently, a socket idle
-  for 5 minutes is reclaimed by a background sweep every minute, so idle
-  sockets do not wait for capacity pressure. None of this is user-configurable;
-  the defaults are sized for ordinary client counts, not tuned per deployment.
-- **Bypass CIDR / host address policies**: each backend's compiled bypass CIDR
-  and host-address policy maps are capped (tens of thousands of entries);
-  exceeding the cap is a startup or update error, not a silent truncation.
-- These limits exist to keep memory and kernel map usage bounded under
-  sustained load and drift-inducing events (network changes, repeated
-  failures); see Diagnostics below for the counters that expose pressure
-  against them at runtime.
-
 ### Diagnostics
 
-Two distinct tools answer two different questions:
-
-- **`sing-box tools ebpf status`** probes what the *kernel this command runs
-  on* supports — program types, helpers, and map types — without needing a
-  running sing-box instance. It cannot tell you whether a *running* eBPF
-  inbound is actually intercepting traffic, since it never has a running
-  instance to read that from.
-- **The Clash API's `GET /ebpf`** endpoint (when a Clash API server is
-  configured) reports every eBPF inbound's live status from inside the
-  running process: which paths are enabled, the interface(s) and actual
-  mount mechanism (`tcx` or `clsact`) each attached with, whether anything is
-  waiting for an interface or currently recovering from a failure, the most
-  recent warning and when a failure last cleared on its own, bypass_rule_set
-  consistency across backends, UDP session and reply-socket-pool counts, and
-  the categorized failure/recovery counters described below. For example:
+- `sing-box tools ebpf status` probes the current kernel's required eBPF
+  capabilities. It does not inspect a running inbound.
+- When the Clash API is enabled, `GET /ebpf` reports the running eBPF
+  inbounds, attachments, recovery state, resource usage, and failure counters:
 
   ```
   curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
   ```
-
-  A brief version of the same facts (enabled paths, actual mount, any path
-  still waiting for an interface, and what `fakeip_icmp` actually covers) is
-  also logged once at startup, at the level normally shown by default.
-
-The counters reported include: TC assignment lookup failures, shared
-packet-rewrite token-reservation and packet-rewrite failures, shared
-packet-rewrite reconcile failures, recovery attempt/success/failure counts,
-and (when `fakeip_icmp: reply` is enabled) FakeIP ICMP replies sent,
-Echo Requests examined and passed through without an answer, and rewrite
-failures. They are cumulative since the process started and never reset on
-their own; take two readings to compute a rate. They intentionally never
-break down by client or destination (that would grow without bound as
-clients come and go) and never log individual packets. The FakeIP ICMP
-pass-through count only ever counts ICMP/ICMPv6 Echo Request this object
-examined and declined to answer (fragmented, has options, wrong type/code,
-or outside the FakeIP prefixes) — never ordinary non-ICMP traffic on the
-same interface.
 
 ### Limitations
 
@@ -526,15 +359,6 @@ same interface.
 - Fragmented IPv4 and IPv6 datagrams bypass interception. IPv6 atomic fragments
   are processed as ordinary IPv6 packets.
 - Interception state is restored automatically after network changes.
-- Every TC program that rewrites a packet in place (bypass_rule_set CIDR
-  matching, `shared.data_plane: packet_rewrite`, `fakeip_icmp: reply`) has
-  been checked against network-namespace and veth-pair tests, but neither
-  exercises real NIC checksum or segmentation offload (veth has none, and a
-  software loopback always computes checksums honestly regardless of
-  advertised NIC features). See
-  [eBPF checksum/offload verification](/manual/misc/ebpf-checksum-offload-verification/)
-  before relying on this inbound on hardware whose offload behavior with
-  eBPF-rewritten packets has not been checked.
 
 See [eBPF kernel requirements](/manual/misc/ebpf-kernel-requirements/) before
 enabling this inbound on vendor or Android kernels.
