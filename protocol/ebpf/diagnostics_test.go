@@ -143,6 +143,27 @@ func TestDiagnosticsReportsNeedsAttentionWhenUnrecoverable(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsIncludesBypassRuleSetRecovery(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteSettled,
+		bypassRuleSet: tcSharedRewriteRecoverable,
+	})
+	if diagnostics := inbound.Diagnostics(); !diagnostics.RecoveryPending {
+		t.Fatal("RecoveryPending = false with a recoverable bypass_rule_set update")
+	}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteSettled,
+		bypassRuleSet: tcSharedRewriteUnrecoverable,
+	})
+	diagnostics := inbound.Diagnostics()
+	if !diagnostics.RecoveryUnrecoverable || diagnostics.State != EBPFDiagnosticsStateNeedsAttention {
+		t.Fatalf("unrecoverable bypass_rule_set diagnostics = %+v", diagnostics)
+	}
+}
+
 // TestDiagnosticsUnrecoverableSurvivesAnUnknownRound proves the companion
 // gap the same review flagged: updateTCInterfaces can return before
 // re-evaluating every component this round (see its own doc comment,

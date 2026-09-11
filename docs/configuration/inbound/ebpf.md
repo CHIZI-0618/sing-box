@@ -79,7 +79,8 @@ keeps the traditional `clsact` attachment so its numeric ordering remains effect
 #### bypass_rule_set
 
 Traffic to destination IP CIDRs contained in these rule sets bypasses this
-inbound. Non-IP rules are ignored.
+inbound. Non-IP rules are ignored. Runtime updates keep the last confirmed
+policy until every active data plane accepts the replacement.
 
 #### fakeip_icmp
 
