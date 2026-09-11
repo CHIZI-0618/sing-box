@@ -4,13 +4,11 @@ package ebpf
 
 import (
 	"net"
-	"net/netip"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/sagernet/netlink"
-	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
@@ -98,77 +96,6 @@ func TestTCXAttachmentOutcome(t *testing.T) {
 			}
 		})
 	}
-}
-
-// newRealFakeIPICMPBackendWithIPv6 is newRealFakeIPICMPBackend plus a FakeIP
-// IPv6 range and local/shared IPv6 interception, for the IPv6 real-ping
-// coverage neither the original clsact test nor this file's TCX tests could
-// otherwise reach.
-func newRealFakeIPICMPBackendWithIPv6(t *testing.T) *commonEBPF.TCBackend {
-	t.Helper()
-	policy, err := commonEBPF.CompilePolicy(commonEBPF.PolicyConfig{
-		EnableTCP:  true,
-		FakeIPIPv4: netip.MustParsePrefix("198.18.0.0/15"),
-		FakeIPIPv6: netip.MustParsePrefix("fc00::/18"),
-	})
-	if err != nil {
-		t.Fatalf("compile policy: %v", err)
-	}
-	backend, err := commonEBPF.PrepareTC(commonEBPF.TCConfig{
-		ListenerPort:     23457,
-		EnableLocal:      true,
-		EnableShared:     true,
-		EnableIPv4:       true,
-		EnableLocalIPv6:  true,
-		EnableSharedIPv6: true,
-		EnableTCP:        true,
-		Policy:           policy,
-		FakeIPICMPReply:  true,
-	})
-	if err != nil {
-		t.Skipf("cannot prepare a real TC eBPF backend in this environment: %v", err)
-	}
-	return backend
-}
-
-// attachFakeIPICMPOrSkip attaches with the given priority and, when priority
-// requests TCX (1) but this kernel does not actually grant a TCX
-// attachment, defers to requireOrSkipTCX -- skip on a general environment,
-// fail on one configured via tcxStrictModeEnv to require TCX -- since
-// attachTCInterfaceWithLock falls back to clsact silently, and a test that
-// claims to cover TCX must not pass having silently exercised clsact
-// instead.
-func attachFakeIPICMPOrSkip(
-	t *testing.T,
-	backend *commonEBPF.TCBackend,
-	interfaceName string,
-	index int,
-	role tcInterfaceRole,
-	priority uint16,
-) *tcInterfaceAttachment {
-	t.Helper()
-	lock, err := acquireTCInterfaceLock(interfaceName, index)
-	if err != nil {
-		t.Fatalf("acquire the interface lock: %v", err)
-	}
-	attachment, err := attachTCInterfaceWithLock(
-		netlink.LinkByName,
-		backend,
-		interfaceName,
-		tcAttachmentState{index: index, framing: commonEBPF.TCLinkFramingEthernet, role: role},
-		false,
-		priority,
-		lock,
-		true,
-	)
-	if err != nil {
-		t.Fatalf("attach the interface: %v", err)
-	}
-	if priority == 1 && attachment.attachmentType != "tcx" {
-		_ = attachment.Close()
-		requireOrSkipTCX(t, attachment.attachmentType)
-	}
-	return attachment
 }
 
 // TestFakeIPICMPLocalReplyAnswersARealPingViaTCX is
