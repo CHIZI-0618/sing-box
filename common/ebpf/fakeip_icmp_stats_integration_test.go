@@ -7,13 +7,8 @@ import (
 	"testing"
 )
 
-// TestFakeIPICMPStatsCountsPassThroughNotOrdinaryTraffic is item 8's
-// deterministic proof for the PassThrough half of fakeip_icmp_stats: an
-// ICMP Echo Request outside the safe subset (here, one with IPv4 options)
-// increments PassThroughCount, while an ordinary TCP packet to the very same
-// FakeIP destination -- not ICMP at all -- does not. This is the exact
-// distinction find_ipv4_echo_request's own comment makes: "not this
-// protocol" is never counted, only "this protocol, but disqualified" is.
+// TestFakeIPICMPStatsCountsPassThroughNotOrdinaryTraffic distinguishes an
+// unsupported echo request from unrelated traffic to the same FakeIP.
 func TestFakeIPICMPStatsCountsPassThroughNotOrdinaryTraffic(t *testing.T) {
 	requireEBPFIntegration(t, "verify fakeip_icmp_stats counts pass-through correctly")
 	policy := newTestFakeIPPolicy(t, "198.18.0.0/15", "")

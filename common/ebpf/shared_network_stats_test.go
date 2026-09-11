@@ -8,16 +8,8 @@ import (
 	CiliumEBPF "github.com/cilium/ebpf"
 )
 
-// TestSharedNetworkStatsReadCleanlyWithNoFailures is a minimal sanity check
-// for RewriteFailures (item 8's kernel-side "packet rewrite failures"
-// counter, native/shared_network_rewrite.h) alongside the pre-existing
-// TokenReservationFailures: both must read back as zero, with no error, on a
-// freshly-prepared backend that has never processed a packet. Genuinely
-// forcing rewrite_ipv4/rewrite_ipv6 or reserve_token to fail requires
-// conditions (a checksum helper failing, token space exhaustion) this test
-// environment cannot manufacture; the real reply-path netns tests in
-// protocol/ebpf independently prove the reply-succeeds side of the same
-// code paths against a real kernel.
+// TestSharedNetworkStatsReadCleanlyWithNoFailures checks native counters on
+// a backend that has not processed a packet.
 func TestSharedNetworkStatsReadCleanlyWithNoFailures(t *testing.T) {
 	policy := newTestSharedNetworkFakeIPPolicy(t, "198.18.0.0/15")
 	backend, err := PrepareSharedNetwork(nil, newTestSharedNetworkConfig(policy, false))

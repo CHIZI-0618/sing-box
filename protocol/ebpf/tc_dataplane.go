@@ -295,10 +295,7 @@ func closeTCInterfaceAttachments(attachments []*tcInterfaceAttachment) error {
 	return closeErr
 }
 
-// attachmentDiagnostics is attachmentDescriptions' structured sibling, for
-// item 7's runtime status query: the same walk over d.attachments, but
-// returning fields a JSON/text renderer can use directly instead of a
-// pre-formatted log string.
+// attachmentDiagnostics returns the structured attachment snapshot.
 func (d *tcDataPlane) attachmentDiagnostics() []EBPFAttachmentDiagnostics {
 	if d == nil {
 		return nil

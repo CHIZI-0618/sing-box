@@ -315,11 +315,8 @@ func (d *sharedRewriteDataPlane) attachmentDescriptionsLocked() []string {
 	return descriptions
 }
 
-// attachmentDiagnostics is attachmentDescriptions' structured sibling, for
-// item 7's runtime status query -- see tcDataPlane.attachmentDiagnostics,
-// which this mirrors. Every shared packet-rewrite attachment reports
-// role="shared" and framing="ethernet", since reconcile already refuses any
-// interface that is not Ethernet-framed.
+// attachmentDiagnostics returns the structured attachment snapshot. Shared
+// packet-rewrite accepts only Ethernet-framed interfaces.
 func (d *sharedRewriteDataPlane) attachmentDiagnostics() []EBPFAttachmentDiagnostics {
 	if d == nil {
 		return nil
