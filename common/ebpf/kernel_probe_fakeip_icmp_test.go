@@ -2,7 +2,11 @@
 
 package ebpf
 
-import "testing"
+import (
+	"testing"
+
+	CiliumEBPF "github.com/cilium/ebpf"
+)
 
 // TestProbeKernelFakeIPICMPOnlyWhenRequested confirms the probe report gains
 // fakeip_icmp findings only when asked, and that on a real kernel (this is
@@ -30,16 +34,27 @@ func TestProbeKernelFakeIPICMPOnlyWhenRequested(t *testing.T) {
 		t.Fatalf("probe with fakeip_icmp: %v", err)
 	}
 	found := 0
+	foundPerCPUScratch := false
+	foundPacketWrite := false
 	for _, finding := range with.Findings {
 		if finding.Scope != "fakeip_icmp" {
 			continue
 		}
 		found++
+		switch finding.Feature {
+		case "BPF map type " + CiliumEBPF.PerCPUArray.String():
+			foundPerCPUScratch = true
+		case "bpf_skb_store_bytes for SchedCLS":
+			foundPacketWrite = true
+		}
 		if finding.Status == KernelProbeFail {
 			t.Fatalf("fakeip_icmp finding reported unsupported on this kernel: %+v", finding)
 		}
 	}
 	if found == 0 {
 		t.Fatal("no fakeip_icmp findings were reported after asking for them")
+	}
+	if !foundPerCPUScratch || !foundPacketWrite {
+		t.Fatalf("fakeip_icmp object requirements are incomplete: per_cpu_array=%v skb_store_bytes=%v", foundPerCPUScratch, foundPacketWrite)
 	}
 }
