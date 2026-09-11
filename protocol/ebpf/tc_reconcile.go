@@ -110,32 +110,8 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 				delete(current, interfaceName)
 				continue
 			}
-			// Deliberately not previous.resetAttachment() here: that would
-			// tear down every filter and link this attachment holds,
-			// including ones filtersAttached just confirmed are still
-			// healthy, only to have updateTCInterfaceAttachment recreate
-			// them from nothing a few lines below. updateTCInterfaceAttachment
-			// (and updateTCXInterfaceAttachment underneath it) already skip
-			// attaching whatever field is non-nil, so calling it directly on
-			// the drifted-but-not-reset attachment repairs only the part
-			// filtersAttached found missing — the surgical repair this
-			// health check exists for, not a full detach-and-reattach that
-			// would needlessly disturb an unrelated, still-working filter
-			// (or, if the repair itself then failed, leave that unrelated
-			// filter torn down too).
-			//
-			// That "skip attaching whatever field is non-nil" behavior is
-			// exactly the gap clearStaleAttachments exists to close: an
-			// externally removed filter or link (a `tc filter del` or
-			// `bpftool link detach` run outside this process) is gone from
-			// the kernel but its Go-side pointer is untouched by that,
-			// so updateTCInterfaceAttachment would otherwise see a non-nil
-			// field and skip it, "repairing" nothing while still returning
-			// success. Clearing exactly the fields filtersAttached's own
-			// per-field checks (mirrored here individually rather than
-			// short-circuited) confirm are actually gone makes the repair
-			// below re-attach them, and leaves every other, still-healthy
-			// field's non-nil pointer alone.
+			// Preserve healthy filters and clear only stale Go references so
+			// the incremental update below repairs the missing attachments.
 			if err = previous.clearStaleAttachments(d.priority, d.backend); err != nil {
 				return rollback(E.Cause(err, "inspect TC eBPF interface ", interfaceName, " for stale attachments"))
 			}
@@ -260,17 +236,8 @@ func tcAttachmentIndexClaimed(desired map[string]tcAttachmentState, interfaceNam
 	return false
 }
 
-// filtersAttached reports whether this attachment's actual kernel state
-// still matches everything its role and backend configuration says should be
-// there. backend is consulted only for backend.FakeIPICMPEnabled(): when the
-// feature is off, the ICMP-specific checks below are skipped entirely (a nil
-// localICMPLink/sharedICMPLink/localICMPFilter/sharedICMPFilter is then
-// correct, not a fault), and when it is on, the corresponding fakeip_icmp
-// filter or link is required exactly like the ordinary one it rides
-// alongside — its absence must fail this check the same way a missing
-// sb_tc_local/sb_tc_shared would, so a reconcile pass actually notices and
-// repairs it instead of a health check that can only see half of what it
-// attached.
+// filtersAttached verifies every kernel attachment required by the current
+// role, including the optional FakeIP ICMP companion.
 func (a *tcInterfaceAttachment) filtersAttached(priority uint16, backend *commonEBPF.TCBackend) (bool, error) {
 	if a == nil {
 		return false, nil
@@ -391,27 +358,10 @@ func (a *tcInterfaceAttachment) filtersAttached(priority uint16, backend *common
 	return true, nil
 }
 
-// clearStaleAttachments checks each of this attachment's kernel-side
-// filters/links against its own role individually -- unlike filtersAttached,
-// which short-circuits on the first miss and never mutates anything -- and
-// discards the Go-side reference for any one that is no longer actually
-// present in the kernel (a `tc filter del` or `bpftool link detach` run
-// outside this process, for example).
-//
-// This exists because updateTCInterfaceAttachmentWithOps's own repair logic
-// only re-attaches a field whose Go pointer is nil; an externally-removed
-// filter or link leaves its Go-side reference non-nil (deleting a kernel
-// object does not reach back into this process and clear the struct that
-// described it), so that repair silently does nothing for it, and the
-// reconcile pass that called it reports success having repaired nothing.
-// reconcile() calls this, right before updateTCInterfaceAttachment, so that
-// repair's nil-checks see the true state instead.
-//
-// A stale TCX link is also best-effort closed before being discarded, to
-// release whatever local file descriptor it still holds -- the close error
-// is deliberately ignored, since by construction the kernel-side attachment
-// is already gone. A clsact filter's Go-side struct owns no such resource
-// and is simply discarded once found stale.
+// clearStaleAttachments clears Go references whose kernel attachment was
+// removed externally, allowing the incremental repair path to recreate only
+// the missing resources. Stale TCX links are best-effort closed to release
+// their local file descriptors; clsact filter descriptors own no such FD.
 func (a *tcInterfaceAttachment) clearStaleAttachments(priority uint16, backend *commonEBPF.TCBackend) error {
 	link, err := netlink.LinkByName(a.interfaceName)
 	if err != nil {
