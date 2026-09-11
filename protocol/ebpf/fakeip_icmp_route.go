@@ -3,19 +3,23 @@
 package ebpf
 
 import (
+	"errors"
+	"net"
+	"net/netip"
+
 	"github.com/sagernet/netlink"
 
 	E "github.com/sagernet/sing/common/exceptions"
+	"golang.org/x/sys/unix"
 )
 
 // warnIfLocalFakeIPICMPIPv6Unroutable is a diagnostic only: fakeip_icmp=reply
 // for local IPv6 depends on ordinary routing actually sending an IPv6 packet
 // out the local TC interface for local_reply's egress classifier to see it
 // at all (see docs/configuration/inbound/ebpf.md's fakeip_icmp section).
-// Without any non-link-local IPv6 route on that interface — not necessarily
-// one that matches the FakeIP prefix itself, a default route already
-// satisfies this, the same way it does for IPv4 — a local ping to the FakeIP
-// range fails at the kernel's own route lookup before ever reaching this
+// Without a route to the FakeIP prefix through that interface — a default
+// route satisfies this, the same way it does for IPv4 — a local ping to the
+// FakeIP range fails at the kernel's own route lookup before ever reaching this
 // object, and would otherwise look like an unexplained timeout with nothing
 // in the log to point at the real cause. This never blocks startup or
 // reconciliation: unlike local.data_plane=cgroup, which can never support
@@ -31,7 +35,7 @@ func (i *Inbound) warnIfLocalFakeIPICMPIPv6Unroutable(localInterface string) {
 		// be resolved; this check has nothing further to add.
 		return
 	}
-	routable, err := interfaceHasGlobalIPv6Route(link)
+	routable, err := interfaceRoutesIPv6Prefix(link, i.fakeIPIPv6Prefix)
 	if err != nil {
 		i.interfaceWarnings.fakeIPICMPRoute.warn(
 			i.logger, "inspect local IPv6 route for fakeip_icmp on interface ", localInterface, ": ", err,
@@ -47,36 +51,27 @@ func (i *Inbound) warnIfLocalFakeIPICMPIPv6Unroutable(localInterface string) {
 	}
 }
 
-// interfaceHasGlobalIPv6Route reports whether the given interface carries at
-// least one IPv6 route that is not confined to the link-local scope,
-// including a plain default route (Dst == nil, exactly as ordinary IPv4
-// FakeIP interception already relies on). It deliberately does not require a
-// route matching the FakeIP prefix specifically: FakeIP addresses are never
-// treated specially by the host's own routing, so whatever route would carry
-// any other globally-routed IPv6 destination out this interface is exactly
-// what a FakeIP destination would follow too.
-//
-// The interface is passed as a resolved netlink.Link, not an index, so this
-// filters server-side through netlink.RouteList's own link argument.
-// netlink.RouteList(nil, family) looks like it should list every route
-// regardless of interface, but its filter mask always includes RT_FILTER_OIF
-// even when the link argument is nil, which then compares against a zero
-// LinkIndex — silently returning next to nothing instead of everything.
-func interfaceHasGlobalIPv6Route(link netlink.Link) (bool, error) {
-	routes, err := netlink.RouteList(link, netlink.FAMILY_V6)
+// interfaceRoutesIPv6Prefix asks the kernel to resolve an address in prefix
+// and confirms that the selected route leaves through link. Merely having an
+// unrelated global connected route on the interface is insufficient: without
+// a matching or default route the packet never reaches the TC classifier.
+func interfaceRoutesIPv6Prefix(link netlink.Link, prefix netip.Prefix) (bool, error) {
+	destination := prefix.Masked().Addr()
+	routes, err := netlink.RouteGet(net.IP(destination.AsSlice()))
+	if errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EHOSTUNREACH) {
+		return false, nil
+	}
 	if err != nil {
-		return false, E.Cause(err, "list IPv6 routes")
+		return false, E.Cause(err, "resolve IPv6 route to ", destination)
 	}
 	for _, route := range routes {
-		if route.Dst == nil {
+		if route.LinkIndex == link.Attrs().Index {
 			return true, nil
 		}
-		prefix, loaded := prefixFromIPNet(route.Dst)
-		if !loaded {
-			continue
-		}
-		if !prefix.Addr().IsLinkLocalUnicast() && !prefix.Addr().IsLinkLocalMulticast() {
-			return true, nil
+		for _, nextHop := range route.MultiPath {
+			if nextHop.LinkIndex == link.Attrs().Index {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
