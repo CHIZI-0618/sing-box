@@ -792,12 +792,10 @@ func (b *TCBackend) Close() error {
 	}
 	b.control.Enabled = 0
 	_ = b.updateControlLocked()
-	var closeErr error
-	closeErr = E.Errors(closeErr, closePrograms(b.runtime.programs))
 	if b.selfMapExternal {
 		delete(b.runtime.maps, "tc_self_sockets")
 	}
-	closeErr = E.Errors(closeErr, closeMaps(b.runtime.maps))
+	closeErr := closeObjectResources(b.runtime.programs, b.runtime.maps)
 	closeErr = E.Errors(closeErr, b.fakeIPICMP.Close())
 	b.fakeIPICMP = nil
 	b.runtime = nil

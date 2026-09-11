@@ -210,3 +210,7 @@ func closeMaps(maps map[string]*CiliumEBPF.Map) error {
 	}
 	return closeErr
 }
+
+func closeObjectResources(programs []*CiliumEBPF.Program, maps map[string]*CiliumEBPF.Map) error {
+	return E.Errors(closePrograms(programs), closeMaps(maps))
+}
