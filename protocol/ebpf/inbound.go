@@ -99,6 +99,10 @@ type Inbound struct {
 	cgroupBackendAccess      sync.RWMutex
 	lifecycleAccess          sync.Mutex
 	interfaceMonitor         tcInterfaceMonitor
+	networkStateInitialized  bool
+	networkStateDefault      string
+	networkStateAddresses    []netip.Addr
+	networkStateInterfaces   []string
 
 	bypassRuleSetAccess       sync.Mutex
 	bypassRuleSet             []adapter.RuleSet
