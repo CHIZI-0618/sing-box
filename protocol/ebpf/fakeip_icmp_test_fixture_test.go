@@ -3,12 +3,15 @@
 package ebpf
 
 import (
+	"net"
 	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
+
+	"golang.org/x/sys/unix"
 )
 
 func newRealFakeIPICMPBackend(t *testing.T) *commonEBPF.TCBackend {
@@ -51,10 +54,6 @@ func newRealFakeIPICMPBackendFor(t *testing.T, enableIPv6 bool) *commonEBPF.TCBa
 
 func newRealFakeIPICMPSharedNetworkBackend(t *testing.T) *commonEBPF.SharedNetworkBackend {
 	return newRealFakeIPICMPSharedNetworkBackendFor(t, false)
-}
-
-func newRealFakeIPICMPSharedNetworkBackendWithIPv6(t *testing.T) *commonEBPF.SharedNetworkBackend {
-	return newRealFakeIPICMPSharedNetworkBackendFor(t, true)
 }
 
 func newRealFakeIPICMPSharedNetworkBackendFor(t *testing.T, enableIPv6 bool) *commonEBPF.SharedNetworkBackend {
@@ -156,5 +155,122 @@ func requireOneFakeIPICMPReply(t *testing.T, counter fakeIPICMPReplyCounter, bef
 	after := fakeIPICMPReplyCount(t, counter)
 	if after != before+1 {
 		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", after, before+1)
+	}
+}
+
+type fakeIPSharedDataPlane uint8
+
+const (
+	fakeIPSharedSocketAssign fakeIPSharedDataPlane = iota
+	fakeIPSharedPacketRewrite
+)
+
+type fakeIPSharedReplyCase struct {
+	dataPlane  fakeIPSharedDataPlane
+	ipv6       bool
+	priority   uint16
+	selfName   string
+	peerName   string
+	client     string
+	identifier uint16
+	sequence   uint16
+}
+
+func runFakeIPSharedReplyCase(t *testing.T, testCase fakeIPSharedReplyCase) {
+	t.Helper()
+	enterTestNetworkNamespace(t)
+	self, peer := createTestVethPair(t, testCase.selfName, testCase.peerName)
+
+	var counter fakeIPICMPReplyCounter
+	switch testCase.dataPlane {
+	case fakeIPSharedSocketAssign:
+		backend := newRealFakeIPICMPBackendFor(t, testCase.ipv6)
+		t.Cleanup(func() { _ = backend.Close() })
+		counter = backend
+		attachment := attachFakeIPICMPOrSkip(
+			t, backend, testCase.selfName, self.Attrs().Index, tcInterfaceRole{shared: true}, testCase.priority,
+		)
+		t.Cleanup(func() { _ = attachment.Close() })
+		if testCase.priority == defaultTCPriority && attachment.sharedICMPLink == nil {
+			t.Fatal("the FakeIP ICMP TCX link was not attached")
+		}
+		if testCase.priority != defaultTCPriority && attachment.sharedICMPFilter == nil {
+			t.Fatal("the FakeIP ICMP clsact filter was not attached")
+		}
+	case fakeIPSharedPacketRewrite:
+		backend := newRealFakeIPICMPSharedNetworkBackendFor(t, testCase.ipv6)
+		t.Cleanup(func() { _ = backend.Close() })
+		counter = backend
+		attachment := attachSharedRewriteOrSkip(t, self, backend, testCase.priority)
+		t.Cleanup(func() { _ = attachment.Close() })
+		if testCase.priority == defaultTCPriority && attachment.icmpLink == nil {
+			t.Fatal("the FakeIP ICMP TCX link was not attached")
+		}
+		if testCase.priority != defaultTCPriority && attachment.icmpFilter == nil {
+			t.Fatal("the FakeIP ICMP clsact filter was not attached")
+		}
+	default:
+		t.Fatalf("unknown shared data plane %d", testCase.dataPlane)
+	}
+
+	before := fakeIPICMPReplyCount(t, counter)
+	fakeIPTarget := "198.18.0.1"
+	etherType := uint16(unix.ETH_P_IP)
+	requestType, replyType := uint8(8), uint8(0)
+	parse := parseEthernetIPv4ICMP
+	build := buildEthernetIPv4EchoRequest
+	checkIPChecksum := true
+	if testCase.ipv6 {
+		fakeIPTarget = "fc00::1"
+		etherType = unix.ETH_P_IPV6
+		requestType, replyType = 128, 129
+		parse = parseEthernetIPv6ICMP
+		build = buildEthernetIPv6EchoRequest
+		checkIPChecksum = false
+	}
+	payload := []byte(t.Name())
+	request := build(
+		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
+		net.ParseIP(testCase.client), net.ParseIP(fakeIPTarget),
+		testCase.identifier, testCase.sequence, payload,
+	)
+	socket := openRawLinkLayerSocket(t, peer.Attrs().Index, etherType, 5*time.Second)
+	if _, err := unix.Write(socket, request); err != nil {
+		t.Fatalf("transmit the echo request: %v", err)
+	}
+	reply, replyLength := readFakeIPICMPReplyFrame(t, socket, requestType, parse)
+	assertFakeIPICMPReply(
+		t, reply, replyLength, len(request), replyType,
+		testCase.identifier, testCase.sequence, payload, fakeIPTarget, testCase.client,
+		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, checkIPChecksum,
+	)
+	requireOneFakeIPICMPReply(t, counter, before)
+}
+
+func runFakeIPLocalTCXReplyCase(t *testing.T, ipv6 bool, selfName, peerName string) {
+	t.Helper()
+	enterTestNetworkNamespace(t)
+	backend := newRealFakeIPICMPBackendFor(t, ipv6)
+	t.Cleanup(func() { _ = backend.Close() })
+	var self netlink.Link
+	var ping func(*testing.T, string, time.Duration) error
+	fakeIPTarget := "198.18.0.1"
+	if ipv6 {
+		fakeIPTarget = "fc00::1"
+		self = setupFakeIPICMPPingVethIPv6(t, selfName, peerName, fakeIPTarget)
+		ping = pingFakeIPICMPTargetV6
+	} else {
+		self = setupFakeIPICMPPingVeth(t, selfName, peerName, fakeIPTarget)
+		ping = pingFakeIPICMPTarget
+	}
+	attachment := attachFakeIPICMPOrSkip(
+		t, backend, selfName, self.Attrs().Index, tcInterfaceRole{local: true}, defaultTCPriority,
+	)
+	t.Cleanup(func() { _ = attachment.Close() })
+	if attachment.localICMPLink == nil {
+		t.Fatal("the FakeIP ICMP TCX link was not attached")
+	}
+	if err := ping(t, fakeIPTarget, 5*time.Second); err != nil {
+		t.Fatalf("read a reply: %v", err)
 	}
 }

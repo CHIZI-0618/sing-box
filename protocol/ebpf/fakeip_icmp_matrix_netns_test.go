@@ -298,44 +298,10 @@ func TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaClsact(t *testing.T) {
 // TestFakeIPICMPSharedReplyAnswersARealClientPing's IPv6 counterpart for
 // shared.data_plane: socket_assign, forced onto clsact the same way.
 func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPing(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPBackendWithIPv6(t)
-	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore := fakeIPICMPReplyCount(t, backend)
-
-	self, peer := createTestVethPair(t, "sbicmp6w0", "sbicmp6w1")
-
-	const priority = 2 // force clsact; TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX covers TCX.
-	attachment := attachFakeIPICMPOrSkip(t, backend, "sbicmp6w0", self.Attrs().Index, tcInterfaceRole{shared: true}, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.sharedICMPFilter == nil {
-		t.Fatal("the fakeip_icmp shared clsact filter was not attached alongside the ordinary one")
-	}
-
-	const fakeIPTarget = "fc00::1"
-	const clientIP = "fd00:250::5"
-	const identifier = 0x6321
-	const sequence = 4
-	payload := []byte("fakeip-icmp-shared-reply-v6-test-payload")
-
-	requestFrame := buildEthernetIPv6EchoRequest(
-		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
-		net.ParseIP(clientIP), net.ParseIP(fakeIPTarget),
-		identifier, sequence, payload,
-	)
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
-		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
-	}
-
-	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 128, parseEthernetIPv6ICMP)
-	assertFakeIPICMPReply(
-		t, reply, replyLength, len(requestFrame), 129,
-		identifier, sequence, payload, fakeIPTarget, clientIP,
-		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
-	)
-
-	requireOneFakeIPICMPReply(t, backend, repliesBefore)
+	runFakeIPSharedReplyCase(t, fakeIPSharedReplyCase{
+		dataPlane: fakeIPSharedSocketAssign, ipv6: true, priority: 2,
+		selfName: "sbicmp6w0", peerName: "sbicmp6w1", client: "fd00:250::5", identifier: 0x6321, sequence: 4,
+	})
 }
 
 // TestFakeIPICMPSharedReplyAnswersARealClientPingViaTCX is
@@ -344,135 +310,30 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPing(t *testing.T) {
 // IPv4 coverage the same way TestFakeIPICMPLocalReplyAnswersARealPingViaTCX
 // completes the local role's. Skips (does not fail) on a kernel without TCX.
 func TestFakeIPICMPSharedReplyAnswersARealClientPingViaTCX(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPBackend(t)
-	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore := fakeIPICMPReplyCount(t, backend)
-
-	self, peer := createTestVethPair(t, "sbicmpxw0", "sbicmpxw1")
-
-	const priority = 1 // default: TCX is attempted.
-	attachment := attachFakeIPICMPOrSkip(t, backend, "sbicmpxw0", self.Attrs().Index, tcInterfaceRole{shared: true}, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.sharedICMPLink == nil {
-		t.Fatal("the fakeip_icmp TCX link was not attached alongside the ordinary one")
-	}
-
-	const fakeIPTarget = "198.18.0.1"
-	const clientIP = "10.250.0.8"
-	const identifier = 0x7654
-	const sequence = 5
-	payload := []byte("fakeip-icmp-shared-reply-tcx-test-payload")
-
-	requestFrame := buildEthernetIPv4EchoRequest(
-		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
-		net.ParseIP(clientIP), net.ParseIP(fakeIPTarget),
-		identifier, sequence, payload,
-	)
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 5*time.Second)
-	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
-		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
-	}
-
-	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 8, parseEthernetIPv4ICMP)
-	assertFakeIPICMPReply(
-		t, reply, replyLength, len(requestFrame), 0,
-		identifier, sequence, payload, fakeIPTarget, clientIP,
-		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, true,
-	)
-
-	requireOneFakeIPICMPReply(t, backend, repliesBefore)
+	runFakeIPSharedReplyCase(t, fakeIPSharedReplyCase{
+		dataPlane: fakeIPSharedSocketAssign, priority: 1,
+		selfName: "sbicmpxw0", peerName: "sbicmpxw1", client: "10.250.0.8", identifier: 0x7654, sequence: 5,
+	})
 }
 
 // TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX combines the
 // previous two: shared.data_plane: socket_assign, IPv6, TCX -- the last of
 // this data plane's four combinations. Skips on a kernel without TCX.
 func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPBackendWithIPv6(t)
-	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore := fakeIPICMPReplyCount(t, backend)
-
-	self, peer := createTestVethPair(t, "sbicmp6x0", "sbicmp6x1")
-
-	const priority = 1
-	attachment := attachFakeIPICMPOrSkip(t, backend, "sbicmp6x0", self.Attrs().Index, tcInterfaceRole{shared: true}, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.sharedICMPLink == nil {
-		t.Fatal("the fakeip_icmp TCX link was not attached alongside the ordinary one")
-	}
-
-	const fakeIPTarget = "fc00::1"
-	const clientIP = "fd00:250::6"
-	const identifier = 0x8765
-	const sequence = 6
-	payload := []byte("fakeip-icmp-shared-reply-v6-tcx-test-payload")
-
-	requestFrame := buildEthernetIPv6EchoRequest(
-		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
-		net.ParseIP(clientIP), net.ParseIP(fakeIPTarget),
-		identifier, sequence, payload,
-	)
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
-		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
-	}
-
-	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 128, parseEthernetIPv6ICMP)
-	assertFakeIPICMPReply(
-		t, reply, replyLength, len(requestFrame), 129,
-		identifier, sequence, payload, fakeIPTarget, clientIP,
-		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
-	)
-
-	requireOneFakeIPICMPReply(t, backend, repliesBefore)
+	runFakeIPSharedReplyCase(t, fakeIPSharedReplyCase{
+		dataPlane: fakeIPSharedSocketAssign, ipv6: true, priority: 1,
+		selfName: "sbicmp6x0", peerName: "sbicmp6x1", client: "fd00:250::6", identifier: 0x8765, sequence: 6,
+	})
 }
 
 // TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing is
 // TestFakeIPICMPSharedRewriteAnswersARealClientPing's IPv6 counterpart for
 // shared.data_plane: packet_rewrite, forced onto clsact the same way.
 func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPSharedNetworkBackendWithIPv6(t)
-	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore := fakeIPICMPReplyCount(t, backend)
-
-	self, peer := createTestVethPair(t, "sbrw6w0", "sbrw6w1")
-
-	const priority = 2 // force clsact; TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX covers TCX.
-	attachment, err := attachSharedRewriteInterface(self, backend, priority)
-	if err != nil {
-		t.Fatalf("attach the shared packet-rewrite interface: %v", err)
-	}
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.icmpFilter == nil {
-		t.Fatal("the fakeip_icmp shared filter was not attached alongside packet_rewrite's own ingress/egress filters")
-	}
-
-	const fakeIPTarget = "fc00::1"
-	const clientIP = "fd00:250::7"
-	const identifier = 0x9876
-	const sequence = 8
-	payload := []byte("fakeip-icmp-shared-rewrite-v6-test-payload")
-
-	requestFrame := buildEthernetIPv6EchoRequest(
-		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
-		net.ParseIP(clientIP), net.ParseIP(fakeIPTarget),
-		identifier, sequence, payload,
-	)
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
-		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
-	}
-
-	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 128, parseEthernetIPv6ICMP)
-	assertFakeIPICMPReply(
-		t, reply, replyLength, len(requestFrame), 129,
-		identifier, sequence, payload, fakeIPTarget, clientIP,
-		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
-	)
-
-	requireOneFakeIPICMPReply(t, backend, repliesBefore)
+	runFakeIPSharedReplyCase(t, fakeIPSharedReplyCase{
+		dataPlane: fakeIPSharedPacketRewrite, ipv6: true, priority: 2,
+		selfName: "sbrw6w0", peerName: "sbrw6w1", client: "fd00:250::7", identifier: 0x9876, sequence: 8,
+	})
 }
 
 // TestFakeIPICMPSharedRewriteAnswersARealClientPingViaTCX is
@@ -483,86 +344,18 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing(t *testing.T) {
 // attaching correctly, not to a real ICMP round trip over it -- this test
 // is that missing proof. Skips (does not fail) on a kernel without TCX.
 func TestFakeIPICMPSharedRewriteAnswersARealClientPingViaTCX(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPSharedNetworkBackend(t)
-	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore := fakeIPICMPReplyCount(t, backend)
-
-	self, peer := createTestVethPair(t, "sbrwxw0", "sbrwxw1")
-
-	const priority = 1 // default: TCX is attempted.
-	attachment := attachSharedRewriteOrSkip(t, self, backend, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.icmpLink == nil {
-		t.Fatal("the fakeip_icmp TCX link was not attached alongside packet_rewrite's own ingress/egress links")
-	}
-
-	const fakeIPTarget = "198.18.0.1"
-	const clientIP = "10.250.0.9"
-	const identifier = 0xa987
-	const sequence = 9
-	payload := []byte("fakeip-icmp-shared-rewrite-tcx-test-payload")
-
-	requestFrame := buildEthernetIPv4EchoRequest(
-		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
-		net.ParseIP(clientIP), net.ParseIP(fakeIPTarget),
-		identifier, sequence, payload,
-	)
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 5*time.Second)
-	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
-		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
-	}
-
-	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 8, parseEthernetIPv4ICMP)
-	assertFakeIPICMPReply(
-		t, reply, replyLength, len(requestFrame), 0,
-		identifier, sequence, payload, fakeIPTarget, clientIP,
-		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, true,
-	)
-
-	requireOneFakeIPICMPReply(t, backend, repliesBefore)
+	runFakeIPSharedReplyCase(t, fakeIPSharedReplyCase{
+		dataPlane: fakeIPSharedPacketRewrite, priority: 1,
+		selfName: "sbrwxw0", peerName: "sbrwxw1", client: "10.250.0.9", identifier: 0xa987, sequence: 9,
+	})
 }
 
 // TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX is the last
 // cell in the matrix: shared.data_plane: packet_rewrite, IPv6, TCX. Skips
 // on a kernel without TCX.
 func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
-	enterTestNetworkNamespace(t)
-	backend := newRealFakeIPICMPSharedNetworkBackendWithIPv6(t)
-	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore := fakeIPICMPReplyCount(t, backend)
-
-	self, peer := createTestVethPair(t, "sbrw6x0", "sbrw6x1")
-
-	const priority = 1
-	attachment := attachSharedRewriteOrSkip(t, self, backend, priority)
-	t.Cleanup(func() { _ = attachment.Close() })
-	if attachment.icmpLink == nil {
-		t.Fatal("the fakeip_icmp TCX link was not attached alongside packet_rewrite's own ingress/egress links")
-	}
-
-	const fakeIPTarget = "fc00::1"
-	const clientIP = "fd00:250::8"
-	const identifier = 0xba98
-	const sequence = 10
-	payload := []byte("fakeip-icmp-shared-rewrite-v6-tcx-test-payload")
-
-	requestFrame := buildEthernetIPv6EchoRequest(
-		self.Attrs().HardwareAddr, peer.Attrs().HardwareAddr,
-		net.ParseIP(clientIP), net.ParseIP(fakeIPTarget),
-		identifier, sequence, payload,
-	)
-	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
-		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
-	}
-
-	reply, replyLength := readFakeIPICMPReplyFrame(t, peerSocket, 128, parseEthernetIPv6ICMP)
-	assertFakeIPICMPReply(
-		t, reply, replyLength, len(requestFrame), 129,
-		identifier, sequence, payload, fakeIPTarget, clientIP,
-		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
-	)
-
-	requireOneFakeIPICMPReply(t, backend, repliesBefore)
+	runFakeIPSharedReplyCase(t, fakeIPSharedReplyCase{
+		dataPlane: fakeIPSharedPacketRewrite, ipv6: true, priority: 1,
+		selfName: "sbrw6x0", peerName: "sbrw6x1", client: "fd00:250::8", identifier: 0xba98, sequence: 10,
+	})
 }
