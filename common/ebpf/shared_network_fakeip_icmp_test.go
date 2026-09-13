@@ -35,10 +35,8 @@ func newTestSharedNetworkConfig(policy CompiledPolicy, fakeIPICMPReply bool) Sha
 	}
 }
 
-// TestPrepareSharedNetworkLoadsFakeIPICMPWhenRequested is item 10's Go-side
-// proof that shared.data_plane: packet_rewrite can host the fakeip_icmp
-// responder on its own, independent of TCBackend -- the whole point of
-// FakeIPICMPBackend existing as a standalone type (fakeip_icmp_backend.go).
+// TestPrepareSharedNetworkLoadsFakeIPICMPWhenRequested covers the standalone
+// FakeIP responder used by packet-rewrite.
 func TestPrepareSharedNetworkLoadsFakeIPICMPWhenRequested(t *testing.T) {
 	policy := newTestSharedNetworkFakeIPPolicy(t, "198.18.0.0/15")
 	backend, err := PrepareSharedNetwork(nil, newTestSharedNetworkConfig(policy, true))

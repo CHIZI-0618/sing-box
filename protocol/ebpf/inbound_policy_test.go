@@ -97,12 +97,8 @@ func bypassPolicyFor(t *testing.T, prefixes ...netip.Prefix) commonEBPF.BypassCI
 	return policy
 }
 
-// TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails is the
-// core proof for item 6: a real TC backend takes the new policy first and
-// succeeds, a permanently-unusable cgroup backend (its zero value -- never
-// loaded, so every call reports the backend as not usable) then fails, and
-// the already-applied TC backend must end up back on the previous policy
-// rather than left on the new one nothing else agrees with.
+// TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails verifies
+// that a later backend failure restores an already-updated TC backend.
 //
 // TC's own state is not directly observable from outside common/ebpf, so
 // this checks it indirectly: calling UpdateCompiledBypassCIDR with the
@@ -110,7 +106,7 @@ func bypassPolicyFor(t *testing.T, prefixes ...netip.Prefix) commonEBPF.BypassCI
 // is already there -- which would be false (changed=true, a real diff) had
 // the revert not actually happened.
 //
-// It also proves the version bookkeeping on this same successful-revert
+// It also covers version bookkeeping on this successful-revert
 // path: bypassRuleSetPolicyVersion is committed only alongside
 // bypassRuleSetPolicy, so a fully-reverted failed attempt leaves both at
 // their pre-attempt values -- it does not advance just because an attempt

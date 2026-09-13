@@ -9,14 +9,8 @@ import (
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
 
-// TestTCLocalFilterHealthCheckDetectsAndRepairsExternalDeletion proves the
-// same clearStaleAttachments repair the fakeip_icmp health-check tests
-// exercise also covers the ordinary local egress filter itself, not only
-// the fakeip_icmp filter attached alongside it: updateTCInterfaceAttachmentWithOps
-// uses the identical "attachment.localFilter == nil" gate for both, and an
-// independent review specifically flagged that a fix scoped to only the
-// fakeip_icmp field would leave this path -- the one every TC-role eBPF
-// inbound actually depends on, fakeip_icmp or not -- unverified.
+// TestTCLocalFilterHealthCheckDetectsAndRepairsExternalDeletion covers the
+// ordinary local filter independently of the optional FakeIP ICMP filter.
 func TestTCLocalFilterHealthCheckDetectsAndRepairsExternalDeletion(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newLoopbackTestTCBackend(t)

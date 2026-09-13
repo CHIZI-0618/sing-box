@@ -96,14 +96,8 @@ func TestSharedRewriteClsactReplacementPreservesFakeIPICMPFilter(t *testing.T) {
 	}
 }
 
-// TestFakeIPICMPSharedRewriteAnswersARealClientPing is item 10's real-packet
-// proof for shared.data_plane: packet_rewrite, structurally identical to
-// TestFakeIPICMPSharedReplyAnswersARealClientPing (shared socket_assign) --
-// same raw-frame technique, same helpers (buildEthernetIPv4EchoRequest,
-// parseEthernetIPv4ICMP, openRawLinkLayerSocket), because the responder
-// being verified is the exact same native program in both cases. What is
-// new here is the attachment path: attachSharedRewriteInterface (packet
-// rewrite's own attach function) rather than attachTCInterfaceWithLock.
+// TestFakeIPICMPSharedRewriteAnswersARealClientPing verifies the
+// packet-rewrite attachment with a real link-layer request and reply.
 func TestFakeIPICMPSharedRewriteAnswersARealClientPing(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPSharedNetworkBackend(t)
@@ -151,11 +145,8 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPing(t *testing.T) {
 	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
 
-// TestFakeIPICMPSharedRewriteIgnoresNonICMPToFakeIPTarget is the coexistence
-// proof item 10 asks for: a UDP packet to the exact same FakeIP target the
-// previous test successfully pinged must not be answered by fakeip_icmp --
-// the responder discriminates by IP protocol, not just destination address,
-// so packet_rewrite's own TCP/UDP handling is never shadowed by it.
+// TestFakeIPICMPSharedRewriteIgnoresNonICMPToFakeIPTarget verifies that the
+// responder does not shadow packet-rewrite TCP/UDP handling.
 func TestFakeIPICMPSharedRewriteIgnoresNonICMPToFakeIPTarget(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPSharedNetworkBackend(t)
