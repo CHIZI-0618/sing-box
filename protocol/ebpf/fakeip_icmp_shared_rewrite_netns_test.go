@@ -79,6 +79,55 @@ func newRealFakeIPICMPSharedNetworkBackend(t *testing.T) *commonEBPF.SharedNetwo
 	return backend
 }
 
+func TestSharedRewriteClsactReplacementPreservesFakeIPICMPFilter(t *testing.T) {
+	enterTestNetworkNamespace(t)
+	backend := newRealFakeIPICMPSharedNetworkBackend(t)
+	t.Cleanup(func() { _ = backend.Close() })
+
+	attributes := netlink.NewLinkAttrs()
+	attributes.Name = "sbrwreplace0"
+	veth := &netlink.Veth{LinkAttrs: attributes, PeerName: "sbrwreplace1"}
+	if err := netlink.LinkAdd(veth); err != nil {
+		t.Fatalf("create veth pair: %v", err)
+	}
+	device, err := netlink.LinkByName(attributes.Name)
+	if err != nil {
+		t.Fatalf("find veth: %v", err)
+	}
+	if err = netlink.LinkSetUp(device); err != nil {
+		t.Fatalf("bring up veth: %v", err)
+	}
+
+	const priority = 2 // force clsact so filter identity, rather than TCX link identity, is exercised.
+	current, err := attachSharedRewriteInterface(device, backend, priority)
+	if err != nil {
+		t.Fatalf("attach current shared rewrite programs: %v", err)
+	}
+	t.Cleanup(func() { _ = current.Close() })
+
+	candidate, err := attachSharedRewriteInterfaceWithOptions(
+		device,
+		backend,
+		priority,
+		sharedRewriteAttachmentOptions{skipLock: true, temporary: true},
+	)
+	if err != nil {
+		t.Fatalf("stage replacement shared rewrite programs: %v", err)
+	}
+	t.Cleanup(func() { _ = candidate.Close() })
+
+	if err = current.Close(); err != nil {
+		t.Fatalf("retire current shared rewrite programs: %v", err)
+	}
+	healthy, err := candidate.healthy(device, priority, true)
+	if err != nil {
+		t.Fatalf("inspect replacement shared rewrite programs: %v", err)
+	}
+	if !healthy {
+		t.Fatal("retiring the old clsact attachment removed a staged FakeIP ICMP filter")
+	}
+}
+
 // TestFakeIPICMPSharedRewriteAnswersARealClientPing is item 10's real-packet
 // proof for shared.data_plane: packet_rewrite, structurally identical to
 // TestFakeIPICMPSharedReplyAnswersARealClientPing (shared socket_assign) --

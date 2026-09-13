@@ -75,8 +75,10 @@ type sharedRewriteAttachment struct {
 	egressFilter    *netlink.BpfFilter
 	ingressName     string
 	egressName      string
+	icmpName        string
 	ingressHandle   uint16
 	egressHandle    uint16
+	icmpHandle      uint16
 	ingressLink     link.Link
 	egressLink      link.Link
 	restoreLocalnet bool
@@ -407,8 +409,10 @@ func attachSharedRewriteInterfaceWithOptions(
 	}
 	attachment.ingressName = "sb_share_in"
 	attachment.egressName = "sb_share_out"
+	attachment.icmpName = "sb_icmp_share"
 	attachment.ingressHandle = sharedRewriteIngressFilterHandle
 	attachment.egressHandle = sharedRewriteEgressFilterHandle
+	attachment.icmpHandle = sharedRewriteICMPFilterHandle
 	if options.temporary {
 		sequence := sharedRewriteAttachmentSequence.Add(1) & 0x0fff
 		if sequence == 0 {
@@ -417,8 +421,10 @@ func attachSharedRewriteInterfaceWithOptions(
 		suffix := strconv.FormatUint(uint64(sequence), 16)
 		attachment.ingressName = "sbi" + suffix
 		attachment.egressName = "sbo" + suffix
+		attachment.icmpName = "sbc" + suffix
 		attachment.ingressHandle += uint16(sequence)
 		attachment.egressHandle += uint16(sequence)
+		attachment.icmpHandle += uint16(sequence)
 	}
 	attachment.restoreLocalnet, err = enableSharedRewriteLocalnet(name)
 	if err != nil {
@@ -471,8 +477,8 @@ func attachSharedRewriteInterfaceWithOptions(
 			device,
 			netlink.HANDLE_MIN_INGRESS,
 			backend.FakeIPICMPSharedReplyProgramFD(commonEBPF.TCLinkFramingEthernet),
-			"sb_icmp_share",
-			sharedRewriteICMPFilterHandle,
+			attachment.icmpName,
+			attachment.icmpHandle,
 			priority,
 		)
 		if err != nil {
@@ -503,7 +509,7 @@ func (a *sharedRewriteAttachment) healthy(device netlink.Link, priority uint16, 
 	if err != nil || !egress || !fakeIPICMPEnabled {
 		return egress, err
 	}
-	return tcFilterAttached(device, netlink.HANDLE_MIN_INGRESS, "sb_icmp_share", sharedRewriteICMPFilterHandle, priority)
+	return tcFilterAttached(device, netlink.HANDLE_MIN_INGRESS, a.icmpName, a.icmpHandle, priority)
 }
 
 func (a *sharedRewriteAttachment) closeLinks() error {
