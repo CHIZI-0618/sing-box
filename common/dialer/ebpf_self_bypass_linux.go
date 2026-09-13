@@ -52,12 +52,15 @@ func PrepareEBPFSelfBypass(networkManager adapter.NetworkManager, inbounds []opt
 	return nil
 }
 
-func appendEBPFSelfBypass(networkManager adapter.NetworkManager, dialerControl, listenerControl control.Func) (control.Func, control.Func) {
+// AppendEBPFSelfBypass appends the eBPF self-bypass registration callback to a
+// socket control chain. It is also used by integrations that create sockets
+// outside DefaultDialer, such as endpoint-specific network stacks.
+func AppendEBPFSelfBypass(networkManager adapter.NetworkManager, controlFunc control.Func) control.Func {
 	provider, loaded := networkManager.(interface {
 		EBPFSelfBypass() *commonEBPF.SelfBypass
 	})
 	if !loaded {
-		return dialerControl, listenerControl
+		return controlFunc
 	}
 	selfBypassFunc := func(_ string, _ string, rawConn syscall.RawConn) error {
 		tracker := provider.EBPFSelfBypass()
@@ -66,5 +69,9 @@ func appendEBPFSelfBypass(networkManager adapter.NetworkManager, dialerControl, 
 		}
 		return tracker.RegisterSocket(rawConn)
 	}
-	return control.Append(dialerControl, selfBypassFunc), control.Append(listenerControl, selfBypassFunc)
+	return control.Append(controlFunc, selfBypassFunc)
+}
+
+func appendEBPFSelfBypass(networkManager adapter.NetworkManager, dialerControl, listenerControl control.Func) (control.Func, control.Func) {
+	return AppendEBPFSelfBypass(networkManager, dialerControl), AppendEBPFSelfBypass(networkManager, listenerControl)
 }
