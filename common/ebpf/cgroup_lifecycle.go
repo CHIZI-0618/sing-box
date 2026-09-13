@@ -47,3 +47,20 @@ func (b *CgroupBackend) IsClosed() bool {
 	defer b.access.RUnlock()
 	return b.runtime == nil
 }
+
+// RequiresRebuild reports whether a previous operation's internal rollback
+// itself failed, leaving this backend's maps and control flags no longer
+// agreeing with each other and with no known-good state left to compute the
+// next incremental update from -- the health.invalidate call at that
+// operation's own site already disabled the data path when this happened.
+// Every operation on it fails from then on, so a caller retrying one can
+// stop instead of repeating work that cannot succeed. Mirrors
+// SharedNetworkBackend.RequiresRebuild / TCBackend.RequiresRebuild.
+func (b *CgroupBackend) RequiresRebuild() bool {
+	if b == nil {
+		return false
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.health.rebuildRequired != nil
+}

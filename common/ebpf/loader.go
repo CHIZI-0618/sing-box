@@ -26,6 +26,8 @@ var loadCgroupStorage = BPFGen.LoadCgroupStorage
 
 var loadSharedNetwork = BPFGen.LoadSharedNetwork
 
+var loadFakeIPICMP = BPFGen.LoadFakeIPICMP
+
 func attachProgramRaw(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {
 	if err := link.RawAttachProgram(link.RawAttachProgramOptions{Target: target, Program: program, Attach: attachType, Flags: 2}); err == nil {
 		return nil

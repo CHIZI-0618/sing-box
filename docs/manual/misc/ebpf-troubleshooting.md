@@ -30,6 +30,19 @@ exits non-zero when a required capability is missing or cannot be verified.
 For a configuration that enables both paths, pass both data-plane flags in one
 command. Run probes with the same privileges as the service.
 
+7. If a Clash API server is configured, the running-instance report from
+   `GET /ebpf` (see [eBPF configuration](/configuration/inbound/ebpf/#diagnostics)):
+
+```sh
+curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
+```
+
+This is distinct from item 6's capability probe: it reports what the running
+inbound is actually doing (attachments, pending recovery, recent errors,
+counters), not what the kernel could theoretically support. Include it
+whenever the report concerns whether interception is actually happening,
+rather than whether the kernel supports it.
+
 Useful platform information:
 
 ```sh
@@ -62,9 +75,12 @@ log that stops before the fault.
 
 ## Logs and runtime state
 
-At Debug log level, a successful startup emits an `eBPF cgroup active` or
-`eBPF TC active` summary containing the selected data planes and their effective
-runtime paths. TC summaries also include the default interface, attachments,
+A successful startup always emits a brief `eBPF inbound started` summary at
+the log level normally shown by default: enabled paths, each attachment's
+actual interface and mechanism, any path still waiting for an interface, and
+what `fakeip_icmp` actually covers. At Debug log level, startup additionally
+emits an `eBPF cgroup active` or `eBPF TC active` summary containing the
+selected data planes and their effective runtime paths. TC summaries also include the default interface, attachments,
 internal listeners, routing state, and delivery interface when applicable. Each
 attachment includes its local/shared role and framing. A network event emits a
 Debug entry only when attachments or managed network state are changed; repair

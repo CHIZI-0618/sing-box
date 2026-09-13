@@ -183,7 +183,19 @@ func checkRedirectRouteConflict(loopbackIndex int, family int, prefix netip.Pref
 				" conflicts with interface address ", addressPrefix)
 		}
 	}
-	routes, err := netlink.RouteList(nil, family)
+	// This has to see every table, not just the main one: a route in some
+	// other table (reachable through an ip rule this process never
+	// installed) is exactly as real a conflict for the internal redirect
+	// address as one in the main table would be. netlink.RouteList(nil,
+	// family) looks like it would show that, but two of its default
+	// behaviors work against it here: its filter mask always includes
+	// RT_FILTER_OIF even without a link argument, comparing against a zero
+	// LinkIndex and silently returning next to nothing; and even past that,
+	// its default scope is the main table only. RT_FILTER_TABLE with Table:
+	// RT_TABLE_UNSPEC asks for every table instead, and a non-nil empty
+	// filter avoids a nil-pointer panic routeHandle takes an actual nil
+	// filter into.
+	routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_UNSPEC}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return E.Cause(err, "list routes for eBPF redirect address")
 	}

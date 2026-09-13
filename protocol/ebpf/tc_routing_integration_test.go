@@ -33,10 +33,19 @@ func TestTCPolicyRoutingIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
-		expectedRoutes := tcPolicyRoutes(loopback.Attrs().Index, family)
+		// routing.{table,mark,priority} are what allocateTCPolicyIdentifiers
+		// actually picked for this run, not necessarily the preferred
+		// defaults (tcPolicyRoutingTable/commonEBPF.DefaultTCRoutingMark):
+		// the mark allocator in particular starts from its own highest bit
+		// (30) and only reaches DefaultTCRoutingMark's bit (29) if 30 is
+		// already taken by something else, which on a clean host it never
+		// is. Asserting against the fixed defaults instead of the values
+		// startTCPolicyRouting actually returned is what let this test pass
+		// while checking properties of a rule that was never installed.
+		expectedRoutes := tcPolicyRoutesForTable(loopback.Attrs().Index, family, routing.table)
 		routes, listErr := netlink.RouteListFiltered(
 			family,
-			&netlink.Route{Table: tcPolicyRoutingTable},
+			&netlink.Route{Table: routing.table},
 			netlink.RT_FILTER_TABLE,
 		)
 		if listErr != nil {
@@ -50,13 +59,13 @@ func TestTCPolicyRoutingIntegration(t *testing.T) {
 				t.Fatalf("unexpected route for family %d: %+v", family, route)
 			}
 		}
-		rules, listErr := netlink.RuleList(family)
+		entries, listErr := listTCPolicyRules(family, *tcPolicyRuleFor(family, routing.mark, routing.table, routing.priority))
 		if listErr != nil {
 			t.Fatal(listErr)
 		}
 		matched := false
-		for _, rule := range rules {
-			if matchesTCPolicyRule(rule, *tcPolicyRule(family)) {
+		for _, entry := range entries {
+			if entry.owned {
 				matched = true
 				break
 			}
@@ -92,7 +101,7 @@ func TestTCPolicyRoutingIntegration(t *testing.T) {
 	for _, family := range []int{unix.AF_INET, unix.AF_INET6} {
 		routes, listErr := netlink.RouteListFiltered(
 			family,
-			&netlink.Route{Table: tcPolicyRoutingTable},
+			&netlink.Route{Table: routing.table},
 			netlink.RT_FILTER_TABLE,
 		)
 		if listErr != nil {

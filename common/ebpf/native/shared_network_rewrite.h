@@ -32,19 +32,21 @@ INLINE int rewrite_ipv4(
 		? __builtin_offsetof(struct tcp_header_min, checksum)
 		: __builtin_offsetof(struct udp_header_min, checksum));
 	__s64 address_diff = csum_diff(&old_address, 4U, &new_address, 4U, 0U);
-	if (address_diff < 0) return TC_ACT_SHOT;
+	if (address_diff < 0) { record_rewrite_failure(); return TC_ACT_SHOT; }
 	if (l3_csum_replace(
 			skb,
             l3_offset + __builtin_offsetof(struct ipv4_header, checksum),
             old_address,
             new_address,
 			4U) != 0) {
+		record_rewrite_failure();
 		return TC_ACT_SHOT;
 	}
 	if (l4_csum_replace(skb, checksum_offset, 0U, (__u64)address_diff, pseudo_header_checksum_flags(protocol, 0U)) != 0 ||
 		l4_csum_replace(skb, checksum_offset, old_port, new_port, checksum_flags(protocol, 2U)) != 0 ||
         skb_store_bytes(skb, address_offset, &new_address, sizeof(new_address), 0U) != 0 ||
         skb_store_bytes(skb, port_offset, &new_port, sizeof(new_port), 0U) != 0) {
+        record_rewrite_failure();
         return TC_ACT_SHOT;
     }
     return TC_ACT_OK;
@@ -69,7 +71,7 @@ INLINE int rewrite_ipv6(
         (const __be32 *)new_address,
         16U,
         0U);
-    if (address_diff < 0) return TC_ACT_SHOT;
+    if (address_diff < 0) { record_rewrite_failure(); return TC_ACT_SHOT; }
     __u32 address_offset = l3_offset + (source
         ? __builtin_offsetof(struct ipv6_header, source)
         : __builtin_offsetof(struct ipv6_header, destination));
@@ -78,6 +80,7 @@ INLINE int rewrite_ipv6(
         l4_csum_replace(skb, checksum_offset, old_port, new_port, checksum_flags(protocol, 2U)) != 0 ||
         skb_store_bytes(skb, address_offset, new_address, 16U, 0U) != 0 ||
         skb_store_bytes(skb, port_offset, &new_port, sizeof(new_port), 0U) != 0) {
+        record_rewrite_failure();
         return TC_ACT_SHOT;
     }
     return TC_ACT_OK;

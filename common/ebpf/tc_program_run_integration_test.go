@@ -104,8 +104,18 @@ func TestTCIPv6PathIsolationIntegration(t *testing.T) {
 		wantAction uint32
 	}{
 		{
+			// EnableShared is deliberately the only role enabled: with it
+			// off, tcProgramSharedIngressEthernet is never loaded at all
+			// (see prepareTC's config.EnableShared gate in tc.go), and
+			// backend.runtime.programs[tcProgramSharedIngressEthernet]
+			// stays nil -- indexing it below would still compile, but
+			// runTCProgram's Program.Run on a nil *ebpf.Program panics
+			// rather than failing the test with a clear message. This case
+			// previously enabled Local instead of Shared by mistake, which
+			// is exactly that nil-program panic; the fix is the config, not
+			// runTCProgram or the loader.
 			"shared IPv6 disabled on shared program",
-			TCConfig{EnableLocal: true, EnableIPv4: true, EnableLocalIPv6: true, EnableTCP: true},
+			TCConfig{EnableShared: true, EnableIPv4: true, EnableTCP: true},
 			tcProgramSharedIngressEthernet,
 			testTCActUnspec,
 		},
@@ -122,8 +132,12 @@ func TestTCIPv6PathIsolationIntegration(t *testing.T) {
 			testTCActShot,
 		},
 		{
+			// Same fix as the first case, mirrored: tcProgramDeliveryIngress
+			// is only loaded when EnableLocal is set (it is part of the
+			// local TC path's veth infrastructure), so this needs Local
+			// enabled with its IPv6 specifically off, not Shared.
 			"local IPv6 disabled on delivery program",
-			TCConfig{EnableShared: true, EnableIPv4: true, EnableSharedIPv6: true, EnableTCP: true},
+			TCConfig{EnableLocal: true, EnableIPv4: true, EnableTCP: true},
 			tcProgramDeliveryIngress,
 			testTCActUnspec,
 		},

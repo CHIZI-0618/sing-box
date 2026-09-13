@@ -14,7 +14,7 @@ GO_GENERATE_HOST_ARCH := $(shell go env GOHOSTARCH)
 
 GENERATED_DIR := internal/bpfgen
 GENERATED := $(addprefix $(GENERATED_DIR)/,tc_bpfel.go tc_bpfel.o tc_bpfeb.go tc_bpfeb.o cgroup_bpfel.go cgroup_bpfel.o cgroup_bpfeb.go cgroup_bpfeb.o cgroup_coarse_bpfel.go cgroup_coarse_bpfel.o cgroup_coarse_bpfeb.go cgroup_coarse_bpfeb.o cgroup_storage_bpfel.go cgroup_storage_bpfel.o cgroup_storage_bpfeb.go cgroup_storage_bpfeb.o \
-	shared_network_bpfel.go shared_network_bpfel.o shared_network_bpfeb.go shared_network_bpfeb.o manifest.txt)
+	shared_network_bpfel.go shared_network_bpfel.o shared_network_bpfeb.go shared_network_bpfeb.o fakeip_icmp_bpfel.go fakeip_icmp_bpfel.o fakeip_icmp_bpfeb.go fakeip_icmp_bpfeb.o manifest.txt)
 NATIVE_SOURCES := $(sort $(wildcard native/*.c native/*.h))
 
 .PHONY: generate check clean
@@ -54,7 +54,14 @@ check:
 	cp $(GENERATED) "$$temporary/$(GENERATED_DIR)"; \
 	$(MAKE) generate; \
 	for file in $(GENERATED); do \
-		cmp -s "$$file" "$$temporary/$$file" || { echo "$$file is stale; run 'make generate' in common/ebpf" >&2; exit 1; }; \
+		cmp -s "$$file" "$$temporary/$$file" || { \
+			echo "$$file is stale; run 'make generate' in common/ebpf" >&2; \
+			case "$$file" in \
+				*.txt) diff -u "$$temporary/$$file" "$$file" >&2 || true ;; \
+				*) cmp "$$temporary/$$file" "$$file" >&2 || true ;; \
+			esac; \
+			exit 1; \
+		}; \
 	done
 
 clean:

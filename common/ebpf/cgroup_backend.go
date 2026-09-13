@@ -187,12 +187,9 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 	if err != nil {
 		return nil, eBPFOperationError("open cgroup", err)
 	}
-	if err = unix.Flock(int(cgroupFile.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err = lockCgroupFile(cgroupFile); err != nil {
 		_ = cgroupFile.Close()
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			err = unix.EBUSY
-		}
-		return nil, eBPFOperationError("lock cgroup", err)
+		return nil, err
 	}
 	if err = detachOwnedCgroupPrograms(int(cgroupFile.Fd())); err != nil {
 		_ = cgroupFile.Close()

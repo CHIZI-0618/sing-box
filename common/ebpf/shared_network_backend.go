@@ -76,6 +76,9 @@ type SharedNetworkBackend struct {
 	excludeSourceIPv6   []netip.Prefix
 	includeSourceMAC    []MACAddress
 	excludeSourceMAC    []MACAddress
+	// fakeIPICMP is nil unless SharedNetworkConfig.FakeIPICMPReply was set;
+	// see fakeip_icmp_backend.go and tc_fakeip_icmp.go's TCBackend analog.
+	fakeIPICMP *FakeIPICMPBackend
 }
 
 func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConfig) (*SharedNetworkBackend, error) {
@@ -244,6 +247,15 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		_ = backend.Close()
 		return nil, E.Cause(err, "initialize shared-network control")
 	}
+	if config.FakeIPICMPReply {
+		backend.fakeIPICMP, err = PrepareFakeIPICMP(
+			redirectIPv4.IsValid(), false, redirectIPv6.IsValid(), fakeIPIPv4, fakeIPIPv6,
+		)
+		if err != nil {
+			_ = backend.Close()
+			return nil, err
+		}
+	}
 	return backend, nil
 }
 
@@ -258,7 +270,7 @@ func prepareSharedNetworkRuntime(
 	var err error
 	runtimeState.maps, err = loadObjectMaps(loadSharedNetwork, map[string]mapSpecOverride{
 		"shared_control":             {name: "sb_sh_control", mapType: CiliumEBPF.Array, maxEntries: 1},
-		"shared_stats":               {name: "sb_sh_stats", mapType: CiliumEBPF.PerCPUArray, maxEntries: 1},
+		"shared_stats":               {name: "sb_sh_stats", mapType: CiliumEBPF.PerCPUArray, maxEntries: sharedNetworkStatCount},
 		"shared_flow_by_original":    {name: "sb_sh_orig", mapType: CiliumEBPF.Hash, maxEntries: capacity.Proxy, flags: bpfFlagNoPrealloc},
 		"shared_bypass_flow":         {name: "sb_sh_bypass", mapType: CiliumEBPF.LRUHash, maxEntries: capacity.Bypass},
 		"shared_flow_by_token":       {name: "sb_sh_token", mapType: CiliumEBPF.Hash, maxEntries: capacity.Proxy, flags: bpfFlagNoPrealloc},
@@ -498,6 +510,8 @@ func (b *SharedNetworkBackend) Close() error {
 	_ = b.updateControl()
 	closeErr := closePrograms(b.runtime.programs)
 	closeErr = E.Errors(closeErr, closeMaps(b.runtime.maps))
+	closeErr = E.Errors(closeErr, b.fakeIPICMP.Close())
+	b.fakeIPICMP = nil
 	b.runtime = nil
 	b.hostIPv4 = nil
 	b.hostIPv6 = nil
@@ -517,6 +531,18 @@ func (b *SharedNetworkBackend) Close() error {
 	return closeErr
 }
 
+// RequiresRebuild reports whether a failed policy rollback left this backend
+// unusable. Every operation on it fails from then on, so a caller retrying
+// one can stop instead of repeating work that cannot succeed.
+func (b *SharedNetworkBackend) RequiresRebuild() bool {
+	if b == nil {
+		return false
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.health.rebuildRequired != nil
+}
+
 func (b *SharedNetworkBackend) IsClosed() bool {
 	if b == nil {
 		return true
@@ -524,4 +550,62 @@ func (b *SharedNetworkBackend) IsClosed() bool {
 	b.access.RLock()
 	defer b.access.RUnlock()
 	return b.runtime == nil
+}
+
+// FakeIPICMPEnabled reports whether this backend loaded the fakeip_icmp
+// object (SharedNetworkConfig.FakeIPICMPReply). protocol/ebpf's shared
+// packet-rewrite data plane uses this to decide whether to attach the
+// extra shared reply filter at all.
+func (b *SharedNetworkBackend) FakeIPICMPEnabled() bool {
+	if b == nil {
+		return false
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.fakeIPICMP != nil
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPSharedReplyProgramFD(framing TCLinkFraming) int {
+	if b == nil {
+		return -1
+	}
+	b.access.RLock()
+	backend := b.fakeIPICMP
+	b.access.RUnlock()
+	return backend.SharedReplyProgramFD(framing)
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPSharedReplyProgram(framing TCLinkFraming) *CiliumEBPF.Program {
+	if b == nil {
+		return nil
+	}
+	b.access.RLock()
+	backend := b.fakeIPICMP
+	b.access.RUnlock()
+	return backend.SharedReplyProgram(framing)
+}
+
+func (b *SharedNetworkBackend) fakeIPICMPBackend() *FakeIPICMPBackend {
+	if b == nil {
+		return nil
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	return b.fakeIPICMP
+}
+
+// FakeIPICMPReplyCount, FakeIPICMPPassThroughCount, and
+// FakeIPICMPRewriteFailureCount delegate to the underlying FakeIPICMPBackend's
+// own counters -- see TCBackend's identical trio in tc_fakeip_icmp.go, and
+// FakeIPICMPBackend's own doc comments for what each counts.
+func (b *SharedNetworkBackend) FakeIPICMPReplyCount() (uint64, error) {
+	return b.fakeIPICMPBackend().ReplyCount()
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPPassThroughCount() (uint64, error) {
+	return b.fakeIPICMPBackend().PassThroughCount()
+}
+
+func (b *SharedNetworkBackend) FakeIPICMPRewriteFailureCount() (uint64, error) {
+	return b.fakeIPICMPBackend().RewriteFailureCount()
 }

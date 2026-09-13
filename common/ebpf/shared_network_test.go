@@ -202,3 +202,40 @@ func TestCompileSharedHostPrefixes(t *testing.T) {
 		t.Fatalf("unexpected IPv6 host prefixes: %v", ipv6)
 	}
 }
+
+// TestSharedNetworkBackendRequiresRebuild covers the state a caller cannot
+// distinguish from the outside: the backend is still open, so IsClosed reports
+// false, but a failed policy rollback left it unusable and every later operation
+// will fail the same way.
+func TestSharedNetworkBackendRequiresRebuild(t *testing.T) {
+	var backend SharedNetworkBackend
+	if backend.RequiresRebuild() {
+		t.Fatal("a fresh backend reports that it requires a rebuild")
+	}
+
+	// A runtime makes it report itself open, which is the case that matters:
+	// "closed" would already stop a caller on its own.
+	backend.runtime = &sharedNetworkRuntime{}
+	if backend.IsClosed() {
+		t.Fatal("a backend with a runtime reports itself closed")
+	}
+	if backend.RequiresRebuild() {
+		t.Fatal("an open backend reports that it requires a rebuild")
+	}
+
+	backend.health.invalidate("shared-network", "test policy")
+	if backend.IsClosed() {
+		t.Fatal("invalidation must not make the backend look closed")
+	}
+	if !backend.RequiresRebuild() {
+		t.Fatal("an invalidated backend does not report that it requires a rebuild")
+	}
+	if backend.requireUsableLocked() == nil {
+		t.Fatal("an invalidated backend still reports itself usable")
+	}
+
+	var absent *SharedNetworkBackend
+	if absent.RequiresRebuild() {
+		t.Fatal("a nil backend reports that it requires a rebuild")
+	}
+}

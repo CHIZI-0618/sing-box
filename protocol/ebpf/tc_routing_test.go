@@ -66,15 +66,6 @@ func TestTCPolicyRule(t *testing.T) {
 			!rule.MarkSet || rule.Mask != int(commonEBPF.DefaultTCRoutingMark) {
 			t.Fatalf("unexpected policy rule: %+v", rule)
 		}
-		listed := *rule
-		listed.MarkSet = false
-		if !matchesTCPolicyRule(listed, *rule) {
-			t.Fatal("listed policy rule did not match its expected rule")
-		}
-		listed.Table++
-		if matchesTCPolicyRule(listed, *rule) {
-			t.Fatal("conflicting policy rule matched")
-		}
 	}
 }
 

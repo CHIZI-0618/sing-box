@@ -33,6 +33,7 @@ func (i *Inbound) newTCConnection(
 	destination := M.SocksaddrFromNet(conn.LocalAddr()).AddrPort()
 	assignment, err := backend.LookupAssignment(commonEBPF.ProtocolTCP, source, destination, 0, true)
 	if err != nil {
+		i.counters.assignmentLookupFailures.Add(1)
 		i.tcpWarnings.errorContext(i.logger, ctx, "lookup TC eBPF TCP assignment: ", err)
 		_ = conn.Close()
 		return
@@ -69,6 +70,7 @@ func (i *Inbound) newTCPacket(
 		assignment, err = backend.LookupAssignment(commonEBPF.ProtocolUDP, client, destination, 0, false)
 	}
 	if err != nil {
+		i.counters.assignmentLookupFailures.Add(1)
 		i.udpWarnings.originalDestination.warn(i.logger, "lookup TC eBPF UDP assignment: ", err)
 		return
 	}
@@ -166,10 +168,11 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	if w.clientState.isCgroupDataPlane() {
 		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.redirectAddress)
 	}
-	socket, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
+	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
 	if err != nil {
 		return err
 	}
+	defer release()
 	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.client)
 	return err
 }

@@ -44,6 +44,7 @@ type sharedRewrite struct {
 	tcPriority           uint16
 	lifecycleAccess      sync.RWMutex
 	backendAccess        sync.RWMutex
+	dataPlaneAccess      sync.RWMutex
 }
 
 func newSharedRewrite(inbound *Inbound, options option.EBPFSharedOptions) *sharedRewrite {
@@ -77,8 +78,9 @@ func (s *sharedRewrite) Start(interfaceNames []string, hostAddresses []netip.Add
 	if err := s.startListeners(); err != nil {
 		return E.Errors(err, s.closeListeners())
 	}
-	s.dataPlane = newSharedRewriteDataPlane(s, s.tcPriority)
-	if err := s.dataPlane.reconcile(interfaceNames, hostAddresses); err != nil {
+	dataPlane := newSharedRewriteDataPlane(s, s.tcPriority)
+	s.setDataPlane(dataPlane)
+	if err := dataPlane.reconcile(interfaceNames, hostAddresses); err != nil {
 		return E.Errors(err, s.Close())
 	}
 	if s.sharedBackendInstance() == nil {
@@ -97,14 +99,15 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedNetworkBackend, error) 
 	}
 	cgroupBackend := s.inbound.cgroupBackendInstance()
 	backend, err := ECommon.PrepareSharedNetwork(cgroupBackend, ECommon.SharedNetworkConfig{
-		ListenerPort: s.listeners.selectedPort(),
-		EnableTCP:    s.inbound.enableTCP,
-		EnableUDP:    s.inbound.enableUDP,
-		RedirectIPv4: s.inbound.redirectIPv4Prefix,
-		RedirectIPv6: redirectIPv6,
-		Policy:       s.inbound.compiledPolicy,
-		MapCapacity:  s.mapCapacity,
-		UDPTimeout:   s.inbound.udpTimeout,
+		ListenerPort:    s.listeners.selectedPort(),
+		EnableTCP:       s.inbound.enableTCP,
+		EnableUDP:       s.inbound.enableUDP,
+		RedirectIPv4:    s.inbound.redirectIPv4Prefix,
+		RedirectIPv6:    redirectIPv6,
+		Policy:          s.inbound.compiledPolicy,
+		MapCapacity:     s.mapCapacity,
+		UDPTimeout:      s.inbound.udpTimeout,
+		FakeIPICMPReply: s.inbound.fakeIPICMPReply,
 	})
 	if err != nil {
 		return nil, err
@@ -162,9 +165,8 @@ func (s *sharedRewrite) Close() error {
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
 	var closeErr error
-	if s.dataPlane != nil {
-		closeErr = s.dataPlane.Close()
-		s.dataPlane = nil
+	if dataPlane := s.takeDataPlane(); dataPlane != nil {
+		closeErr = dataPlane.Close()
 	}
 	s.stopFlowJanitor()
 	backend := s.takeSharedBackend()
@@ -193,7 +195,35 @@ func (s *sharedRewrite) IsClosed() bool {
 	}
 	s.lifecycleAccess.RLock()
 	defer s.lifecycleAccess.RUnlock()
-	return s.dataPlane == nil && s.sharedBackendInstance() == nil && s.listeners.isClosed()
+	return s.dataPlaneInstance() == nil && s.sharedBackendInstance() == nil && s.listeners.isClosed()
+}
+
+// dataPlaneInstance, setDataPlane, and takeDataPlane guard s.dataPlane the
+// same way backendAccess guards s.sharedBackend above: Diagnostics, the
+// interface-monitor update loop, and the flow janitor goroutine all read
+// this field with no relationship to Close's own lifecycleAccess lock,
+// which only ever protected the write -- confirmed racing with go test
+// -race. dataPlaneInstance's returned *sharedRewriteDataPlane is itself
+// nil-receiver-safe on every method a caller would call on it, so callers
+// do not need their own nil check before using the result.
+func (s *sharedRewrite) dataPlaneInstance() *sharedRewriteDataPlane {
+	s.dataPlaneAccess.RLock()
+	defer s.dataPlaneAccess.RUnlock()
+	return s.dataPlane
+}
+
+func (s *sharedRewrite) setDataPlane(dataPlane *sharedRewriteDataPlane) {
+	s.dataPlaneAccess.Lock()
+	s.dataPlane = dataPlane
+	s.dataPlaneAccess.Unlock()
+}
+
+func (s *sharedRewrite) takeDataPlane() *sharedRewriteDataPlane {
+	s.dataPlaneAccess.Lock()
+	dataPlane := s.dataPlane
+	s.dataPlane = nil
+	s.dataPlaneAccess.Unlock()
+	return dataPlane
 }
 
 func (s *sharedRewrite) sharedBackendInstance() *ECommon.SharedNetworkBackend {
@@ -311,7 +341,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			resetReleaseTimer(backend)
 			continue
 		}
-		if s.dataPlane == nil || !s.dataPlane.isEnabled() {
+		if !s.dataPlaneInstance().isEnabled() {
 			pressure = false
 			knownPressure = false
 			belowExitRounds = 0

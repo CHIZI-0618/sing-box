@@ -61,6 +61,11 @@ type KernelProbeOptions struct {
 	EnableIPv6          bool
 	NeedLPMPolicy       bool
 	NeedProcessTracking bool
+	// FakeIPICMPReply probes the fakeip_icmp object's own helper requirements.
+	// Left false (the default), nothing about this feature is probed, the
+	// same way nothing about it is loaded when TCConfig.FakeIPICMPReply is
+	// false.
+	FakeIPICMPReply bool
 }
 
 type kernelProbePlan struct {
@@ -221,6 +226,9 @@ func ProbeKernel(options KernelProbeOptions) (*KernelProbeReport, error) {
 	}
 	if needShared {
 		probeSharedCapabilities(report, sharedPlane, options.InterfaceNames)
+	}
+	if options.FakeIPICMPReply {
+		probeFakeIPICMPCapabilities(report)
 	}
 	report.ActivePrograms, report.ActiveStateErr = probeActivePrograms()
 	return report, nil
@@ -587,6 +595,26 @@ func probeSharedCapabilities(report *KernelProbeReport, plane KernelProbeDataPla
 	for _, interfaceName := range interfaceNames {
 		probeSharedInterface(report, plane, interfaceName)
 	}
+}
+
+// probeFakeIPICMPCapabilities checks the helpers native/fakeip_icmp.bpf.c
+// needs beyond what the TC classifier program type itself already implies:
+// address-swap and Echo-Reply-type checksum fixups, and the same-device
+// bounce back to the requester. Called only when the caller asked for it
+// (KernelProbeOptions.FakeIPICMPReply), which mirrors when prepareTC would
+// actually load this object.
+func probeFakeIPICMPCapabilities(report *KernelProbeReport) {
+	const scope = "fakeip_icmp"
+	report.Add(KernelProbePass, scope, KernelProbeRequired, "fakeip_icmp reply facilities",
+		"Answers FakeIP-destined ICMP Echo Requests in place on the same TC classifiers local/shared interception already attaches; no additional program type or map is required beyond ordinary TC classifier support.")
+	probeProgramHelper(report, scope, KernelProbeRequired, CiliumEBPF.SchedCLS, asm.FnL3CsumReplace, "bpf_l3_csum_replace",
+		"Patches the IPv4 header checksum after swapping source and destination for a reply.")
+	probeProgramHelper(report, scope, KernelProbeRequired, CiliumEBPF.SchedCLS, asm.FnL4CsumReplace, "bpf_l4_csum_replace",
+		"Patches the ICMP/ICMPv6 checksum after the address swap and the Echo Reply type change.")
+	probeProgramHelper(report, scope, KernelProbeRequired, CiliumEBPF.SchedCLS, asm.FnCsumDiff, "bpf_csum_diff",
+		"Computes the checksum delta for the IPv6 pseudo-header address swap.")
+	probeProgramHelper(report, scope, KernelProbeRequired, CiliumEBPF.SchedCLS, asm.FnRedirect, "bpf_redirect",
+		"Bounces the synthesized reply back to the requester without a socket lookup or sk_assign.")
 }
 
 func selectedProtocolDetail(enableTCP, enableUDP bool) string {

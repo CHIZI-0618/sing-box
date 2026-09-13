@@ -13,13 +13,14 @@ import (
 )
 
 var (
-	commandEBPFStatusMode      string
-	commandEBPFStatusLocal     string
-	commandEBPFStatusShared    string
-	commandEBPFStatusNetwork   []string
-	commandEBPFStatusInterface string
-	commandEBPFStatusIPv6      bool
-	commandEBPFStatusJSON      bool
+	commandEBPFStatusMode       string
+	commandEBPFStatusLocal      string
+	commandEBPFStatusShared     string
+	commandEBPFStatusNetwork    []string
+	commandEBPFStatusInterface  string
+	commandEBPFStatusIPv6       bool
+	commandEBPFStatusJSON       bool
+	commandEBPFStatusFakeIPICMP bool
 )
 
 var commandEBPF = &cobra.Command{
@@ -46,6 +47,7 @@ func init() {
 	commandEBPFStatus.Flags().StringVar(&commandEBPFStatusInterface, "interface", "", "Configured shared interface")
 	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusIPv6, "ipv6", true, "Inspect IPv6 support for the selected data path")
 	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusJSON, "json", false, "Write the report as JSON")
+	commandEBPFStatus.Flags().BoolVar(&commandEBPFStatusFakeIPICMP, "fakeip-icmp", false, "Also inspect fakeip_icmp=reply support")
 	commandEBPF.AddCommand(commandEBPFStatus)
 	commandTools.AddCommand(commandEBPF)
 }
@@ -63,6 +65,7 @@ func runEBPFStatus() error {
 		Network:         commandEBPFStatusNetwork,
 		InterfaceNames:  interfaceNames,
 		EnableIPv6:      commandEBPFStatusIPv6,
+		FakeIPICMPReply: commandEBPFStatusFakeIPICMP,
 	})
 	if err != nil {
 		return err

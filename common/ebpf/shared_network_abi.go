@@ -22,6 +22,13 @@ type SharedNetworkConfig struct {
 	Policy       CompiledPolicy
 	MapCapacity  SharedNetworkMapCapacities
 	UDPTimeout   time.Duration
+	// FakeIPICMPReply loads a FakeIPICMPBackend (see fakeip_icmp_backend.go)
+	// alongside this one, answering ICMP Echo Request to the FakeIP prefixes
+	// already in Policy the same way TCBackend's shared socket_assign path
+	// already does. IPv6 coverage follows RedirectIPv6.IsValid(), the same
+	// signal this config already uses to mean "IPv6 is enabled for this
+	// shared backend" -- not a second, independently-set toggle.
+	FakeIPICMPReply bool
 }
 
 type sharedNetworkMACKey struct {

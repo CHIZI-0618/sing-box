@@ -85,6 +85,9 @@ INLINE void record_shared_stat(__u32 key) {
 INLINE void record_token_reservation_failure(void) {
     record_shared_stat(SB_SHARED_STAT_TOKEN_RESERVATION_FAILURE);
 }
+INLINE void record_rewrite_failure(void) {
+    record_shared_stat(SB_SHARED_STAT_REWRITE_FAILURE);
+}
 INLINE void refresh_activity_timestamp(__u64 *last_seen_ns, __u64 now) {
     __u64 previous = *last_seen_ns;
     if (now >= previous &&
