@@ -170,6 +170,12 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	}
 	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
 	if err != nil {
+		if errors.Is(err, errUDPReplySocketCapacity) {
+			w.inbound.udpWarnings.replySocketCapacity.warn(
+				w.inbound.logger,
+				"UDP eBPF reply socket pool reached its global capacity; all sockets are currently in use",
+			)
+		}
 		return err
 	}
 	defer release()
