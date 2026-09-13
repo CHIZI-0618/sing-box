@@ -66,10 +66,10 @@ dmesg -T > dmesg-after-reboot.txt
 
 ## 日志与运行状态
 
-启动成功后，无论日志级别如何都会输出一条简要的 `eBPF inbound started` 摘要
-（默认可见级别）：启用的路径、每个 attachment 实际挂载的接口与机制、仍在等待
-接口的路径，以及 `fakeip_icmp` 实际覆盖的范围。Debug 日志级别下，启动时还会
-额外输出一条 `eBPF cgroup active` 或 `eBPF TC active` 摘要，其中包括选中的
+启动成功后会在 Debug 级别输出一条简要的 `eBPF inbound started` 摘要：启用的路径、
+每个 attachment 实际挂载的接口与机制、仍在等待接口的路径，以及 `fakeip_icmp`
+实际覆盖的范围。Debug 日志还会输出 `eBPF cgroup active` 或 `eBPF TC active`
+摘要，其中包括选中的
 数据面及实际运行路径。TC 摘要还会按需列出默认接口、
 attachment、内部监听器、路由状态和 delivery 接口，每个 attachment 会标明
 local/shared 角色和帧格式。网络事件仅在 attachment 或受管

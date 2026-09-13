@@ -609,7 +609,7 @@ func (i *Inbound) logStartupSummary() {
 		}
 	}
 
-	i.logger.Info(
+	i.logger.Debug(
 		"eBPF inbound started: paths=[", pathsSummary, "] mounts=[", mountsSummary,
 		"] waiting_for_interface=[", waitingSummary, "] fakeip_icmp=[", fakeIPICMPSummary, "]",
 	)
