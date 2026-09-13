@@ -127,10 +127,10 @@ func (d *tcDataPlane) attachmentStateChanged(localInterface string, sharedInterf
 				return false, err
 			}
 			// During a mobile-network handoff the default-interface monitor can
-			// briefly report no interface while the old link and its TC filters
-			// are still usable. Avoid treating a transient netlink observation as
-			// a filter loss and repeatedly tearing down the active attachment.
-			continue
+			// briefly report no interface while the old link is still usable. Keep
+			// that attachment only when its kernel filters are actually healthy;
+			// the link's presence alone is not evidence that interception remains
+			// active (the filters may have been flushed during the handoff).
 		}
 		attached, err := attachment.filtersAttached(d.priority, d.backend)
 		if err != nil {
