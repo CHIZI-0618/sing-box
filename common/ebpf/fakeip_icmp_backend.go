@@ -146,7 +146,7 @@ func PrepareFakeIPICMP(
 	controlFD := maps["fakeip_icmp_control"].FD()
 	zero := uint32(0)
 	if err = updateMap(controlFD, unsafe.Pointer(&zero), unsafe.Pointer(&control)); err != nil {
-		closeErr := E.Errors(closePrograms(programs), closeMaps(maps))
+		closeErr := closeObjectResources(programs, maps)
 		return nil, E.Errors(E.Cause(err, "populate fakeip_icmp eBPF control"), closeErr)
 	}
 	return &FakeIPICMPBackend{
@@ -271,8 +271,5 @@ func (b *FakeIPICMPBackend) Close() error {
 		return nil
 	}
 	b.closed = true
-	return E.Errors(
-		closePrograms(b.runtime.programs),
-		closeMaps(b.runtime.maps),
-	)
+	return closeObjectResources(b.runtime.programs, b.runtime.maps)
 }
