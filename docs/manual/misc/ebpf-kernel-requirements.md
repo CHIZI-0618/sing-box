@@ -155,7 +155,8 @@ Loopback and unrecognized link encapsulations are not supported.
 Local attachments follow default-interface changes. Configured shared
 interfaces are attached when present, except while an interface is acting as the
 current default upstream. Link and route events trigger validation and repair of
-managed attachments and network state; no periodic polling is used.
+managed attachments and network state. A low-frequency health check also repairs
+kernel state changed without a matching netlink notification.
 
 One sing-box eBPF inbound may manage an interface at a time. Existing unrelated
 `clsact` filters are preserved, but a conflicting sing-box filter handle or
