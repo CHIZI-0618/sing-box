@@ -165,6 +165,16 @@ interface lock prevents startup.
 The local TC delivery veth requires writable per-interface IPv4 sysctls under
 `/proc/sys/net/ipv4/conf`. Original values are restored during cleanup.
 
+## Runtime policy updates
+
+`bypass_rule_set` updates are applied transactionally across active data
+planes. A failed update reverts already-updated backends and retries with
+bounded exponential backoff while their state remains usable. If an internal
+rollback fails and a backend disables itself as requiring rebuild, retries stop
+and runtime diagnostics report `needs_attention`; restart the inbound to build
+a fresh backend. This is not a traffic-policy "fail closed" mode: disabling an
+untrusted backend avoids running with mismatched maps and control flags.
+
 ## Probe
 
 Use the built-in kernel probe with the same data planes, protocols, and IPv6

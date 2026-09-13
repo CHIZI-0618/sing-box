@@ -345,9 +345,11 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	i.diagnostics.access.Lock()
 	if i.diagnostics.haveOutcome {
 		diagnostics.RecoveryPending = i.diagnostics.lastOutcome.general == tcSharedRewriteRecoverable ||
-			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteRecoverable
+			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteRecoverable ||
+			i.diagnostics.lastOutcome.bypassRuleSet == tcSharedRewriteRecoverable
 		diagnostics.RecoveryUnrecoverable = i.diagnostics.lastOutcome.general == tcSharedRewriteUnrecoverable ||
-			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteUnrecoverable
+			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteUnrecoverable ||
+			i.diagnostics.lastOutcome.bypassRuleSet == tcSharedRewriteUnrecoverable
 	}
 	if !i.diagnostics.lastRecoveryAt.IsZero() {
 		recoveryAt := i.diagnostics.lastRecoveryAt
