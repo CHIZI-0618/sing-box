@@ -127,7 +127,7 @@ loopback 和无法识别的链路封装。
 
 local attachment 会跟随默认接口变化。配置的 shared 接口存在时会自动挂载，但该接口
 作为当前默认上游期间会停止 shared 接管。链路和路由事件会触发受管 attachment 与网络
-状态的检查和修复；低频健康检查还会修复未产生相应 netlink 通知的内核状态漂移。
+状态的检查和修复；低频漂移检查还会修复未产生相应 netlink 通知的内核状态漂移。
 
 同一时间一个接口只能由一个 sing-box eBPF 入站管理。已有的无关 `clsact` filter
 会保留，但 sing-box filter handle 或接口锁冲突会阻止启动。

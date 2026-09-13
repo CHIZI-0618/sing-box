@@ -201,7 +201,7 @@ const (
 	tcRetryMaximumDelay = time.Minute
 )
 
-// tcHealthCheckInterval is the low-frequency, unconditional recheck this loop
+// tcDriftCheckInterval is the low-frequency, unconditional recheck this loop
 // also performs, independent of any outstanding recovery: a reconcile pass
 // that finds nothing has drifted is cheap, and this is what catches drift no
 // event ever fires for (an attachment health check failing on its own
@@ -210,7 +210,7 @@ const (
 // below, so it neither participates in nor disturbs the backoff any
 // component is or is not currently in. A var, not a const, so a test can
 // substitute a short interval instead of waiting on the real one.
-var tcHealthCheckInterval = 10 * time.Minute
+var tcDriftCheckInterval = 10 * time.Minute
 
 // tcSharedRewriteOutcome is what one named component of an interface update
 // reported.
@@ -359,8 +359,8 @@ type tcRetryState struct {
 }
 
 // runTCInterfaceUpdateLoop drives interface updates from netlink
-// notifications, from a low-frequency unconditional health check
-// (tcHealthCheckInterval), and, while any of update's three components has a
+// notifications, from a low-frequency unconditional drift check
+// (tcDriftCheckInterval), and, while any of update's three components has a
 // recoverable failure outstanding, from that component's own backoff timer.
 //
 // Only one physical timer exists; it is armed for whichever component's
@@ -385,8 +385,8 @@ func runTCInterfaceUpdateLoop(
 ) {
 	retryTimer := tcRetryTimerFactory()
 	defer retryTimer.Disarm()
-	healthCheck := time.NewTicker(tcHealthCheckInterval)
-	defer healthCheck.Stop()
+	driftCheck := time.NewTicker(tcDriftCheckInterval)
+	defer driftCheck.Stop()
 	var (
 		retryChannel <-chan time.Time
 		states       [tcRetryComponentCount]tcRetryState
@@ -400,7 +400,7 @@ func runTCInterfaceUpdateLoop(
 		case <-ctx.Done():
 			return
 		case <-updates:
-		case <-healthCheck.C:
+		case <-driftCheck.C:
 		case <-retryChannel:
 			triggeredByTimer = true
 		}

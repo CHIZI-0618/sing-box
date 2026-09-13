@@ -75,7 +75,7 @@ attachment、内部监听器、路由状态和 delivery 接口，每个 attachme
 local/shared 角色和帧格式。网络事件仅在 attachment 或受管
 网络状态发生变化时输出 Debug 日志，修复失败会输出限频的 Warn 日志。用户态 handoff
 异常会输出限频后的 Warn 或 Error 日志；BPF 报文返回路径不输出逐包日志。接口生命周期
-主要由事件驱动，并使用低频健康检查修复没有产生相应通知的内核状态漂移。shared
+主要由事件驱动，并使用低频漂移检查修复没有产生相应通知的内核状态变化。shared
 `packet_rewrite` 会在 flow 事件、释放期限或 map 压力需要时执行有界维护；这些任务
 不会定期输出状态日志。
 
