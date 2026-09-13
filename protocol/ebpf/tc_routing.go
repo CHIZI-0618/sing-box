@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"strconv"
 
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
@@ -354,15 +355,12 @@ func allocateTCPolicyIdentifiers(loopbackIndex int, families []int) (tcPolicyIde
 		return preferred, nil
 	}
 	identifiers := tcPolicyIdentifiers{}
-	for bit := uint(30); bit >= 16; bit-- {
-		candidate := uint32(1) << bit
-		if usedMarkBits&candidate == 0 {
-			identifiers.mark = candidate
-			break
-		}
-	}
+	identifiers.mark = selectTCPolicyMark(usedMarkBits)
 	if identifiers.mark == 0 {
-		return tcPolicyIdentifiers{}, E.New("no unused TC eBPF routing mark is available")
+		return tcPolicyIdentifiers{}, E.New(
+			"no unused TC eBPF routing mark is available (reserved mark bits 0x",
+			strconv.FormatUint(uint64(usedMarkBits), 16), ")",
+		)
 	}
 	for table := tcPolicyRoutingTable; table <= tcPolicyTableMax; table++ {
 		if !usedTables[table] {
@@ -401,9 +399,26 @@ func allocateTCPolicyIdentifiers(loopbackIndex int, families []int) (tcPolicyIde
 	return identifiers, nil
 }
 
+func selectTCPolicyMark(usedMarkBits uint32) uint32 {
+	// Keep the mark in the positive int range used by netlink.Rule.Mask on
+	// 32-bit systems. Prefer the conventional high bits, then use lower bits
+	// only when the host's policy rules already occupy all high bits.
+	for bit := uint(30); ; bit-- {
+		candidate := uint32(1) << bit
+		if usedMarkBits&candidate == 0 {
+			return candidate
+		}
+		if bit == 0 {
+			break
+		}
+	}
+	return 0
+}
+
 func tcPolicyRuleMarkBits(rule netlink.Rule) uint32 {
 	if rule.Mask >= 0 {
-		return rule.Mark | uint32(rule.Mask)
+		// Mark bits outside FRA_FWMASK do not participate in the rule match.
+		return uint32(rule.Mask)
 	}
 	if rule.MarkSet || rule.Mark != 0 {
 		// A fwmark rule without FRA_FWMASK matches the full mark value.

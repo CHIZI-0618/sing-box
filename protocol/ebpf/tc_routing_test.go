@@ -85,7 +85,7 @@ func TestTCPolicyRuleMarkBits(t *testing.T) {
 	}
 
 	masked := netlink.NewRule()
-	masked.Mark = 0x10000
+	masked.Mark = 0x80010000
 	masked.Mask = 0x1FFFF
 	if bits := tcPolicyRuleMarkBits(*masked); bits != 0x1FFFF {
 		t.Fatalf("unexpected masked policy rule bits: %#x", bits)
@@ -101,6 +101,19 @@ func TestTCPolicyRuleMarkBits(t *testing.T) {
 	zeroMark.Mask = 0xFFFF
 	if bits := tcPolicyRuleMarkBits(*zeroMark); bits != 0xFFFF {
 		t.Fatalf("zero-mark policy rule mask was ignored: %#x", bits)
+	}
+}
+
+func TestSelectTCPolicyMark(t *testing.T) {
+	if mark := selectTCPolicyMark(0); mark != 1<<30 {
+		t.Fatalf("unexpected preferred policy mark: %#x", mark)
+	}
+	usedHighBits := ^uint32(0) &^ (1 << 7)
+	if mark := selectTCPolicyMark(usedHighBits); mark != 1<<7 {
+		t.Fatalf("unexpected low-bit fallback policy mark: %#x", mark)
+	}
+	if mark := selectTCPolicyMark(^uint32(0)); mark != 0 {
+		t.Fatalf("expected no policy mark, got %#x", mark)
 	}
 }
 
