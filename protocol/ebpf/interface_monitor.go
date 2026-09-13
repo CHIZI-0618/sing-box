@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"context"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -545,6 +546,20 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		tcSharedInterfaces = nil
 	}
 	hostAddresses := i.hostAddresses()
+	networkChanged := i.networkStateChanged(defaultInterface, hostAddresses, tcSharedInterfaces)
+	if networkChanged {
+		i.udpNat.Purge()
+		if err = i.udpReplySockets.reset(); err != nil {
+			i.interfaceWarnings.reconcile.warn(i.logger, "reset TC eBPF UDP reply sockets after network change: ", err)
+			outcome.general = tcSharedRewriteRecoverable
+		}
+		if backend := i.cgroupBackendInstance(); backend != nil {
+			if err = backend.ResetNetworkState(); err != nil {
+				i.interfaceWarnings.reconcile.warn(i.logger, "reset cgroup eBPF network state after network change: ", err)
+				outcome.general = tcSharedRewriteRecoverable
+			}
+		}
+	}
 	sharedDataPlane := (*sharedRewriteDataPlane)(nil)
 	if shared := i.sharedRewriteInstance(); shared != nil {
 		sharedDataPlane = shared.dataPlaneInstance()
@@ -594,10 +609,12 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		return
 	}
 	previousAttachments := i.tcAttachmentDescriptions()
-	i.udpNat.Purge()
-	if err = i.udpReplySockets.reset(); err != nil {
-		i.interfaceWarnings.reconcile.warn(i.logger, "reset TC eBPF UDP reply sockets: ", err)
-		outcome.general = tcSharedRewriteRecoverable
+	if !networkChanged {
+		i.udpNat.Purge()
+		if err = i.udpReplySockets.reset(); err != nil {
+			i.interfaceWarnings.reconcile.warn(i.logger, "reset TC eBPF UDP reply sockets: ", err)
+			outcome.general = tcSharedRewriteRecoverable
+		}
 	}
 	if err = i.reconcileTCDataPlane(localInterface, tcSharedInterfaces, hostAddresses); err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "refresh TC eBPF interfaces: ", err)
@@ -621,4 +638,20 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		outcome.general = tcSharedRewriteSettled
 	}
 	return outcome
+}
+
+func (i *Inbound) networkStateChanged(
+	defaultInterface string,
+	hostAddresses []netip.Addr,
+	sharedInterfaces []string,
+) bool {
+	changed := i.networkStateInitialized &&
+		(i.networkStateDefault != defaultInterface ||
+			!slices.Equal(i.networkStateAddresses, hostAddresses) ||
+			!slices.Equal(i.networkStateInterfaces, sharedInterfaces))
+	i.networkStateInitialized = true
+	i.networkStateDefault = defaultInterface
+	i.networkStateAddresses = slices.Clone(hostAddresses)
+	i.networkStateInterfaces = slices.Clone(sharedInterfaces)
+	return changed
 }
