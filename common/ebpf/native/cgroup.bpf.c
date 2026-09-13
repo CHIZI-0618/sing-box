@@ -99,7 +99,9 @@ INLINE const struct sb_ebpf_cgroup_control *control(void) {
 INLINE bool is_cookie_bypassed(void *ctx) {
     __u64 cookie = get_socket_cookie(ctx);
     if (cookie == 0U) return false;
-    return map_lookup(&cgroup_socket_bypass, &cookie) != 0;
+    __u32 *metadata = map_lookup(&cgroup_socket_bypass, &cookie);
+    return metadata != 0 &&
+        (*metadata & SB_EBPF_SOCKET_METADATA_SELF_BYPASS) != 0U;
 }
 
 INLINE bool uid_bypassed(const struct sb_ebpf_cgroup_control *config) {
