@@ -200,12 +200,16 @@ cgroup socket-cookie hooks. It also reports the optional socket-address process
 tracker capabilities. A real startup determines whether the process cgroup is
 exclusive and uses cgroup registration when possible, otherwise enabling the
 userspace cookie registration path.
+The command also loads and immediately closes the generated eBPF objects selected
+by these options. This validates their real map ABI and verifier-visible program
+variants without attaching them.
 It reports `FAIL` for a conclusive missing facility and `UNKNOWN` when the
 process cannot determine a facility, such as when a security policy denies the
 probe. Both statuses make the command exit non-zero for required checks.
 Repeat it with the same privileges used to run sing-box. A real startup remains
-necessary because the non-mutating probe does not attach TC filters, create a
-veth, or change sysctls; those operations are checked and fail during startup.
+necessary because the non-mutating probe does not attach TC filters or cgroup
+hooks, create a veth, install routes, or change sysctls; those operations are
+checked and fail during startup.
 Use `--ipv6=false` when the intended configuration disables IPv6.
 
 ## Packet limitations

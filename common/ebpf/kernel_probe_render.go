@@ -58,7 +58,7 @@ func WriteKernelProbeReportJSON(writer io.Writer, report *KernelProbeReport) err
 		Findings:        report.Findings,
 		ActivePrograms:  make([]kernelProbeJSONProgram, 0, len(report.ActivePrograms)),
 		Preflight:       true,
-		ExactObjectLoad: false,
+		ExactObjectLoad: report.ExactObjectLoad,
 		Summary: kernelProbeJSONSummary{
 			Pass:             counts[KernelProbePass],
 			Warn:             counts[KernelProbeWarn],
@@ -110,8 +110,14 @@ func WriteKernelProbeReport(writer io.Writer, report *KernelProbeReport) error {
 	if _, err := fmt.Fprintln(writer, "The probe does not attach programs or change qdiscs, routes, sysctls, or traffic."); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(writer, "It checks individual facilities but does not load the exact selected eBPF objects; a real startup remains required."); err != nil {
-		return err
+	if report.ExactObjectLoad {
+		if _, err := fmt.Fprintln(writer, "It also loads and closes the exact selected eBPF objects without attaching them; a real startup remains required for attachment and network setup."); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(writer, "It checks individual facilities but does not load the exact selected eBPF objects; a real startup remains required."); err != nil {
+			return err
+		}
 	}
 
 	lastScope := ""
@@ -162,7 +168,11 @@ func WriteKernelProbeReport(writer io.Writer, report *KernelProbeReport) error {
 		_, err := fmt.Fprintln(writer, "Result: required checks are inconclusive; repeat with the service privileges or run a real sing-box startup test.")
 		return err
 	}
-	_, err := fmt.Fprintln(writer, "Preflight result: all selected individual checks passed; exact object loading and attachment still require a real startup.")
+	result := "Preflight result: all selected individual checks passed; exact object loading and attachment still require a real startup."
+	if report.ExactObjectLoad {
+		result = "Preflight result: all selected checks and object loads passed; attachment and network setup still require a real startup."
+	}
+	_, err := fmt.Fprintln(writer, result)
 	return err
 }
 

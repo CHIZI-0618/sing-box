@@ -167,6 +167,23 @@ func TestWriteKernelProbeReportJSON(t *testing.T) {
 	}
 }
 
+func TestWriteKernelProbeReportWithExactObjectLoad(t *testing.T) {
+	report := &KernelProbeReport{ExactObjectLoad: true}
+	report.Add(KernelProbePass, "tc", KernelProbeRequired, "selected TC eBPF object", "loaded")
+	var output bytes.Buffer
+	if err := WriteKernelProbeReport(&output, report); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"loads and closes the exact selected eBPF objects",
+		"all selected checks and object loads passed",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("report is missing %q:\n%s", expected, output.String())
+		}
+	}
+}
+
 func TestParseKernelProbeNetwork(t *testing.T) {
 	tcp, udp, network, err := parseKernelProbeNetwork([]string{"udp", "tcp", "udp"})
 	if err != nil {
@@ -210,19 +227,19 @@ func TestNormalizeProbeDataPlanes(t *testing.T) {
 }
 
 func TestKernelProbePlanSeparatesTCDataPlanes(t *testing.T) {
-	local := newKernelProbePlan(KernelProbeDataPlaneTC, "")
+	local := newKernelProbePlan(KernelProbeDataPlaneTC, "", true, true, KernelProbeOptions{})
 	if !local.localTC || !local.needsSocketAssignment() || !local.needsTCProgram() ||
 		local.localCgroup || local.sharedSocketAssign || local.sharedPacketRewrite {
 		t.Fatalf("unexpected local TC plan: %+v", local)
 	}
 
-	shared := newKernelProbePlan("", KernelProbeDataPlaneSocketAssign)
+	shared := newKernelProbePlan("", KernelProbeDataPlaneSocketAssign, true, true, KernelProbeOptions{})
 	if !shared.sharedSocketAssign || !shared.needsSocketAssignment() || !shared.needsTCProgram() ||
 		shared.localTC || shared.localCgroup || shared.sharedPacketRewrite {
 		t.Fatalf("unexpected shared socket-assign plan: %+v", shared)
 	}
 
-	rewrite := newKernelProbePlan("", KernelProbeDataPlanePacketRewrite)
+	rewrite := newKernelProbePlan("", KernelProbeDataPlanePacketRewrite, true, true, KernelProbeOptions{})
 	if !rewrite.sharedPacketRewrite || rewrite.needsSocketAssignment() || !rewrite.needsTCProgram() ||
 		rewrite.localTC || rewrite.localCgroup || rewrite.sharedSocketAssign {
 		t.Fatalf("unexpected shared packet-rewrite plan: %+v", rewrite)
