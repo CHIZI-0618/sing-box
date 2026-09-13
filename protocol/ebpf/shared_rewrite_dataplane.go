@@ -46,26 +46,7 @@ type sharedRewriteDataPlane struct {
 	priority      uint16
 	enabled       bool
 	ready         bool
-	// hooks is nil in production. Tests set it to drive and observe the paths
-	// that otherwise need a kernel.
-	hooks *sharedRewriteDataPlaneHooks
 }
-
-type sharedRewriteDataPlaneHooks struct {
-	attach      sharedRewriteAttachFunc
-	setEnabled  func(enabled bool) error
-	purgeUDPNat func()
-	// backendState stands in for the backend's own health reporting, which a
-	// test cannot put into the "still open but has to be rebuilt" state from
-	// outside the package that owns it.
-	backendState func() (closed bool, requiresRebuild bool)
-}
-
-type sharedRewriteAttachFunc func(
-	device netlink.Link,
-	backend *commonEBPF.SharedNetworkBackend,
-	priority uint16,
-) (*sharedRewriteAttachment, error)
 
 type sharedRewriteAttachment struct {
 	interfaceName   string
@@ -618,9 +599,6 @@ func (d *sharedRewriteDataPlane) retryOutcome() tcSharedRewriteOutcome {
 // pointless. A backend that has not been built yet is neither: the next attempt
 // may manage to build it.
 func (d *sharedRewriteDataPlane) backendStateLocked() (closed bool, requiresRebuild bool) {
-	if d.hooks != nil && d.hooks.backendState != nil {
-		return d.hooks.backendState()
-	}
 	if d.backend == nil {
 		return false, false
 	}
