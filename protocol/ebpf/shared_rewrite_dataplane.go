@@ -278,6 +278,10 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	d.attachments = candidate
 	d.hostAddresses = slices.Clone(hostAddresses)
 	d.enabled = wantEnabled
+	if wantEnabled && !d.ready {
+		d.ready = true
+		d.owner.sharedRewriteReadyLocked(d.attachmentDescriptionsLocked())
+	}
 
 	return closeErr
 }
