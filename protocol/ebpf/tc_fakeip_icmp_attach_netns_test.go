@@ -3,40 +3,11 @@
 package ebpf
 
 import (
-	"net/netip"
 	"testing"
 
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
-
-// newRealFakeIPICMPBackend prepares a real TC eBPF backend with fakeip_icmp
-// enabled, the way protocol/ebpf's own startup does — no injected hooks, no
-// substituted maps, so a failure here means the real Go-to-kernel path is
-// broken, not a test double.
-func newRealFakeIPICMPBackend(t *testing.T) *commonEBPF.TCBackend {
-	t.Helper()
-	policy, err := commonEBPF.CompilePolicy(commonEBPF.PolicyConfig{
-		EnableTCP:  true,
-		FakeIPIPv4: netip.MustParsePrefix("198.18.0.0/15"),
-	})
-	if err != nil {
-		t.Fatalf("compile policy: %v", err)
-	}
-	backend, err := commonEBPF.PrepareTC(commonEBPF.TCConfig{
-		ListenerPort:    23456,
-		EnableLocal:     true,
-		EnableShared:    true,
-		EnableIPv4:      true,
-		EnableTCP:       true,
-		Policy:          policy,
-		FakeIPICMPReply: true,
-	})
-	if err != nil {
-		t.Skipf("cannot prepare a real TC eBPF backend in this environment: %v", err)
-	}
-	return backend
-}
 
 // TestAttachTCInterfaceAddsTheFakeIPICMPFilterWhenEnabled attaches to a real
 // veth in a private network namespace with a real fakeip_icmp-enabled

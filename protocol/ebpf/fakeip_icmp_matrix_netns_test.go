@@ -5,55 +5,11 @@ package ebpf
 import (
 	"encoding/binary"
 	"net"
-	"net/netip"
 	"testing"
 	"time"
 
-	"github.com/sagernet/netlink"
-	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
-
 	"golang.org/x/sys/unix"
 )
-
-// This file closes the real-packet ICMP test coverage matrix (IPv4/IPv6 x
-// TCX/clsact x local/shared-socket_assign/shared-packet_rewrite) the
-// acceptance report for this round of work found incomplete: seven of the
-// combinations the existing tests already established a pattern for had no
-// dedicated real-send/real-receive proof yet. Every helper here is either
-// reused directly from the existing fakeip_icmp test files (backend prep,
-// IPv4 frame building/parsing, the local-role IPv6 veth/ping helpers) or is
-// this file's IPv6 counterpart of one of them, so each new test below is
-// just the combination-specific wiring, not a fresh setup.
-
-// createTestVethPair is the shared-role tests' veth setup: unlike
-// setupFakeIPICMPPingVeth/V6 (local role), no address/route/neighbor is
-// configured on either side, since the shared-role tests inject raw,
-// pre-built frames directly onto the peer's link-layer socket rather than
-// relying on ordinary IP-layer routing to reach the attachment.
-func createTestVethPair(t *testing.T, selfName, peerName string) (self, peer netlink.Link) {
-	t.Helper()
-	attributes := netlink.NewLinkAttrs()
-	attributes.Name = selfName
-	veth := &netlink.Veth{LinkAttrs: attributes, PeerName: peerName}
-	if err := netlink.LinkAdd(veth); err != nil {
-		t.Fatalf("create veth pair: %v", err)
-	}
-	var err error
-	self, err = netlink.LinkByName(selfName)
-	if err != nil {
-		t.Fatalf("find veth: %v", err)
-	}
-	peer, err = netlink.LinkByName(peerName)
-	if err != nil {
-		t.Fatalf("find veth peer: %v", err)
-	}
-	for _, link := range []netlink.Link{self, peer} {
-		if err = netlink.LinkSetUp(link); err != nil {
-			t.Fatalf("bring up %s: %v", link.Attrs().Name, err)
-		}
-	}
-	return self, peer
-}
 
 // icmpv6PseudoHeaderSum returns the running (unfolded) sum over the ICMPv6
 // pseudo-header -- source address, destination address, upper-layer packet
@@ -308,63 +264,6 @@ func assertFakeIPICMPReply(
 	}
 }
 
-// newRealFakeIPICMPSharedNetworkBackendWithIPv6 is
-// newRealFakeIPICMPSharedNetworkBackend plus a FakeIP IPv6 range and an
-// IPv6 redirect prefix (which is what actually turns on IPv6 for this
-// backend -- SharedNetworkConfig has no separate enable flag; see
-// SharedNetworkConfig.FakeIPICMPReply's own doc comment).
-func newRealFakeIPICMPSharedNetworkBackendWithIPv6(t *testing.T) *commonEBPF.SharedNetworkBackend {
-	t.Helper()
-	policy, err := commonEBPF.CompilePolicy(commonEBPF.PolicyConfig{
-		EnableTCP:  true,
-		FakeIPIPv4: netip.MustParsePrefix("198.18.0.0/15"),
-		FakeIPIPv6: netip.MustParsePrefix("fc00::/18"),
-	})
-	if err != nil {
-		t.Fatalf("compile policy: %v", err)
-	}
-	backend, err := commonEBPF.PrepareSharedNetwork(nil, commonEBPF.SharedNetworkConfig{
-		ListenerPort:    23459,
-		EnableTCP:       true,
-		RedirectIPv4:    netip.MustParsePrefix("127.128.0.0/9"),
-		RedirectIPv6:    netip.MustParsePrefix("fd53:696e:672d:626f::/64"),
-		Policy:          policy,
-		MapCapacity:     commonEBPF.DefaultSharedNetworkMapCapacities(),
-		UDPTimeout:      5 * time.Minute,
-		FakeIPICMPReply: true,
-	})
-	if err != nil {
-		t.Skipf("cannot prepare a real shared-network eBPF backend in this environment: %v", err)
-	}
-	return backend
-}
-
-// attachSharedRewriteOrSkip is attachFakeIPICMPOrSkip's counterpart for the
-// shared packet-rewrite data plane's own attach function: when priority
-// requests TCX (defaultTCPriority) but this kernel did not actually grant a
-// TCX attachment, it defers to requireOrSkipTCX -- skip on a general
-// environment, fail on one configured via tcxStrictModeEnv to require TCX
-// -- since attachSharedRewriteInterface falls back to clsact silently and a
-// test claiming TCX coverage must not pass having silently exercised
-// clsact instead.
-func attachSharedRewriteOrSkip(
-	t *testing.T,
-	device netlink.Link,
-	backend *commonEBPF.SharedNetworkBackend,
-	priority uint16,
-) *sharedRewriteAttachment {
-	t.Helper()
-	attachment, err := attachSharedRewriteInterface(device, backend, priority)
-	if err != nil {
-		t.Fatalf("attach the shared packet-rewrite interface: %v", err)
-	}
-	if priority == defaultTCPriority && attachment.attachmentType != "tcx" {
-		_ = attachment.Close()
-		requireOrSkipTCX(t, attachment.attachmentType)
-	}
-	return attachment
-}
-
 // TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaClsact is
 // TestFakeIPICMPLocalReplyAnswersARealPing's IPv6 counterpart, completing
 // the local role's coverage: IPv4 clsact, IPv4 TCX, and IPv6 TCX already
@@ -388,20 +287,11 @@ func TestFakeIPICMPLocalReplyAnswersARealIPv6PingViaClsact(t *testing.T) {
 		t.Fatal("the fakeip_icmp clsact filter was not attached alongside the ordinary one")
 	}
 
-	before, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
-	if err = pingFakeIPICMPTargetV6(t, fakeIPTarget, 5*time.Second); err != nil {
+	before := fakeIPICMPReplyCount(t, backend)
+	if err := pingFakeIPICMPTargetV6(t, fakeIPTarget, 5*time.Second); err != nil {
 		t.Fatalf("read a reply: %v (the request may have gone to the wire instead of being answered)", err)
 	}
-	after, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if after != before+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", after, before+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, before)
 }
 
 // TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPing is
@@ -411,10 +301,7 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPing(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPBackendWithIPv6(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
 	self, peer := createTestVethPair(t, "sbicmp6w0", "sbicmp6w1")
 
@@ -437,7 +324,7 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPing(t *testing.T) {
 		identifier, sequence, payload,
 	)
 	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
+	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
@@ -448,13 +335,7 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPing(t *testing.T) {
 		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
 	)
 
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
 
 // TestFakeIPICMPSharedReplyAnswersARealClientPingViaTCX is
@@ -466,10 +347,7 @@ func TestFakeIPICMPSharedReplyAnswersARealClientPingViaTCX(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPBackend(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
 	self, peer := createTestVethPair(t, "sbicmpxw0", "sbicmpxw1")
 
@@ -492,7 +370,7 @@ func TestFakeIPICMPSharedReplyAnswersARealClientPingViaTCX(t *testing.T) {
 		identifier, sequence, payload,
 	)
 	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 5*time.Second)
-	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
+	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
@@ -503,13 +381,7 @@ func TestFakeIPICMPSharedReplyAnswersARealClientPingViaTCX(t *testing.T) {
 		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, true,
 	)
 
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
 
 // TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX combines the
@@ -519,10 +391,7 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPBackendWithIPv6(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
 	self, peer := createTestVethPair(t, "sbicmp6x0", "sbicmp6x1")
 
@@ -545,7 +414,7 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
 		identifier, sequence, payload,
 	)
 	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
+	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
@@ -556,13 +425,7 @@ func TestFakeIPICMPSharedReplyAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
 		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
 	)
 
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
 
 // TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing is
@@ -572,10 +435,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPSharedNetworkBackendWithIPv6(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
 	self, peer := createTestVethPair(t, "sbrw6w0", "sbrw6w1")
 
@@ -601,7 +461,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing(t *testing.T) {
 		identifier, sequence, payload,
 	)
 	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
+	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
@@ -612,13 +472,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPing(t *testing.T) {
 		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
 	)
 
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
 
 // TestFakeIPICMPSharedRewriteAnswersARealClientPingViaTCX is
@@ -632,10 +486,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPingViaTCX(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPSharedNetworkBackend(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
 	self, peer := createTestVethPair(t, "sbrwxw0", "sbrwxw1")
 
@@ -658,7 +509,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPingViaTCX(t *testing.T) {
 		identifier, sequence, payload,
 	)
 	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IP, 5*time.Second)
-	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
+	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
@@ -669,13 +520,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealClientPingViaTCX(t *testing.T) {
 		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, true,
 	)
 
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
 
 // TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX is the last
@@ -685,10 +530,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
 	enterTestNetworkNamespace(t)
 	backend := newRealFakeIPICMPSharedNetworkBackendWithIPv6(t)
 	t.Cleanup(func() { _ = backend.Close() })
-	repliesBefore, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount before: %v", err)
-	}
+	repliesBefore := fakeIPICMPReplyCount(t, backend)
 
 	self, peer := createTestVethPair(t, "sbrw6x0", "sbrw6x1")
 
@@ -711,7 +553,7 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
 		identifier, sequence, payload,
 	)
 	peerSocket := openRawLinkLayerSocket(t, peer.Attrs().Index, unix.ETH_P_IPV6, 5*time.Second)
-	if _, err = unix.Write(peerSocket, requestFrame); err != nil {
+	if _, err := unix.Write(peerSocket, requestFrame); err != nil {
 		t.Fatalf("transmit the echo request onto the peer interface: %v", err)
 	}
 
@@ -722,11 +564,5 @@ func TestFakeIPICMPSharedRewriteAnswersARealIPv6ClientPingViaTCX(t *testing.T) {
 		peer.Attrs().HardwareAddr, self.Attrs().HardwareAddr, false,
 	)
 
-	repliesAfter, err := backend.FakeIPICMPReplyCount()
-	if err != nil {
-		t.Fatalf("read FakeIPICMPReplyCount after: %v", err)
-	}
-	if repliesAfter != repliesBefore+1 {
-		t.Fatalf("FakeIPICMPReplyCount = %d, want %d after one successfully answered ping", repliesAfter, repliesBefore+1)
-	}
+	requireOneFakeIPICMPReply(t, backend, repliesBefore)
 }
