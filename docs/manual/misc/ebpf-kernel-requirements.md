@@ -196,8 +196,9 @@ TC or `socket_assign` paths.
 
 The probe uses the selected protocols, address families, data planes, and shared interface.
 For local TC mode it reports the required TC socket-cookie helper and the optional
-cgroup socket-cookie hooks. It also reports the optional socket-address process
-tracker capabilities. A real startup determines whether the process cgroup is
+cgroup socket-cookie hooks. Add `--process-tracking` to inspect the optional
+socket-address process tracker and socket-release cleanup capabilities. A real
+startup determines whether the process cgroup is
 exclusive and uses cgroup registration when possible, otherwise enabling the
 userspace cookie registration path.
 The command also loads and immediately closes the generated eBPF objects selected

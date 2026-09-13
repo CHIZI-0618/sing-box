@@ -161,8 +161,8 @@ sing-box tools ebpf status --local-data-plane tc --shared-data-plane socket_assi
 `socket_assign` 路径。
 
 探测会针对所选协议、地址族、数据面和 shared 接口。local TC 模式会报告必需的 TC socket-cookie
-helper 以及可选的 cgroup socket-cookie hook，同时报告可选的 socket-address 进程
-追踪能力。启动时会判断进程 cgroup 是否独占，能挂载时使用内核登记，否则启用用户态
+helper 以及可选的 cgroup socket-cookie hook。添加 `--process-tracking` 可检查可选的
+socket-address 进程追踪和 socket-release 清理能力。启动时会判断进程 cgroup 是否独占，能挂载时使用内核登记，否则启用用户态
 cookie 登记路径。命令还会加载并立即关闭这些选项实际选择的 eBPF 对象，在不挂载程序的
 前提下验证真实 map ABI 和 verifier 可见的程序变体。明确缺少
 能力会报告 `FAIL`，安全策略

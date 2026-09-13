@@ -44,6 +44,26 @@ func TestProcessTrackerInstructions(t *testing.T) {
 	}
 }
 
+func TestProcessTrackerReleaseInstructions(t *testing.T) {
+	instructions := processTrackerReleaseInstructions(1)
+	if len(instructions) == 0 {
+		t.Fatal("empty process tracker release instructions")
+	}
+	if err := instructions.Marshal(new(bytes.Buffer), binary.LittleEndian); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessTrackerReleaseCleanupMode(t *testing.T) {
+	if (*ProcessTracker)(nil).ReleaseCleanup() {
+		t.Fatal("nil process tracker reports socket-release cleanup")
+	}
+	tracker := &ProcessTracker{releaseCleanup: true}
+	if !tracker.ReleaseCleanup() {
+		t.Fatal("process tracker did not report socket-release cleanup")
+	}
+}
+
 func TestProcessTrackerPolicyMetadata(t *testing.T) {
 	tests := []struct {
 		name          string

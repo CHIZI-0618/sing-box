@@ -46,6 +46,7 @@ type ProcessTracker struct {
 	policyDefaultBypass bool
 	programs            []*CiliumEBPF.Program
 	links               []link.Link
+	releaseCleanup      bool
 }
 
 func AttachProcessTracker(config ProcessTrackerConfig) (*ProcessTracker, error) {
@@ -128,8 +129,35 @@ func AttachProcessTracker(config ProcessTrackerConfig) (*ProcessTracker, error) 
 		}
 		tracker.links = append(tracker.links, programLink)
 	}
+	tracker.attachReleaseCleanup(cgroupPath)
 	complete = true
 	return tracker, nil
+}
+
+// attachReleaseCleanup removes process ownership as soon as the socket dies.
+// The owner map remains an LRU map because sock_release is unavailable or
+// blocked by policy on some Android and older vendor kernels.
+func (t *ProcessTracker) attachReleaseCleanup(cgroupPath string) {
+	program, err := newProcessTrackerReleaseProgram(t.owners.FD())
+	if err != nil {
+		return
+	}
+	programLink, err := link.AttachCgroup(link.CgroupOptions{
+		Path:    cgroupPath,
+		Attach:  CiliumEBPF.AttachCgroupInetSockRelease,
+		Program: program,
+	})
+	if err != nil {
+		_ = program.Close()
+		return
+	}
+	t.programs = append(t.programs, program)
+	t.links = append(t.links, programLink)
+	t.releaseCleanup = true
+}
+
+func (t *ProcessTracker) ReleaseCleanup() bool {
+	return t != nil && t.releaseCleanup
 }
 
 func processTrackerHooks(config ProcessTrackerConfig) []processTrackerHook {
@@ -161,6 +189,24 @@ func newProcessTrackerProgram(hook processTrackerHook, ownerMapFD, policyUIDMapF
 		return nil, E.Cause(err, "load eBPF process tracker ", hook.name, " hook")
 	}
 	return program, nil
+}
+
+func newProcessTrackerReleaseProgram(ownerMapFD int) (*CiliumEBPF.Program, error) {
+	program, err := CiliumEBPF.NewProgram(&CiliumEBPF.ProgramSpec{
+		Name:         "sb_proc_release",
+		Type:         CiliumEBPF.CGroupSock,
+		AttachType:   CiliumEBPF.AttachCgroupInetSockRelease,
+		License:      "GPL",
+		Instructions: processTrackerReleaseInstructions(ownerMapFD),
+	})
+	if err != nil {
+		return nil, E.Cause(err, "load eBPF process tracker socket-release hook")
+	}
+	return program, nil
+}
+
+func processTrackerReleaseInstructions(ownerMapFD int) asm.Instructions {
+	return socketCookieDeleteInstructions(ownerMapFD)
 }
 
 func processTrackerInstructions(ownerMapFD, policyUIDMapFD, metadataMapFD int, defaultBypass bool) asm.Instructions {

@@ -79,7 +79,9 @@ consulted by local egress before any packet interception.
 The optional cgroup socket-address tracker records cookie, PID, and UID in a
 bounded LRU map. Userspace then reads only `/proc/<pid>/exe` instead of scanning
 all process file descriptors. If the tracker cannot be attached, normal route
-process search remains the fallback.
+process search remains the fallback. A cgroup `sock_release` hook removes owner
+records immediately when supported; otherwise the bounded LRU map remains the
+cleanup fallback.
 Raw-IP shared links mark the source MAC as unavailable rather than publishing a
 synthetic address. Source MAC policy therefore requires Ethernet framing.
 
