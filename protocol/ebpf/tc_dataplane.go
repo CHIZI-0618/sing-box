@@ -42,6 +42,16 @@ type tcInterfaceRole struct {
 	shared bool
 }
 
+func (r tcInterfaceRole) String() string {
+	if r.local && r.shared {
+		return "local+shared"
+	}
+	if r.shared {
+		return "shared"
+	}
+	return "local"
+}
+
 // tcxLinkInfo is the subset of cilium/ebpf's link.Link that tcxLinkAttached
 // actually calls. Narrower than link.Link so the same health-check helper
 // also accepts tcxAttachedLink below.
@@ -304,18 +314,12 @@ func (d *tcDataPlane) attachmentDiagnostics() []EBPFAttachmentDiagnostics {
 	defer d.access.Unlock()
 	diagnostics := make([]EBPFAttachmentDiagnostics, 0, len(d.attachments))
 	for _, attachment := range d.attachments {
-		role := "local"
-		if attachment.role.local && attachment.role.shared {
-			role = "local+shared"
-		} else if attachment.role.shared {
-			role = "shared"
-		}
 		fakeIPICMP := attachment.localICMPFilter != nil || attachment.sharedICMPFilter != nil ||
 			attachment.localICMPLink != nil || attachment.sharedICMPLink != nil
 		diagnostics = append(diagnostics, EBPFAttachmentDiagnostics{
 			InterfaceName:  attachment.interfaceName,
 			InterfaceIndex: attachment.interfaceIndex,
-			Role:           role,
+			Role:           attachment.role.String(),
 			Framing:        attachment.framing.String(),
 			Mechanism:      attachment.attachmentType,
 			FakeIPICMP:     fakeIPICMP,
@@ -335,15 +339,9 @@ func (d *tcDataPlane) attachmentDescriptions() []string {
 	defer d.access.Unlock()
 	descriptions := make([]string, 0, len(d.attachments))
 	for _, attachment := range d.attachments {
-		roles := "local"
-		if attachment.role.local && attachment.role.shared {
-			roles = "local+shared"
-		} else if attachment.role.shared {
-			roles = "shared"
-		}
 		descriptions = append(
 			descriptions,
-			attachment.interfaceName+"("+roles+","+attachment.framing.String()+","+attachment.attachmentType+")",
+			attachment.interfaceName+"("+attachment.role.String()+","+attachment.framing.String()+","+attachment.attachmentType+")",
 		)
 	}
 	slices.Sort(descriptions)
@@ -483,67 +481,65 @@ func attachTCXInterface(linkDevice netlink.Link, backend *commonEBPF.TCBackend, 
 	closeLinks := func(err error) (bool, error) {
 		return false, E.Errors(err, attachment.closeLinks())
 	}
-	if attachment.role.local {
-		program := backend.LocalEgressProgram(attachment.framing)
-		if program == nil {
-			return closeLinks(E.New("TC eBPF local program is unavailable"))
-		}
-		attached, err := link.AttachTCX(link.TCXOptions{
-			Interface: linkDevice.Attrs().Index,
-			Program:   program,
-			Attach:    CiliumEBPF.AttachTCXEgress,
-		})
-		if err != nil {
-			return closeLinks(err)
-		}
-		attachment.localLink = attached
-		if backend.FakeIPICMPEnabled() {
-			icmpProgram := backend.FakeIPICMPLocalReplyProgram(attachment.framing)
-			if icmpProgram == nil {
-				return closeLinks(E.New("fakeip_icmp local reply program is unavailable"))
-			}
-			icmpAttached, err := link.AttachTCX(link.TCXOptions{
-				Interface: linkDevice.Attrs().Index,
-				Program:   icmpProgram,
-				Attach:    CiliumEBPF.AttachTCXEgress,
-			})
-			if err != nil {
-				return closeLinks(err)
-			}
-			attachment.localICMPLink = icmpAttached
-		}
+	fakeIPICMPEnabled := backend.FakeIPICMPEnabled()
+	pairs := []struct {
+		enabled     bool
+		role        string
+		attachType  CiliumEBPF.AttachType
+		program     *CiliumEBPF.Program
+		icmpProgram *CiliumEBPF.Program
+		mainLink    *link.Link
+		icmpLink    *tcxAttachedLink
+	}{
+		{attachment.role.local, "local", CiliumEBPF.AttachTCXEgress,
+			backend.LocalEgressProgram(attachment.framing), backend.FakeIPICMPLocalReplyProgram(attachment.framing),
+			&attachment.localLink, &attachment.localICMPLink},
+		{attachment.role.shared, "shared", CiliumEBPF.AttachTCXIngress,
+			backend.SharedIngressProgram(attachment.framing), backend.FakeIPICMPSharedReplyProgram(attachment.framing),
+			&attachment.sharedLink, &attachment.sharedICMPLink},
 	}
-	if attachment.role.shared {
-		program := backend.SharedIngressProgram(attachment.framing)
-		if program == nil {
-			return closeLinks(E.New("TC eBPF shared program is unavailable"))
+	for _, pair := range pairs {
+		if !pair.enabled {
+			continue
 		}
-		attached, err := link.AttachTCX(link.TCXOptions{
-			Interface: linkDevice.Attrs().Index,
-			Program:   program,
-			Attach:    CiliumEBPF.AttachTCXIngress,
-		})
+		mainLink, icmpLink, err := attachTCXProgramPair(
+			linkDevice.Attrs().Index, pair.attachType, pair.program, pair.icmpProgram, fakeIPICMPEnabled, pair.role,
+		)
 		if err != nil {
 			return closeLinks(err)
 		}
-		attachment.sharedLink = attached
-		if backend.FakeIPICMPEnabled() {
-			icmpProgram := backend.FakeIPICMPSharedReplyProgram(attachment.framing)
-			if icmpProgram == nil {
-				return closeLinks(E.New("fakeip_icmp shared reply program is unavailable"))
-			}
-			icmpAttached, err := link.AttachTCX(link.TCXOptions{
-				Interface: linkDevice.Attrs().Index,
-				Program:   icmpProgram,
-				Attach:    CiliumEBPF.AttachTCXIngress,
-			})
-			if err != nil {
-				return closeLinks(err)
-			}
-			attachment.sharedICMPLink = icmpAttached
-		}
+		*pair.mainLink = mainLink
+		*pair.icmpLink = icmpLink
 	}
 	return true, nil
+}
+
+func attachTCXProgramPair(
+	interfaceIndex int,
+	attachType CiliumEBPF.AttachType,
+	program *CiliumEBPF.Program,
+	icmpProgram *CiliumEBPF.Program,
+	icmpEnabled bool,
+	role string,
+) (link.Link, link.Link, error) {
+	if program == nil {
+		return nil, nil, E.New("TC eBPF ", role, " program is unavailable")
+	}
+	mainLink, err := link.AttachTCX(link.TCXOptions{Interface: interfaceIndex, Program: program, Attach: attachType})
+	if err != nil {
+		return nil, nil, err
+	}
+	if !icmpEnabled {
+		return mainLink, nil, nil
+	}
+	if icmpProgram == nil {
+		return nil, nil, E.Errors(E.New("fakeip_icmp ", role, " reply program is unavailable"), mainLink.Close())
+	}
+	icmpLink, err := link.AttachTCX(link.TCXOptions{Interface: interfaceIndex, Program: icmpProgram, Attach: attachType})
+	if err != nil {
+		return nil, nil, E.Errors(err, mainLink.Close())
+	}
+	return mainLink, icmpLink, nil
 }
 
 func updateTCInterfaceAttachment(
