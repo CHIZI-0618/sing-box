@@ -1,3 +1,5 @@
+//go:build with_ebpf && (linux || android)
+
 package clashapi
 
 import (
@@ -68,7 +70,7 @@ func TestGetEBPFDiagnosticsReportsOnlyEBPFInbounds(t *testing.T) {
 		&fakeEBPFInbound{tag: "ebpf-in", diagnostics: map[string]any{"tag": "ebpf-in", "state": "normal"}},
 	}}
 	router := chi.NewRouter()
-	router.Mount("/ebpf", ebpfRouter(manager))
+	mountEBPFRouter(router, manager)
 
 	request := httptest.NewRequest(http.MethodGet, "/ebpf/", nil)
 	recorder := httptest.NewRecorder()
@@ -91,18 +93,18 @@ func TestGetEBPFDiagnosticsReportsOnlyEBPFInbounds(t *testing.T) {
 	}
 }
 
-// TestGetEBPFDiagnosticsWithNoManagerReportsNotFound proves the handler
-// fails clearly instead of panicking when the inbound manager is
-// unavailable.
-func TestGetEBPFDiagnosticsWithNoManagerReportsNotFound(t *testing.T) {
-	router := chi.NewRouter()
-	router.Mount("/ebpf", ebpfRouter(nil))
-
-	request := httptest.NewRequest(http.MethodGet, "/ebpf/", nil)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", recorder.Code)
+func TestEBPFDiagnosticsRouteRequiresAnEBPFInbound(t *testing.T) {
+	for _, manager := range []adapter.InboundManager{
+		nil,
+		&fakeInboundManager{inbounds: []adapter.Inbound{&plainInbound{tag: "direct-in"}}},
+	} {
+		router := chi.NewRouter()
+		mountEBPFRouter(router, manager)
+		request := httptest.NewRequest(http.MethodGet, "/ebpf/", nil)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 without an eBPF inbound", recorder.Code)
+		}
 	}
 }
