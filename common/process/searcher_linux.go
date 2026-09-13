@@ -131,7 +131,7 @@ func (s *linuxSearcher) resolveSocketByNetlink(network string, source netip.Addr
 			return 0, 0, err
 		}
 	}
-	return querySocketDiagOnce(family, protocol, source)
+	return dumpSocketDiag(family, protocol, source, destination)
 }
 
 // The socket keeps the uid it was created with, while /proc reflects the
