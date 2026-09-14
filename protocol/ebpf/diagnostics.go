@@ -18,18 +18,7 @@ import (
 // intercepting traffic right now: either a TC attachment on a network
 // interface, or (Mechanism == "cgroup") the cgroup local data plane, which
 // has no per-interface attachment of its own.
-type EBPFAttachmentDiagnostics struct {
-	// InterfaceName is the network interface name for a TC attachment, or
-	// the cgroup path for the cgroup local data plane.
-	InterfaceName string `json:"interface_name"`
-	// InterfaceIndex is 0 for the cgroup local data plane, which has no
-	// interface index.
-	InterfaceIndex int    `json:"interface_index,omitempty"`
-	Role           string `json:"role"`      // "local", "shared", or "local+shared"
-	Framing        string `json:"framing"`   // "ethernet" or "raw_ip"; empty for cgroup
-	Mechanism      string `json:"mechanism"` // "tcx", "clsact", or "cgroup"
-	FakeIPICMP     bool   `json:"fakeip_icmp"`
-}
+type EBPFAttachmentDiagnostics = commonEBPF.AttachmentInfo
 
 // Runtime states EBPFDiagnostics.State reports. These summarize the fields
 // below into the one value most operators actually want at a glance; the
@@ -299,7 +288,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	i.tcDataPlaneAccess.RLock()
 	tcDataPlane := i.tcDataPlane
 	i.tcDataPlaneAccess.RUnlock()
-	diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.attachmentDiagnostics()...)
+	if tcDataPlane != nil {
+		diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.AttachmentDiagnostics()...)
+	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
 		diagnostics.Attachments = append(diagnostics.Attachments, shared.dataPlaneInstance().attachmentDiagnostics()...)
 	}

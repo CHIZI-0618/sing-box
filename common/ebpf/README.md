@@ -25,6 +25,14 @@ session state, process metadata, router integration, logs, counters, and
 user-facing diagnostics. It consumes the public mechanism API and must not
 reach into generated objects or duplicate their ABI.
 
+The inbound consumes TC kernel-resource orchestration through the narrow
+`tcRuntime` lifecycle contract. That contract exposes reconciliation,
+health/diagnostic snapshots, policy refresh, disable, and close operations, but
+no netlink objects, BPF links, qdiscs, routes, sysctl records, or raw program
+file descriptors. The current implementation remains in `protocol/ebpf` while
+it is migrated; moving it to the standalone library does not require another
+change to the inbound lifecycle.
+
 Some kernel resource orchestration predates this boundary and remains in the
 adapter temporarily. It must be migrated by ownership unit rather than by
 individual helper:
@@ -38,10 +46,10 @@ individual helper:
 | shared packet-rewrite attachment and kernel-state reconciliation | `protocol/ebpf` | standalone library runtime |
 | configuration, route rules, listeners and connection/UDP sessions | `protocol/ebpf` | sing-box adapter |
 
-The next migration step should move TC attachment, delivery, routing and
-rollback together behind one runtime API. Moving only the netlink helpers would
-expose unstable file descriptors and attachment details as public API while
-leaving resource ownership split across modules.
+The next migration step should move the implementation of that runtime -- TC
+attachment, delivery, routing and rollback -- together. Moving only the
+netlink helpers would expose unstable file descriptors and attachment details
+as public API while leaving resource ownership split across modules.
 
 The eBPF inbound defaults to the cgroup v2 socket-address backend for local
 operation and TC `packet_rewrite` for shared operation. Local mode can instead

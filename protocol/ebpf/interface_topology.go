@@ -18,7 +18,7 @@ func (i *Inbound) repairTCInfrastructure() (bool, error) {
 	if i.tcDataPlane == nil {
 		return false, nil
 	}
-	return i.tcDataPlane.repairInfrastructure()
+	return i.tcDataPlane.RepairInfrastructure()
 }
 
 func (i *Inbound) monitoredDefaultInterfaceName() string {
@@ -54,7 +54,7 @@ func (i *Inbound) tcAttachmentStateChanged(localInterface string, sharedInterfac
 	if i.tcDataPlane == nil {
 		return false, nil
 	}
-	return i.tcDataPlane.attachmentStateChanged(localInterface, sharedInterfaces)
+	return i.tcDataPlane.AttachmentStateChanged(localInterface, sharedInterfaces)
 }
 
 func (i *Inbound) tcAttachmentDescriptions() []string {
@@ -63,7 +63,7 @@ func (i *Inbound) tcAttachmentDescriptions() []string {
 	if i.tcDataPlane == nil {
 		return nil
 	}
-	return i.tcDataPlane.attachmentDescriptions()
+	return i.tcDataPlane.AttachmentDescriptions()
 }
 
 func (i *Inbound) updateTCHostAddresses(hostAddresses []netip.Addr) error {
@@ -72,7 +72,7 @@ func (i *Inbound) updateTCHostAddresses(hostAddresses []netip.Addr) error {
 	if i.tcDataPlane == nil {
 		return nil
 	}
-	return i.tcDataPlane.updateHostAddresses(hostAddresses)
+	return i.tcDataPlane.UpdateHostAddresses(hostAddresses)
 }
 
 func (i *Inbound) updateCgroupHostAddresses(hostAddresses []netip.Addr) error {

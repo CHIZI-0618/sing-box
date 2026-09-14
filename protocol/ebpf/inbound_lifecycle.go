@@ -260,7 +260,7 @@ func (i *Inbound) startInbound() error {
 		", attachments=[", func() string {
 			var attachments []string
 			if dataPlane != nil {
-				attachments = append(attachments, dataPlane.attachmentDescriptions()...)
+				attachments = append(attachments, dataPlane.AttachmentDescriptions()...)
 			}
 			if shared := i.sharedRewriteInstance(); shared != nil {
 				attachments = append(attachments, shared.dataPlaneInstance().attachmentDescriptions()...)
@@ -454,7 +454,10 @@ func (i *Inbound) closeResources() error {
 		sharedRewriteErr = shared.Close()
 	}
 	dataPlane := i.takeTCDataPlane()
-	disableErr := dataPlane.disable()
+	disableErr := error(nil)
+	if dataPlane != nil {
+		disableErr = dataPlane.Disable()
+	}
 	cgroupBackend := i.takeCgroupBackend()
 	cgroupErr := error(nil)
 	if cgroupBackend != nil {
@@ -524,7 +527,7 @@ func (i *Inbound) tcBackend() *commonEBPF.TCBackend {
 	if i.tcDataPlane == nil {
 		return nil
 	}
-	return i.tcDataPlane.backend
+	return i.tcDataPlane.Backend()
 }
 
 // cgroupBackendCloser is the part of a retained backend the reclaim needs, so
@@ -635,13 +638,13 @@ func (i *Inbound) takeSharedRewrite() *sharedRewrite {
 	return shared
 }
 
-func (i *Inbound) setTCDataPlane(dataPlane *tcDataPlane) {
+func (i *Inbound) setTCDataPlane(dataPlane tcRuntime) {
 	i.tcDataPlaneAccess.Lock()
 	i.tcDataPlane = dataPlane
 	i.tcDataPlaneAccess.Unlock()
 }
 
-func (i *Inbound) takeTCDataPlane() *tcDataPlane {
+func (i *Inbound) takeTCDataPlane() tcRuntime {
 	i.tcDataPlaneAccess.Lock()
 	dataPlane := i.tcDataPlane
 	i.tcDataPlane = nil
@@ -655,11 +658,14 @@ func (i *Inbound) reconcileTCDataPlane(localInterface string, sharedInterfaces [
 	if i.tcDataPlane == nil {
 		return nil
 	}
-	return i.tcDataPlane.reconcile(localInterface, sharedInterfaces, hostAddresses)
+	return i.tcDataPlane.Reconcile(localInterface, sharedInterfaces, hostAddresses)
 }
 
 // Keep the owner reachable after both normal shutdown and startup cleanup.
-func (i *Inbound) closeTakenTCDataPlane(dataPlane *tcDataPlane) error {
+func (i *Inbound) closeTakenTCDataPlane(dataPlane tcRuntime) error {
+	if dataPlane == nil {
+		return nil
+	}
 	err := dataPlane.Close()
 	if !dataPlane.IsClosed() {
 		i.setTCDataPlane(dataPlane)

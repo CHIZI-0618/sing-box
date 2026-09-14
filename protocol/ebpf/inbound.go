@@ -70,7 +70,7 @@ type Inbound struct {
 	usePlatformProcessFinder bool
 	listeners                internalListenerSet
 	udpNat                   *udpNATService
-	tcDataPlane              *tcDataPlane
+	tcDataPlane              tcRuntime
 	udpTimeout               time.Duration
 	enableTCP                bool
 	enableUDP                bool
