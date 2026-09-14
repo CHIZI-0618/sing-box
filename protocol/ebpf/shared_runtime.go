@@ -26,6 +26,35 @@ type sharedKernelRuntime interface {
 	Close() error
 }
 
+// sharedKernelRuntimeHooks are the only application actions the kernel
+// runtime may request. Keeping these callbacks explicit prevents attachment
+// code from retaining the protocol adapter and reaching into its listener,
+// UDP-session, logger, or routing state.
+type sharedKernelRuntimeHooks struct {
+	PrepareBackend     func() (*commonEBPF.SharedNetworkBackend, error)
+	DiscardBackend     func(*commonEBPF.SharedNetworkBackend) error
+	PurgeUserspaceFlow func()
+	Ready              func([]string)
+	WarnFlowPurge      func(interfaceName string, err error)
+}
+
+func (s *sharedRewrite) kernelRuntimeHooks() sharedKernelRuntimeHooks {
+	return sharedKernelRuntimeHooks{
+		PrepareBackend: s.prepareBackend,
+		DiscardBackend: func(backend *commonEBPF.SharedNetworkBackend) error {
+			if s.sharedBackendInstance() == backend {
+				s.takeSharedBackend()
+			}
+			return backend.Close()
+		},
+		PurgeUserspaceFlow: s.udpNat.Purge,
+		Ready:              s.sharedRewriteReadyLocked,
+		WarnFlowPurge: func(interfaceName string, err error) {
+			s.janitorWarnings.warn(s.inbound.logger, "purge shared packet-rewrite state for ", interfaceName, ": ", err)
+		},
+	}
+}
+
 func (d *sharedRewriteDataPlane) Reconcile(interfaceNames []string, hostAddresses []netip.Addr) error {
 	return d.reconcile(interfaceNames, hostAddresses)
 }

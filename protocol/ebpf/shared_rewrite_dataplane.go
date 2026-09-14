@@ -39,7 +39,7 @@ func temporarySharedRewriteAttachmentOptions() sharedRewriteAttachmentOptions {
 
 type sharedRewriteDataPlane struct {
 	access        sync.Mutex
-	owner         *sharedRewrite
+	hooks         sharedKernelRuntimeHooks
 	backend       *commonEBPF.SharedNetworkBackend
 	attachments   map[string]*sharedRewriteAttachment
 	hostAddresses []netip.Addr
@@ -72,9 +72,9 @@ type sharedRewriteAttachment struct {
 	icmpLink   link.Link
 }
 
-func newSharedRewriteDataPlane(owner *sharedRewrite, priority uint16) *sharedRewriteDataPlane {
+func newSharedRewriteDataPlane(hooks sharedKernelRuntimeHooks, priority uint16) *sharedRewriteDataPlane {
 	return &sharedRewriteDataPlane{
-		owner:       owner,
+		hooks:       hooks,
 		attachments: make(map[string]*sharedRewriteAttachment),
 		priority:    priority,
 	}
@@ -91,8 +91,8 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	// so a rollback that already detached something never leaves stale NAT
 	// entries behind just because reconcile gave up partway.
 	defer func() {
-		if changed {
-			d.owner.udpNat.Purge()
+		if changed && d.hooks.PurgeUserspaceFlow != nil {
+			d.hooks.PurgeUserspaceFlow()
 		}
 	}()
 
@@ -119,7 +119,10 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	newBackend := false
 	if len(desired) > 0 && backend == nil {
 		var err error
-		backend, err = d.owner.prepareBackend()
+		if d.hooks.PrepareBackend == nil {
+			return E.New("shared packet-rewrite backend factory is unavailable")
+		}
+		backend, err = d.hooks.PrepareBackend()
 		if err != nil {
 			return E.Cause(err, "initialize shared packet-rewrite backend")
 		}
@@ -131,7 +134,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 			if newBackend {
 				return E.Errors(
 					E.Cause(err, "update shared packet-rewrite host addresses"),
-					discardSharedRewriteBackend(d.owner, backend),
+					d.discardBackend(backend),
 				)
 			}
 			return E.Cause(err, "update shared packet-rewrite host addresses")
@@ -163,7 +166,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 			}
 		}
 		if newBackend {
-			cause = E.Errors(cause, discardSharedRewriteBackend(d.owner, backend))
+			cause = E.Errors(cause, d.discardBackend(backend))
 		}
 		return cause
 	}
@@ -263,18 +266,20 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	d.enabled = wantEnabled
 	if wantEnabled && !d.ready {
 		d.ready = true
-		d.owner.sharedRewriteReadyLocked(d.attachmentDescriptionsLocked())
+		if d.hooks.Ready != nil {
+			d.hooks.Ready(d.attachmentDescriptionsLocked())
+		}
 	}
 
 	return closeErr
 }
 
-func discardSharedRewriteBackend(owner *sharedRewrite, backend *commonEBPF.SharedNetworkBackend) error {
+func (d *sharedRewriteDataPlane) discardBackend(backend *commonEBPF.SharedNetworkBackend) error {
 	if backend == nil {
 		return nil
 	}
-	if owner.sharedBackendInstance() == backend {
-		owner.takeSharedBackend()
+	if d.hooks.DiscardBackend != nil {
+		return d.hooks.DiscardBackend(backend)
 	}
 	return backend.Close()
 }
@@ -282,7 +287,9 @@ func discardSharedRewriteBackend(owner *sharedRewrite, backend *commonEBPF.Share
 func (d *sharedRewriteDataPlane) detachLocked(attachment *sharedRewriteAttachment) error {
 	if d.backend != nil {
 		if _, _, err := d.backend.PurgeInterfaceFlows(uint32(attachment.interfaceIndex), d.backend.MapCapacity().Proxy); err != nil {
-			d.owner.janitorWarnings.warn(d.owner.inbound.logger, "purge shared packet-rewrite state for ", attachment.interfaceName, ": ", err)
+			if d.hooks.WarnFlowPurge != nil {
+				d.hooks.WarnFlowPurge(attachment.interfaceName, err)
+			}
 		}
 	}
 	return attachment.Close()

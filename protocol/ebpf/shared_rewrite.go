@@ -77,7 +77,7 @@ func (s *sharedRewrite) Start(interfaceNames []string, hostAddresses []netip.Add
 	if err := s.startListeners(); err != nil {
 		return E.Errors(err, s.closeListeners())
 	}
-	dataPlane := newSharedRewriteDataPlane(s, s.tcPriority)
+	dataPlane := newSharedRewriteDataPlane(s.kernelRuntimeHooks(), s.tcPriority)
 	s.setDataPlane(dataPlane)
 	if err := dataPlane.Reconcile(interfaceNames, hostAddresses); err != nil {
 		return E.Errors(err, s.Close())

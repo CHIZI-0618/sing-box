@@ -39,6 +39,12 @@ and rebuild-required state plus attachment snapshots; sing-box retains retry
 classification and scheduling. This prevents an extracted library from
 depending on protocol-layer recovery enums.
 
+The shared runtime does not retain the protocol adapter. Backend construction,
+userspace-flow invalidation, ready notification, and warning delivery cross the
+boundary through an explicit callback set. The callback surface carries only
+mechanism values and ordinary Go values; it does not expose listeners, UDP NAT
+tables, loggers, routers, or the inbound itself.
+
 Some kernel resource orchestration predates this boundary and remains in the
 adapter temporarily. It must be migrated by ownership unit rather than by
 individual helper:
