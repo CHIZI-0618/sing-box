@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -32,15 +33,13 @@ func TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet(t *testin
 // failing, no rollback anomaly.
 func TestDiagnosticsReportsNormalWithAHealthyAttachment(t *testing.T) {
 	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
-	inbound.tcDataPlane = &tcDataPlane{
-		attachments: []*tcInterfaceAttachment{
-			{
-				interfaceName:  "eth0",
-				interfaceIndex: 2,
-				role:           tcInterfaceRole{local: true},
-				attachmentType: "tcx",
-			},
-		},
+	inbound.tcDataPlane = &testTCRuntime{
+		attachments: []commonEBPF.AttachmentInfo{{
+			InterfaceName:  "eth0",
+			InterfaceIndex: 2,
+			Role:           "local",
+			Mechanism:      "tcx",
+		}},
 	}
 	diagnostics := inbound.Diagnostics()
 	if diagnostics.State != EBPFDiagnosticsStateNormal {
@@ -123,10 +122,13 @@ func TestDiagnosticsRecordsRecoveryTimeOnTransitionToSettled(t *testing.T) {
 func TestDiagnosticsReportsNeedsAttentionWhenUnrecoverable(t *testing.T) {
 	inbound := &Inbound{sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite, udpTimeout: time.Minute}
 	shared := newSharedRewrite(inbound, option.EBPFSharedOptions{})
-	shared.setDataPlane(&sharedRewriteDataPlane{
-		attachments: map[string]*sharedRewriteAttachment{
-			"eth0": {interfaceName: "eth0", interfaceIndex: 2, attachmentType: "tcx"},
-		},
+	shared.setDataPlane(&testSharedKernelRuntime{
+		attachments: []commonEBPF.AttachmentInfo{{
+			InterfaceName:  "eth0",
+			InterfaceIndex: 2,
+			Role:           "shared",
+			Mechanism:      "tcx",
+		}},
 	})
 	inbound.setSharedRewrite(shared)
 	inbound.recordTCUpdateOutcome(tcUpdateOutcome{

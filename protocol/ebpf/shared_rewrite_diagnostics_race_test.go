@@ -15,7 +15,7 @@ func TestSharedRewriteDiagnosticsDoesNotRaceWithClose(t *testing.T) {
 	inbound := &Inbound{udpTimeout: time.Minute}
 	shared := newSharedRewrite(inbound, option.EBPFSharedOptions{})
 	inbound.setSharedRewrite(shared)
-	shared.setDataPlane(newSharedRewriteDataPlane(shared.kernelRuntimeHooks(), 1))
+	shared.setDataPlane(newSharedKernelRuntime(shared.kernelRuntimeHooks(), 1))
 
 	done := make(chan struct{})
 	go func() {

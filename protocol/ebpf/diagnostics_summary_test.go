@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sagernet/netlink"
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
 
 type captureLogger struct {
@@ -76,19 +76,13 @@ func TestLogStartupSummaryReportsAnActualAttachmentAndItsFakeIPICMPCoverage(t *t
 		fakeIPICMPReply: true,
 		logger:          logger,
 	}
-	inbound.tcDataPlane = &tcDataPlane{
-		attachments: []*tcInterfaceAttachment{
-			{
-				interfaceName:  "eth0",
-				role:           tcInterfaceRole{local: true},
-				attachmentType: "tcx",
-				// A real fakeip_icmp-covered attachment has a non-nil
-				// localICMPFilter or localICMPLink; attachmentDiagnostics
-				// reads exactly that to decide FakeIPICMP, so a bare
-				// non-nil filter here is enough without a real netlink call.
-				localICMPFilter: &netlink.BpfFilter{},
-			},
-		},
+	inbound.tcDataPlane = &testTCRuntime{
+		attachments: []commonEBPF.AttachmentInfo{{
+			InterfaceName: "eth0",
+			Role:          "local",
+			Mechanism:     "tcx",
+			FakeIPICMP:    true,
+		}},
 	}
 	inbound.logStartupSummary()
 

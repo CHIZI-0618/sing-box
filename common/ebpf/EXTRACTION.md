@@ -30,16 +30,17 @@ sources, both endian variants of generated objects, Go ABI declarations, map
 layouts, program selection, and loaders are one versioned unit and must never
 be split across repositories or releases.
 
-Then move each runtime as a complete resource owner:
+The in-tree preparation has already grouped each runtime under
+`common/ebpf/runtime`. Move each directory as a complete resource owner:
 
 ### TC socket-assignment runtime
 
-- `tc_dataplane.go`
-- `tc_reconcile.go`
-- `tc_netlink.go`
-- `tc_delivery.go`
-- `tc_routing.go`
-- the `tcDataPlane` receiver portion of `interface_topology.go`
+- `runtime/tc_dataplane.go`
+- `runtime/tc_reconcile.go`
+- `runtime/tc_netlink.go`
+- `runtime/tc_delivery.go`
+- `runtime/tc_routing.go`
+- `runtime/tc_topology.go`
 - their unit and network-namespace tests
 
 This unit owns the TC/TCX links or filters, interface locks, clsact fallback,
@@ -49,7 +50,7 @@ or program FD becomes public API.
 
 ### Shared packet-rewrite runtime
 
-- `shared_rewrite_dataplane.go`
+- `runtime/shared_rewrite_dataplane.go`
 - its attachment, sysctl, health, rollback, race, and network-namespace tests
 
 This unit owns its `SharedNetworkBackend`, TC/TCX attachments, interface locks,

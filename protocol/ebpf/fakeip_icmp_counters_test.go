@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"encoding/binary"
+	"net/netip"
 	"testing"
 
 	CiliumEBPF "github.com/cilium/ebpf"
@@ -11,6 +12,30 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func newDiagnosticsFakeIPICMPBackend(t *testing.T) *commonEBPF.TCBackend {
+	t.Helper()
+	policy, err := commonEBPF.CompilePolicy(commonEBPF.PolicyConfig{
+		EnableTCP:  true,
+		FakeIPIPv4: netip.MustParsePrefix("198.18.0.0/15"),
+	})
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	backend, err := commonEBPF.PrepareTC(commonEBPF.TCConfig{
+		ListenerPort:    23456,
+		EnableLocal:     true,
+		EnableShared:    true,
+		EnableIPv4:      true,
+		EnableTCP:       true,
+		Policy:          policy,
+		FakeIPICMPReply: true,
+	})
+	if err != nil {
+		t.Skipf("cannot prepare a real TC eBPF backend in this environment: %v", err)
+	}
+	return backend
+}
 
 // runFakeIPICMPProgram drives a fakeip_icmp program directly via
 // BPF_PROG_TEST_RUN, the same technique common/ebpf's own
@@ -62,11 +87,11 @@ func testDisqualifiedEchoRequest() []byte {
 // value, not zero (which a broken wiring would also show, indistinguishably
 // from correct-but-idle).
 func TestDiagnosticsSumsFakeIPICMPCountersFromTCBackend(t *testing.T) {
-	backend := newRealFakeIPICMPBackend(t)
+	backend := newDiagnosticsFakeIPICMPBackend(t)
 	t.Cleanup(func() { _ = backend.Close() })
 
 	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC, fakeIPICMPReply: true}
-	inbound.tcDataPlane = &tcDataPlane{backend: backend}
+	inbound.tcDataPlane = newUnstartedTCRuntime(backend)
 
 	before := inbound.Diagnostics().Counters
 	if before.FakeIPICMPPassThrough != 0 {
@@ -99,7 +124,7 @@ func TestDiagnosticsFakeIPICMPCountersZeroWhenDisabled(t *testing.T) {
 	backend := newLoopbackTestTCBackend(t)
 
 	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
-	inbound.tcDataPlane = &tcDataPlane{backend: backend}
+	inbound.tcDataPlane = newUnstartedTCRuntime(backend)
 
 	counters := inbound.Diagnostics().Counters
 	if counters.FakeIPICMPReplies != 0 || counters.FakeIPICMPPassThrough != 0 || counters.FakeIPICMPRewriteFailureDrops != 0 {

@@ -9,9 +9,9 @@ The implementation is split into a reusable kernel mechanism package and a
 sing-box application adapter. This is an enforced dependency direction:
 
 ```text
-protocol/ebpf  --->  common/ebpf  --->  BPF objects and Linux APIs
-   sing-box             reusable
-   semantics            mechanisms
+protocol/ebpf  --->  common/ebpf/runtime  --->  common/ebpf
+   sing-box          network resources       BPF core
+   semantics        and reconciliation       and objects
 ```
 
 `common/ebpf` owns the BPF C sources, generated little- and big-endian objects,
@@ -32,9 +32,9 @@ The inbound consumes TC kernel-resource orchestration through the narrow
 health/diagnostic snapshots, a value-only delivery/routing snapshot, policy
 refresh, disable, and close operations, but
 no netlink objects, BPF links, qdiscs, routes, sysctl records, or raw program
-file descriptors. The current implementation remains in `protocol/ebpf` while
-it is migrated; moving it to the standalone library does not require another
-change to the inbound lifecycle.
+file descriptors. Its implementation now lives in `common/ebpf/runtime`; moving
+that package to the standalone module does not require another change to the
+inbound lifecycle.
 
 Shared packet-rewrite attachment reconciliation is likewise consumed through
 the `sharedKernelRuntime` contract. The mechanism reports only enabled, closed,
@@ -68,15 +68,15 @@ individual helper:
 | --- | --- | --- |
 | BPF source, objects, ABI, loaders, maps and capability probes | `common/ebpf` | standalone library core |
 | cgroup attachment, redirect token routes, self-bypass and socket process tracking | `common/ebpf` | standalone library core |
-| TC/TCX attachment, clsact fallback and attachment health | `protocol/ebpf` | standalone library runtime |
-| delivery veth, policy routes/rules and modified sysctls | `protocol/ebpf` | standalone library runtime |
-| shared packet-rewrite attachment and kernel-state reconciliation | `protocol/ebpf` | standalone library runtime |
+| TC/TCX attachment, clsact fallback and attachment health | `common/ebpf/runtime` | standalone library runtime |
+| delivery veth, policy routes/rules and modified sysctls | `common/ebpf/runtime` | standalone library runtime |
+| shared packet-rewrite attachment and kernel-state reconciliation | `common/ebpf/runtime` | standalone library runtime |
 | configuration, route rules, listeners and connection/UDP sessions | `protocol/ebpf` | sing-box adapter |
 
-The next migration step should move the implementation of that runtime -- TC
-attachment, delivery, routing and rollback -- together. Moving only the
-netlink helpers would expose unstable file descriptors and attachment details
-as public API while leaving resource ownership split across modules.
+The in-tree migration moved TC attachment, delivery, routing, sysctl ownership,
+shared packet rewrite, and rollback together. The shared netlink primitives
+remain private to the runtime package; unstable file descriptors and attachment
+details are not public API.
 
 The eBPF inbound defaults to the cgroup v2 socket-address backend for local
 operation and TC `packet_rewrite` for shared operation. Local mode can instead

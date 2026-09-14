@@ -122,7 +122,7 @@ func TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails(t *testi
 	next := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
 	inbound := &Inbound{}
-	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 	inbound.bypassRuleSetPolicy = previous
 	inbound.bypassRuleSetPolicyVersion = 5
@@ -187,7 +187,7 @@ func TestApplyBypassCIDRPolicyLeavesBackendVersionOnFailedRevert(t *testing.T) {
 
 	inbound := &Inbound{}
 	inbound.logger = log.NewNOPFactory().Logger()
-	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 	inbound.bypassRuleSetPolicy = previous
 	inbound.bypassRuleSetPolicyVersion = 5
@@ -233,7 +233,7 @@ func TestApplyBypassCIDRPolicyVersionUnchangedForIdenticalContent(t *testing.T) 
 	policy := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
 	inbound := &Inbound{}
-	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 
 	if err := inbound.applyBypassCIDRPolicyLocked(policy); err != nil {
 		t.Fatalf("first apply: %v", err)
@@ -278,7 +278,7 @@ func TestBypassRuleSetRetryCountOnlyCountsSchedulerRetries(t *testing.T) {
 
 	inbound := &Inbound{}
 	inbound.logger = log.NewNOPFactory().Logger()
-	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.bypassRuleSetStarted = true
 
 	if err := inbound.refreshBypassRuleSetsLocked(false); err != nil {
@@ -332,7 +332,7 @@ func TestApplyBypassCIDRPolicySucceedsAcrossRealBackends(t *testing.T) {
 	next := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
 	inbound := &Inbound{}
-	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.bypassRuleSetPolicyVersion = 5
 	inbound.bypassRuleSetExpectedVersion = 5
 	inbound.bypassRuleSetTC = bypassRuleSetBackendVersion{version: 5, known: true}
@@ -373,7 +373,7 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 	tc := newLoopbackTestTCBackend(t)
 	inbound := &Inbound{}
 	inbound.logger = log.NewNOPFactory().Logger()
-	inbound.tcDataPlane = &tcDataPlane{backend: tc}
+	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 
 	first := bypassPolicyFor(t, netip.MustParsePrefix("10.0.0.0/8"))
@@ -446,7 +446,7 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 func TestUpdateBypassRuleSetWakesTheSchedulerOnFailure(t *testing.T) {
 	inbound := &Inbound{bypassRuleSetStarted: true}
 	inbound.logger = log.NewNOPFactory().Logger()
-	inbound.tcDataPlane = &tcDataPlane{backend: &commonEBPF.TCBackend{}} // zero value: never usable
+	inbound.tcDataPlane = newUnstartedTCRuntime(&commonEBPF.TCBackend{}) // zero value: never usable
 	inbound.interfaceMonitor.network = &testNetworkUpdateMonitor{}
 	inbound.interfaceMonitor.updates = make(chan struct{}, 1)
 

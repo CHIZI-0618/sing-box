@@ -267,9 +267,9 @@ func (c tcRetryComponent) String() string {
 // already satisfied before general TC and bypass_rule_set failures were also
 // covered by this scheduler.
 //
-//   - sharedRewrite: the shared packet-rewrite attach step specifically (see
-//     tcSharedRewriteOutcome's own history; sharedRewriteDataPlane.retryOutcome
-//     is this field's classifier).
+//   - sharedRewrite: the shared packet-rewrite attach step specifically. The
+//     adapter classifies the runtime's backend health into this scheduler's
+//     recoverable/unrecoverable states.
 //   - general: every other TC step in updateTCInterfaces -- inventory,
 //     topology, infrastructure (routing/rules/delivery veth), the attachment
 //     reconcile itself, and host address policy. These are combined into one

@@ -6,10 +6,8 @@ import (
 	"net/netip"
 	"slices"
 
-	"github.com/sagernet/netlink"
-	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
+	kernelRuntime "github.com/sagernet/sing-box/common/ebpf/runtime"
 	"github.com/sagernet/sing/common/control"
-	E "github.com/sagernet/sing/common/exceptions"
 )
 
 func (i *Inbound) repairTCInfrastructure() (bool, error) {
@@ -29,17 +27,7 @@ func (i *Inbound) monitoredDefaultInterfaceName() string {
 }
 
 func availableLocalTCInterface(enabled bool, interfaceName string) (string, error) {
-	if !enabled || interfaceName == "" {
-		return "", nil
-	}
-	_, err := netlink.LinkByName(interfaceName)
-	if err != nil && tcLinkNotFound(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", E.Cause(err, "find local TC eBPF interface ", interfaceName)
-	}
-	return interfaceName, nil
+	return kernelRuntime.AvailableLocalTCInterface(enabled, interfaceName)
 }
 
 func activeSharedInterfaces(configured []string, defaultInterface string) []string {
@@ -106,98 +94,4 @@ func collectHostAddresses(interfaces []control.Interface) []netip.Addr {
 	})
 	addresses = slices.Compact(addresses)
 	return addresses
-}
-
-func (d *tcDataPlane) attachmentStateChanged(localInterface string, sharedInterfaces []string) (bool, error) {
-	d.access.Lock()
-	defer d.access.Unlock()
-	desired, err := d.desiredAttachmentState(localInterface, sharedInterfaces)
-	if err != nil {
-		return false, err
-	}
-	if tcAttachmentTopologyChanged(d.attachments, desired) {
-		return true, nil
-	}
-	for _, attachment := range d.attachments {
-		if localInterface == "" && attachment.role.local {
-			if _, err = netlink.LinkByName(attachment.interfaceName); tcLinkNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return false, err
-			}
-			// During a mobile-network handoff the default-interface monitor can
-			// briefly report no interface while the old link is still usable. Keep
-			// that attachment only when its kernel filters are actually healthy;
-			// the link's presence alone is not evidence that interception remains
-			// active (the filters may have been flushed during the handoff).
-		}
-		attached, err := attachment.filtersAttached(d.priority, d.backend)
-		if err != nil {
-			return false, err
-		}
-		if !attached {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-type tcAttachmentState struct {
-	index   int
-	framing commonEBPF.TCLinkFraming
-	role    tcInterfaceRole
-}
-
-func desiredTCAttachmentState(
-	localInterface string,
-	sharedInterfaces []string,
-	linkByName func(string) (netlink.Link, error),
-) (map[string]tcAttachmentState, error) {
-	roles := make(map[string]tcInterfaceRole, len(sharedInterfaces)+1)
-	if localInterface != "" {
-		roles[localInterface] = tcInterfaceRole{local: true}
-	}
-	for _, interfaceName := range sharedInterfaces {
-		role := roles[interfaceName]
-		role.shared = true
-		roles[interfaceName] = role
-	}
-	interfaces := make(map[string]tcAttachmentState, len(roles))
-	for interfaceName, role := range roles {
-		link, err := linkByName(interfaceName)
-		if err != nil && tcLinkNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return nil, E.Cause(err, "find TC eBPF interface ", interfaceName)
-		}
-		if link == nil || link.Attrs() == nil {
-			return nil, E.New("invalid TC eBPF interface ", interfaceName)
-		}
-		framing, err := tcLinkFraming(link)
-		if err != nil {
-			return nil, err
-		}
-		interfaces[interfaceName] = tcAttachmentState{
-			index:   link.Attrs().Index,
-			framing: framing,
-			role:    role,
-		}
-	}
-	return interfaces, nil
-}
-
-func tcAttachmentTopologyChanged(attachments []*tcInterfaceAttachment, desired map[string]tcAttachmentState) bool {
-	if len(attachments) != len(desired) {
-		return true
-	}
-	for _, attachment := range attachments {
-		state, loaded := desired[attachment.interfaceName]
-		if !loaded || state.index != attachment.interfaceIndex ||
-			state.framing != attachment.framing || state.role != attachment.role {
-			return true
-		}
-	}
-	return false
 }
