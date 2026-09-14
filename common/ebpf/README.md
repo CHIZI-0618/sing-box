@@ -1,5 +1,48 @@
 # eBPF inbound backends
 
+## Package boundary
+
+The implementation is split into a reusable kernel mechanism package and a
+sing-box application adapter. This is an enforced dependency direction:
+
+```text
+protocol/ebpf  --->  common/ebpf  --->  BPF objects and Linux APIs
+   sing-box             reusable
+   semantics            mechanisms
+```
+
+`common/ebpf` owns the BPF C sources, generated little- and big-endian objects,
+Go/C ABI, maps, programs, capability selection, generic policy compilation,
+and cgroup attachment lifecycles. It may depend on Linux/eBPF libraries and
+small general-purpose packages, but must not import sing-box application
+packages. `boundary_test.go` enforces this rule. Its import of
+`common/ebpf/internal/bpfgen` is a self-reference to generated objects that
+moves with the package.
+
+`protocol/ebpf` owns sing-box configuration and validation, route-rule and
+rule-set translation, Android package-to-UID resolution, listeners, UDP NAT and
+session state, process metadata, router integration, logs, counters, and
+user-facing diagnostics. It consumes the public mechanism API and must not
+reach into generated objects or duplicate their ABI.
+
+Some kernel resource orchestration predates this boundary and remains in the
+adapter temporarily. It must be migrated by ownership unit rather than by
+individual helper:
+
+| Ownership unit | Current location | Target |
+| --- | --- | --- |
+| BPF source, objects, ABI, loaders, maps and capability probes | `common/ebpf` | standalone library core |
+| cgroup program attachment, self-bypass and socket process tracking | `common/ebpf` | standalone library core |
+| TC/TCX attachment, clsact fallback and attachment health | `protocol/ebpf` | standalone library runtime |
+| delivery veth, policy routes/rules and modified sysctls | `protocol/ebpf` | standalone library runtime |
+| shared packet-rewrite attachment and kernel-state reconciliation | `protocol/ebpf` | standalone library runtime |
+| configuration, route rules, listeners and connection/UDP sessions | `protocol/ebpf` | sing-box adapter |
+
+The next migration step should move TC attachment, delivery, routing and
+rollback together behind one runtime API. Moving only the netlink helpers would
+expose unstable file descriptors and attachment details as public API while
+leaving resource ownership split across modules.
+
 The eBPF inbound defaults to the cgroup v2 socket-address backend for local
 operation and TC `packet_rewrite` for shared operation. Local mode can instead
 use TC, while shared `socket_assign` preserves the original tuple and assigns
