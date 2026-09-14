@@ -1,5 +1,8 @@
 # eBPF inbound backends
 
+The concrete standalone-module migration units, dependency policy, lifecycle
+invariants, and acceptance gate are recorded in [EXTRACTION.md](EXTRACTION.md).
+
 ## Package boundary
 
 The implementation is split into a reusable kernel mechanism package and a
