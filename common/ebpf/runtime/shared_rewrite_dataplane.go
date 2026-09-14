@@ -47,6 +47,7 @@ type sharedRewriteDataPlane struct {
 	priority           uint16
 	enabled            bool
 	ready              bool
+	closed             bool
 }
 
 type sharedRewriteAttachment struct {
@@ -90,6 +91,9 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	if d.closed {
+		return E.New("shared packet-rewrite runtime is closed")
+	}
 	defer func() {
 		reconcileErr = E.Errors(reconcileErr, d.closeRetiredLocked())
 	}()
@@ -363,6 +367,9 @@ func (d *sharedRewriteDataPlane) Close() error {
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	if d.closed {
+		return nil
+	}
 	var closeErr error
 	if d.enabled && d.backend != nil {
 		closeErr = d.backend.Disable()
@@ -383,6 +390,9 @@ func (d *sharedRewriteDataPlane) Close() error {
 		if d.backend.IsClosed() {
 			d.backend = nil
 		}
+	}
+	if d.backend == nil {
+		d.closed = true
 	}
 	return closeErr
 }

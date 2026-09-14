@@ -12,7 +12,11 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-const defaultTCPriority uint16 = 1
+const (
+	// DefaultTCPriority is used when a runtime config leaves Priority unset.
+	DefaultTCPriority uint16 = 1
+	defaultTCPriority        = DefaultTCPriority
+)
 
 // AvailableLocalTCInterface returns the current local TC target, treating a
 // missing interface as a transient no-target state.
@@ -57,8 +61,16 @@ type TCRuntimeConfig struct {
 	Priority              uint16
 }
 
-// NewTCRuntime starts and returns one complete TC resource owner.
+// NewTCRuntime starts and returns one complete TC resource owner. If startup
+// and its rollback both fail, runtime is non-nil and the caller must retain it
+// and retry Close. On an ordinary startup failure runtime is nil.
 func NewTCRuntime(config TCRuntimeConfig) (TCRuntime, error) {
+	if config.Backend == nil {
+		return nil, E.New("TC eBPF backend is required")
+	}
+	if config.Priority == 0 {
+		config.Priority = DefaultTCPriority
+	}
 	return startTCDataPlane(
 		config.Backend,
 		config.LocalEnabled,
@@ -73,6 +85,7 @@ func NewTCRuntime(config TCRuntimeConfig) (TCRuntime, error) {
 
 // NewUnstartedTCRuntime transfers a prepared backend into a runtime owner so
 // startup cleanup follows the same retryable lifetime as a started runtime.
+// A nil backend produces an already-closed owner.
 func NewUnstartedTCRuntime(backend *core.TCBackend) TCRuntime {
 	return &tcDataPlane{backend: backend}
 }
@@ -81,6 +94,8 @@ func (d *tcDataPlane) Backend() *core.TCBackend {
 	if d == nil {
 		return nil
 	}
+	d.access.Lock()
+	defer d.access.Unlock()
 	return d.backend
 }
 
@@ -145,7 +160,9 @@ type SharedPacketRewriteRuntime interface {
 }
 
 // SharedPacketRewriteHooks are the only application actions requested by the
-// shared runtime. Callbacks must not call back into the same runtime directly.
+// shared runtime. Callbacks run while reconciliation owns the runtime lock and
+// must not call back into the same runtime directly. PrepareBackend transfers
+// ownership of a successful result to the runtime.
 type SharedPacketRewriteHooks struct {
 	PrepareBackend     func() (*core.SharedNetworkBackend, error)
 	PurgeUserspaceFlow func()
@@ -158,7 +175,13 @@ type SharedPacketRewriteRuntimeConfig struct {
 	Priority uint16
 }
 
+// NewSharedPacketRewriteRuntime creates a runtime that may initially wait with
+// no backend until one of its configured interfaces appears. A zero Priority
+// selects DefaultTCPriority.
 func NewSharedPacketRewriteRuntime(config SharedPacketRewriteRuntimeConfig) SharedPacketRewriteRuntime {
+	if config.Priority == 0 {
+		config.Priority = DefaultTCPriority
+	}
 	return newSharedRewriteDataPlane(config.Hooks, config.Priority)
 }
 
@@ -191,7 +214,7 @@ func (d *sharedRewriteDataPlane) IsClosed() bool {
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
-	return d.backend == nil && len(d.attachments) == 0 && len(d.retiredAttachments) == 0
+	return d.closed
 }
 
 func (d *sharedRewriteDataPlane) BackendClosed() bool {
@@ -200,6 +223,9 @@ func (d *sharedRewriteDataPlane) BackendClosed() bool {
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	if d.closed {
+		return true
+	}
 	closed, _ := d.backendStateLocked()
 	return closed
 }

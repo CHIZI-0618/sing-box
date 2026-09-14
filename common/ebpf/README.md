@@ -60,6 +60,22 @@ types are confined to those bridges and implementation files. Extraction can
 therefore replace the bridges with standalone-library constructors without
 rewriting inbound startup, monitoring, diagnostics, or shutdown.
 
+The public runtime surface is deliberately small:
+
+- `runtime.NewTCRuntime` takes a prepared `TCBackend` and transfers it into a
+  complete TC network-resource owner;
+- `runtime.NewUnstartedTCRuntime` transfers a backend into the same cleanup
+  owner when adapter setup fails before network startup;
+- `runtime.NewSharedPacketRewriteRuntime` creates a lazy shared runtime whose
+  backend factory is an explicit callback;
+- both runtimes expose only reconciliation, health, lifecycle, backend access
+  for flow/policy operations, and value-only diagnostics.
+
+A non-nil runtime returned together with a TC startup error represents failed
+rollback state and must be retained until `Close` succeeds. A shared runtime
+waiting for its first interface is open, not closed, even though it has not yet
+called its backend factory.
+
 Some kernel resource orchestration predates this boundary and remains in the
 adapter temporarily. It must be migrated by ownership unit rather than by
 individual helper:

@@ -75,9 +75,10 @@ The sing-box adapter should consume only:
   snapshots;
 - explicit callback values that contain no sing-box types.
 
-The current `tcRuntime` and `sharedKernelRuntime` interfaces are consumer-side
-contracts. During extraction their bridge functions change to call the new
-module constructors; inbound startup, monitoring, diagnostics, retry
+The exported `runtime.TCRuntime` and
+`runtime.SharedPacketRewriteRuntime` interfaces are the mechanism contracts;
+the adapter aliases them behind its bridge files. During extraction only those
+bridge import paths change; inbound startup, monitoring, diagnostics, retry
 scheduling, and shutdown do not change.
 
 Keep the following in `protocol/ebpf`:
