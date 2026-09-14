@@ -12,9 +12,12 @@ import (
 
 	CiliumEBPF "github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"golang.org/x/sys/unix"
 )
 
 const bpfFlagNoPrealloc = 1
+
+var rawAttachProgram = link.RawAttachProgram
 
 var loadTC = BPFGen.LoadTC
 
@@ -29,10 +32,15 @@ var loadSharedNetwork = BPFGen.LoadSharedNetwork
 var loadFakeIPICMP = BPFGen.LoadFakeIPICMP
 
 func attachProgramRaw(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {
-	if err := link.RawAttachProgram(link.RawAttachProgramOptions{Target: target, Program: program, Attach: attachType, Flags: 2}); err == nil {
-		return nil
-	}
-	return link.RawAttachProgram(link.RawAttachProgramOptions{Target: target, Program: program, Attach: attachType})
+	// Never retry without BPF_F_ALLOW_MULTI. An unflagged BPF_PROG_ATTACH can
+	// replace an existing single program, including Android netd's root-cgroup
+	// hooks, and would then prevent that service from attaching again.
+	return rawAttachProgram(link.RawAttachProgramOptions{
+		Target:  target,
+		Program: program,
+		Attach:  attachType,
+		Flags:   unix.BPF_F_ALLOW_MULTI,
+	})
 }
 
 func rawDetachProgram(target int, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) error {

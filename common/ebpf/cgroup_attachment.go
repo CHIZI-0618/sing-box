@@ -14,6 +14,59 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type cgroupProgramLink interface {
+	Close() error
+}
+
+// attachCgroupProgram prefers BPF_LINK_CREATE, whose cgroup implementation is
+// inherently multi-program, and falls back only to BPF_PROG_ATTACH with
+// BPF_F_ALLOW_MULTI. It must never fall back to an exclusive attachment: doing
+// so can replace a system-owned cgroup program.
+func attachCgroupProgram(path string, program *CiliumEBPF.Program, attachType CiliumEBPF.AttachType) (cgroupProgramLink, error) {
+	cgroupFile, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	programLink, linkErr := link.AttachRawLink(link.RawLinkOptions{
+		Target:  int(cgroupFile.Fd()),
+		Program: program,
+		Attach:  attachType,
+	})
+	if linkErr == nil {
+		_ = cgroupFile.Close()
+		return programLink, nil
+	}
+	if !cgroupLinkUnavailable(linkErr) {
+		_ = cgroupFile.Close()
+		return nil, linkErr
+	}
+	if err = attachProgramRaw(int(cgroupFile.Fd()), program, attachType); err != nil {
+		_ = cgroupFile.Close()
+		return nil, E.Errors(linkErr, err)
+	}
+	return &legacyCgroupProgramLink{
+		cgroupFile: cgroupFile,
+		program:    program,
+		attachType: attachType,
+	}, nil
+}
+
+type legacyCgroupProgramLink struct {
+	cgroupFile *os.File
+	program    *CiliumEBPF.Program
+	attachType CiliumEBPF.AttachType
+}
+
+func (l *legacyCgroupProgramLink) Close() error {
+	if l == nil || l.cgroupFile == nil {
+		return nil
+	}
+	detachErr := rawDetachProgram(int(l.cgroupFile.Fd()), l.program, l.attachType)
+	closeErr := l.cgroupFile.Close()
+	l.cgroupFile = nil
+	return E.Errors(detachErr, closeErr)
+}
+
 // lockCgroupFile takes the exclusive lock that marks this cgroup as managed
 // here.
 //

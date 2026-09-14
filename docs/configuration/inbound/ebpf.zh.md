@@ -156,6 +156,10 @@ FakeIP 地址能够响应 `ping`，部分客户端以此判断目标是否可达
 当前可见的 cgroup v2 根层级及其所有子 cgroup。它不是 sing-box 服务自身 cgroup
 的配置项，除非用户确实只希望接管该服务子树。
 
+在 Android 上，netd 可能在根 cgroup 使用独占 socket hook。sing-box 使用多程序
+挂载且不会替换已有的独占程序，但如果 sing-box 先挂载，netd 随后重新执行独占挂载，
+内核仍可能拒绝 netd。受影响的设备可改用 `local.data_plane: tc`。
+
 #### local.dns_mode
 
 | 值 | 行为 |

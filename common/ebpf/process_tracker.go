@@ -7,7 +7,6 @@ import (
 
 	CiliumEBPF "github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
-	"github.com/cilium/ebpf/link"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -45,7 +44,7 @@ type ProcessTracker struct {
 	metadata            *CiliumEBPF.Map
 	policyDefaultBypass bool
 	programs            []*CiliumEBPF.Program
-	links               []link.Link
+	links               []cgroupProgramLink
 	releaseCleanup      bool
 }
 
@@ -119,11 +118,7 @@ func AttachProcessTracker(config ProcessTrackerConfig) (*ProcessTracker, error) 
 			return nil, loadErr
 		}
 		tracker.programs = append(tracker.programs, program)
-		programLink, attachErr := link.AttachCgroup(link.CgroupOptions{
-			Path:    cgroupPath,
-			Attach:  hook.attachType,
-			Program: program,
-		})
+		programLink, attachErr := attachCgroupProgram(cgroupPath, program, hook.attachType)
 		if attachErr != nil {
 			return nil, E.Cause(attachErr, "attach eBPF process tracker ", hook.name, " hook")
 		}
@@ -142,11 +137,7 @@ func (t *ProcessTracker) attachReleaseCleanup(cgroupPath string) {
 	if err != nil {
 		return
 	}
-	programLink, err := link.AttachCgroup(link.CgroupOptions{
-		Path:    cgroupPath,
-		Attach:  CiliumEBPF.AttachCgroupInetSockRelease,
-		Program: program,
-	})
+	programLink, err := attachCgroupProgram(cgroupPath, program, CiliumEBPF.AttachCgroupInetSockRelease)
 	if err != nil {
 		_ = program.Close()
 		return

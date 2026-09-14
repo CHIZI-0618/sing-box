@@ -174,6 +174,11 @@ subtree. When omitted, the visible cgroup v2 root and all its descendants are
 intercepted. This is not the path of the sing-box service unless only that
 service subtree should be intercepted.
 
+On Android, netd may use exclusive socket hooks on the root cgroup. sing-box
+uses multi-program attachment and never replaces an existing exclusive program,
+but a later exclusive netd reattachment can still be rejected after sing-box
+has attached first. On affected devices, use `local.data_plane: tc`.
+
 #### local.dns_mode
 
 | Value | Behavior |

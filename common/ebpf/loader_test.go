@@ -3,11 +3,38 @@
 package ebpf
 
 import (
+	"errors"
 	"testing"
 
 	CiliumEBPF "github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/link"
+	"golang.org/x/sys/unix"
 )
+
+func TestRawCgroupAttachNeverFallsBackToExclusive(t *testing.T) {
+	originalRawAttachProgram := rawAttachProgram
+	t.Cleanup(func() { rawAttachProgram = originalRawAttachProgram })
+	wantErr := errors.New("multi-program attach rejected")
+	callCount := 0
+	var options link.RawAttachProgramOptions
+	rawAttachProgram = func(current link.RawAttachProgramOptions) error {
+		callCount++
+		options = current
+		return wantErr
+	}
+
+	err := attachProgramRaw(42, nil, CiliumEBPF.AttachCgroupInetSockRelease)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("attachProgramRaw error = %v, want %v", err, wantErr)
+	}
+	if callCount != 1 {
+		t.Fatalf("raw attach called %d times, want exactly one multi-program attempt", callCount)
+	}
+	if options.Target != 42 || options.Attach != CiliumEBPF.AttachCgroupInetSockRelease || options.Flags != unix.BPF_F_ALLOW_MULTI {
+		t.Fatalf("raw attach options = %+v, want target=42 attach=socket_release flags=BPF_F_ALLOW_MULTI", options)
+	}
+}
 
 type objectMapLayout struct {
 	keySize   uint32

@@ -13,7 +13,6 @@ import (
 
 	CiliumEBPF "github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
-	"github.com/cilium/ebpf/link"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"golang.org/x/sys/unix"
@@ -28,7 +27,7 @@ type SelfBypass struct {
 	access   sync.RWMutex
 	sockets  *CiliumEBPF.Map
 	programs []*CiliumEBPF.Program
-	links    []link.Link
+	links    []cgroupProgramLink
 	mode     atomic.Uint32
 }
 
@@ -143,17 +142,13 @@ func (b *SelfBypass) attachCgroupSocket(path string) error {
 		_ = createProgram.Close()
 		return err
 	}
-	createLink, err := link.AttachCgroup(link.CgroupOptions{
-		Path: path, Attach: CiliumEBPF.AttachCGroupInetSockCreate, Program: createProgram,
-	})
+	createLink, err := attachCgroupProgram(path, createProgram, CiliumEBPF.AttachCGroupInetSockCreate)
 	if err != nil {
 		_ = releaseProgram.Close()
 		_ = createProgram.Close()
 		return E.Cause(err, "attach eBPF self-bypass socket-create hook")
 	}
-	releaseLink, err := link.AttachCgroup(link.CgroupOptions{
-		Path: path, Attach: CiliumEBPF.AttachCgroupInetSockRelease, Program: releaseProgram,
-	})
+	releaseLink, err := attachCgroupProgram(path, releaseProgram, CiliumEBPF.AttachCgroupInetSockRelease)
 	if err != nil {
 		_ = createLink.Close()
 		_ = releaseProgram.Close()
@@ -161,14 +156,14 @@ func (b *SelfBypass) attachCgroupSocket(path string) error {
 		return E.Cause(err, "attach eBPF self-bypass socket-release hook")
 	}
 	b.programs = []*CiliumEBPF.Program{createProgram, releaseProgram}
-	b.links = []link.Link{createLink, releaseLink}
+	b.links = []cgroupProgramLink{createLink, releaseLink}
 	return nil
 }
 
 func (b *SelfBypass) attachCgroupSocketAddr(path string, config SelfBypassCgroupConfig) error {
 	hooks := selfBypassSocketAddrHooks(config)
 	programs := make([]*CiliumEBPF.Program, 0, len(hooks))
-	links := make([]link.Link, 0, len(hooks))
+	links := make([]cgroupProgramLink, 0, len(hooks))
 	closeAttached := func() {
 		for index := len(links) - 1; index >= 0; index-- {
 			_ = links[index].Close()
@@ -184,9 +179,7 @@ func (b *SelfBypass) attachCgroupSocketAddr(path string, config SelfBypassCgroup
 			return err
 		}
 		programs = append(programs, program)
-		programLink, err := link.AttachCgroup(link.CgroupOptions{
-			Path: path, Attach: hook.attachType, Program: program,
-		})
+		programLink, err := attachCgroupProgram(path, program, hook.attachType)
 		if err != nil {
 			closeAttached()
 			return E.Cause(err, "attach eBPF self-bypass ", hook.name, " hook")
