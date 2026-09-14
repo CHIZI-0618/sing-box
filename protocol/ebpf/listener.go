@@ -12,8 +12,10 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/udpio"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
@@ -66,12 +68,14 @@ func (i *Inbound) startTCListeners() error {
 }
 
 type internalListenerSet struct {
-	access sync.RWMutex
-	tcp4   *listener.Listener
-	tcp6   *listener.Listener
-	udp4   *listener.Listener
-	udp6   *listener.Listener
-	port   uint16
+	access    sync.RWMutex
+	tcp4      *listener.Listener
+	tcp6      *listener.Listener
+	udp4      *listener.Listener
+	udp6      *listener.Listener
+	udp4Batch udpio.OOBBatchWriter
+	udp6Batch udpio.OOBBatchWriter
+	port      uint16
 }
 
 func (s *internalListenerSet) start(
@@ -114,6 +118,16 @@ func (s *internalListenerSet) start(
 		if err := current.Start(); err != nil {
 			return err
 		}
+		if spec.network == N.NetworkUDP {
+			batchWriter, created := udpio.NewOOBBatchWriter(current.UDPConn())
+			if created {
+				if spec.ipv6 {
+					s.udp6Batch = batchWriter
+				} else {
+					s.udp4Batch = batchWriter
+				}
+			}
+		}
 		if s.port == 0 {
 			var address net.Addr
 			if spec.network == N.NetworkTCP {
@@ -141,6 +155,8 @@ func (s *internalListenerSet) close() error {
 	s.tcp6 = nil
 	s.udp4 = nil
 	s.udp6 = nil
+	s.udp4Batch = nil
+	s.udp6Batch = nil
 	s.port = 0
 	var closeErr error
 	for _, current := range listeners {
@@ -220,6 +236,55 @@ func (s *internalListenerSet) writeUDP(payload, packetInfo []byte, client netip.
 	}
 	_, _, err := current.UDPConn().WriteMsgUDPAddrPort(payload, packetInfo, client)
 	return err
+}
+
+func (s *internalListenerSet) writeUDPBatch(
+	buffers []*buf.Buffer,
+	packetInfos [][]byte,
+	client netip.AddrPort,
+	sources []netip.Addr,
+) error {
+	if len(buffers) == 0 || len(buffers) != len(packetInfos) || len(buffers) != len(sources) {
+		return E.New("invalid eBPF UDP OOB batch")
+	}
+	s.access.RLock()
+	defer s.access.RUnlock()
+	type packetGroup struct {
+		buffers      []*buf.Buffer
+		packetInfos  [][]byte
+		destinations []netip.AddrPort
+	}
+	var ipv4Group, ipv6Group packetGroup
+	for index, source := range sources {
+		group := &ipv4Group
+		if source.Is6() {
+			group = &ipv6Group
+		}
+		group.buffers = append(group.buffers, buffers[index])
+		group.packetInfos = append(group.packetInfos, packetInfos[index])
+		group.destinations = append(group.destinations, client)
+	}
+	writeGroup := func(group packetGroup, current *listener.Listener, batchWriter udpio.OOBBatchWriter) error {
+		if len(group.buffers) == 0 {
+			return nil
+		}
+		if current == nil {
+			return E.New("eBPF UDP redirect listener is unavailable for batch address family")
+		}
+		if batchWriter != nil {
+			return batchWriter.Write(group.buffers, group.packetInfos, group.destinations)
+		}
+		for index, buffer := range group.buffers {
+			if _, _, err := current.UDPConn().WriteMsgUDPAddrPort(buffer.Bytes(), group.packetInfos[index], client); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := writeGroup(ipv4Group, s.udp4, s.udp4Batch); err != nil {
+		return err
+	}
+	return writeGroup(ipv6Group, s.udp6, s.udp6Batch)
 }
 
 func (s *internalListenerSet) String() string {

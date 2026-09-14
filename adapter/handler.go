@@ -25,6 +25,12 @@ type OOBPacketHandler interface {
 	NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr)
 }
 
+// OOBPacketBatchHandler owns every buffer passed to NewOOBPacketBatch. OOB
+// slices are valid only for the duration of the call.
+type OOBPacketBatchHandler interface {
+	NewOOBPacketBatch(buffers []*buf.Buffer, oobs [][]byte, sources []M.Socksaddr)
+}
+
 type PacketConnectionHandler interface {
 	NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata InboundContext, onClose N.CloseHandlerFunc)
 }

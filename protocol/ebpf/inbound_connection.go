@@ -77,6 +77,17 @@ func (i *Inbound) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) 
 	i.newTCPacket(backend, buffer, oob, source)
 }
 
+func (i *Inbound) NewOOBPacketBatch(buffers []*buf.Buffer, oobs [][]byte, sources []M.Socksaddr) {
+	if len(buffers) != len(oobs) || len(buffers) != len(sources) {
+		buf.ReleaseMulti(buffers)
+		return
+	}
+	for index, buffer := range buffers {
+		i.NewPacket(buffer, oobs[index], sources[index])
+		buffer.Release()
+	}
+}
+
 func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socksaddr) {
 	redirectAddress, _, _, err := packetDestinationsFromOOB(oob)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/redir"
+	"github.com/sagernet/sing-box/common/udpio"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/buf"
 	sBufio "github.com/sagernet/sing/common/bufio"
@@ -109,7 +110,14 @@ func (l *Listener) PacketWriter() N.PacketWriter {
 
 func (l *Listener) loopUDPIn() {
 	defer close(l.packetOutboundClosed)
-	if l.oobPacketHandler == nil {
+	if l.oobPacketHandler != nil {
+		if batchHandler, isBatchHandler := l.oobPacketHandler.(adapter.OOBPacketBatchHandler); isBatchHandler {
+			if readWaiter, created := udpio.NewOOBBatchReader(l.udpConn, sBufio.DefaultPacketReadBatchSize, 1024); created {
+				l.loopUDPInOOBBatch(batchHandler, readWaiter)
+				return
+			}
+		}
+	} else {
 		if batchHandler, isBatchHandler := l.packetHandler.(adapter.PacketBatchHandler); isBatchHandler {
 			packetConn := sBufio.NewPacketConn(l.udpConn)
 			if readWaiter, created := sBufio.CreatePacketBatchReadWaiter(packetConn); created {
@@ -170,6 +178,22 @@ func (l *Listener) loopUDPIn() {
 			buffer.Truncate(n)
 			l.packetHandler.NewPacket(buffer, M.SocksaddrFromNetIP(addr).Unwrap())
 		}
+	}
+}
+
+func (l *Listener) loopUDPInOOBBatch(handler adapter.OOBPacketBatchHandler, reader udpio.OOBBatchReader) {
+	for {
+		buffers, oobs, sources, err := reader.Read()
+		if err != nil {
+			buf.ReleaseMulti(buffers)
+			if l.shutdown.Load() && E.IsClosed(err) {
+				return
+			}
+			l.udpConn.Close()
+			l.logger.Error("UDP listener closed: ", err)
+			return
+		}
+		handler.NewOOBPacketBatch(buffers, oobs, sources)
 	}
 }
 

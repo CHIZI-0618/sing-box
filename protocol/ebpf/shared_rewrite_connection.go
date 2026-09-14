@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"os"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -116,6 +117,17 @@ func (s *sharedRewrite) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 	s.udpNat.NewPacket(key, [][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination))
 }
 
+func (s *sharedRewrite) NewOOBPacketBatch(buffers []*buf.Buffer, oobs [][]byte, sources []M.Socksaddr) {
+	if len(buffers) != len(oobs) || len(buffers) != len(sources) {
+		buf.ReleaseMulti(buffers)
+		return
+	}
+	for index, buffer := range buffers {
+		s.NewPacket(buffer, oobs[index], sources[index])
+		buffer.Release()
+	}
+}
+
 func (s *sharedRewrite) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	metadata := adapter.InboundContext{
 		Inbound:     s.inbound.Tag(),
@@ -177,17 +189,43 @@ func (w *sharedPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socks
 	defer buffer.Release()
 	w.sharedRewrite.lifecycleAccess.RLock()
 	defer w.sharedRewrite.lifecycleAccess.RUnlock()
-	destinationAddress := destination.AddrPort()
-	binding, loaded := w.clientState.redirectBinding(destinationAddress)
-	if !loaded {
-		var err error
-		binding, err = w.reserveReplyBinding(destinationAddress)
-		if err != nil {
-			return E.Cause(err, "recover missing shared-network UDP token for ", destination)
-		}
+	binding, err := w.ensureReplyBinding(destination.AddrPort())
+	if err != nil {
+		return E.Cause(err, "recover missing shared-network UDP token for ", destination)
 	}
 	return w.sharedRewrite.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.address)
 }
+
+func (w *sharedPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []M.Socksaddr) error {
+	if len(buffers) == 0 || len(buffers) != len(destinations) {
+		buf.ReleaseMulti(buffers)
+		return os.ErrInvalid
+	}
+	defer buf.ReleaseMulti(buffers)
+	w.sharedRewrite.lifecycleAccess.RLock()
+	defer w.sharedRewrite.lifecycleAccess.RUnlock()
+	packetInfos := make([][]byte, len(buffers))
+	sources := make([]netip.Addr, len(buffers))
+	for index, destination := range destinations {
+		binding, err := w.ensureReplyBinding(destination.AddrPort())
+		if err != nil {
+			return E.Cause(err, "recover missing shared-network UDP token for ", destination)
+		}
+		packetInfos[index] = binding.packetInfo
+		sources[index] = binding.address
+	}
+	return w.sharedRewrite.listeners.writeUDPBatch(buffers, packetInfos, w.key.Source, sources)
+}
+
+func (w *sharedPacketWriter) ensureReplyBinding(destination netip.AddrPort) (sharedUDPRedirectBinding, error) {
+	binding, loaded := w.clientState.redirectBinding(destination)
+	if loaded {
+		return binding, nil
+	}
+	return w.reserveReplyBinding(destination)
+}
+
+var _ N.PacketBatchWriter = (*sharedPacketWriter)(nil)
 
 func (w *sharedPacketWriter) reserveReplyBinding(destination netip.AddrPort) (sharedUDPRedirectBinding, error) {
 	template, loaded := w.clientState.replyTemplate(destination, true)

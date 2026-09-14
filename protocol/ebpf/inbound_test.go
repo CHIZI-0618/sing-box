@@ -18,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/json/badoption"
 
@@ -133,6 +134,61 @@ func TestInternalListenerSetSynchronizesCloseAndUDPWrite(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("close remained blocked after listener reader exited")
+	}
+}
+
+func TestInternalListenerSetWritesOOBBatch(t *testing.T) {
+	newListener := func(network string, _ bool, port uint16) *listener.Listener {
+		return listener.New(listener.Options{
+			Context: context.Background(),
+			Logger:  log.NewNOPFactory().Logger(),
+			Network: []string{network},
+			Listen: option.ListenOptions{
+				Listen:     common.Ptr(badoption.Addr(netip.IPv4Unspecified())),
+				ListenPort: port,
+			},
+			DisablePacketOutput: true,
+			DisableLog:          true,
+		})
+	}
+	var listeners internalListenerSet
+	if err := listeners.start(false, true, true, false, newListener); err != nil {
+		t.Fatal(err)
+	}
+	defer listeners.close()
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	if err = receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	client := receiver.LocalAddr().(*net.UDPAddr).AddrPort()
+	sources := []netip.Addr{
+		netip.MustParseAddr("127.0.0.2"),
+		netip.MustParseAddr("127.0.0.3"),
+	}
+	buffers := []*buf.Buffer{
+		buf.As([]byte("first")).ToOwned(),
+		buf.As([]byte("second")).ToOwned(),
+	}
+	defer buf.ReleaseMulti(buffers)
+	packetInfos := [][]byte{sourcePacketInfo(sources[0]), sourcePacketInfo(sources[1])}
+	if err = listeners.writeUDPBatch(buffers, packetInfos, client, sources); err != nil {
+		t.Fatal(err)
+	}
+	received := make(map[string]netip.Addr)
+	packet := make([]byte, 64)
+	for range 2 {
+		n, source, readErr := receiver.ReadFromUDPAddrPort(packet)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		received[string(packet[:n])] = source.Addr()
+	}
+	if received["first"] != sources[0] || received["second"] != sources[1] {
+		t.Fatalf("unexpected OOB batch sources: %v", received)
 	}
 }
 

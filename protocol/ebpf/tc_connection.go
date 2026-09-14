@@ -208,13 +208,18 @@ func (w *tcPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []
 		return os.ErrInvalid
 	}
 	if w.clientState.isCgroupDataPlane() {
-		for index, buffer := range buffers {
-			if err := w.WritePacket(buffer, destinations[index]); err != nil {
-				buf.ReleaseMulti(buffers[index+1:])
+		defer buf.ReleaseMulti(buffers)
+		packetInfos := make([][]byte, len(buffers))
+		sources := make([]netip.Addr, len(buffers))
+		for index, destination := range destinations {
+			binding, err := w.ensureReplyBinding(destination.AddrPort())
+			if err != nil {
 				return err
 			}
+			packetInfos[index] = binding.packetInfo
+			sources[index] = binding.redirectAddress
 		}
-		return nil
+		return w.inbound.listeners.writeUDPBatch(buffers, packetInfos, w.key.Source, sources)
 	}
 	type packetGroup struct {
 		buffers      []*buf.Buffer
