@@ -197,7 +197,10 @@ func TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients(t *testing
 	inbound := &Inbound{udpTimeout: time.Minute}
 	shared := newSharedRewrite(inbound, option.EBPFSharedOptions{})
 	inbound.setSharedRewrite(shared)
-	shared.sharedUDPClientTable.loadOrCreate(netip.MustParseAddrPort("192.0.2.1:12345"))
+	shared.sharedUDPClientTable.loadOrCreate(udpSessionKey{
+		Source: netip.MustParseAddrPort("192.0.2.1:12345"),
+		Scope:  udpSessionScopeSharedRewrite,
+	})
 
 	diagnostics := inbound.Diagnostics()
 	if diagnostics.UDPSessionCount != 1 {

@@ -90,7 +90,7 @@ func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 	}
 	client := source.AddrPort()
 	redirectDestination := netip.AddrPortFrom(redirectAddress, i.listeners.selectedPort())
-	original, loaded := i.udpClientTable.cachedCgroupOriginal(client, redirectAddress)
+	key, original, loaded := i.udpClientTable.cachedCgroupOriginal(client, redirectAddress)
 	if !loaded {
 		original, err = backend.LookupOriginal(commonEBPF.ProtocolUDP, redirectDestination)
 		if errors.Is(err, unix.ENOENT) {
@@ -103,9 +103,14 @@ func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 			i.udpWarnings.originalDestination.warn(i.logger, "lookup cgroup eBPF UDP original destination: ", err)
 			return
 		}
-		i.udpClientTable.setCgroupBinding(client, original, redirectAddress)
+		key = udpSessionKey{
+			Source:       client,
+			Scope:        udpSessionScopeLocalCgroup,
+			SocketCookie: original.SocketCookie,
+		}
+		i.udpClientTable.setCgroupBinding(key, original, redirectAddress)
 	}
-	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination), original.ConnectedUDP)
+	i.udpNat.NewPacket(key, [][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination))
 }
 
 func (i *Inbound) NewPacketConnectionEx(
@@ -121,7 +126,8 @@ func (i *Inbound) NewPacketConnectionEx(
 		Source:      source,
 		Destination: destination,
 	}
-	if clientState, loaded := i.udpClientTable.load(source.AddrPort()); loaded {
+	key, keyLoaded := udpSessionKeyFromContext(ctx)
+	if clientState, loaded := i.udpClientTable.load(key); keyLoaded && loaded {
 		metadata.SourceMACAddress = clientState.sourceMACAddress()
 		metadata.ProcessInfo = i.lookupProcessInfo(clientState.processSocketCookie())
 		if binding, found := clientState.redirectBinding(destination.AddrPort()); found {
@@ -134,9 +140,13 @@ func (i *Inbound) NewPacketConnectionEx(
 func (i *Inbound) preparePacketConnection(
 	source M.Socksaddr,
 	destination M.Socksaddr,
-	_ any,
+	userData any,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
-	return i.prepareTCPacketConnection(source, destination)
+	metadata, loaded := userData.(udpNATPacketMetadata)
+	if !loaded {
+		return false, nil, nil, nil
+	}
+	return i.prepareTCPacketConnection(source, destination, metadata.key)
 }
 
 func (i *Inbound) socketControl(ipv6Listener bool) control.Func {

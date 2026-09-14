@@ -89,7 +89,7 @@ func (s *sharedRewrite) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 	}
 	client := source.AddrPort()
 	tokenDestination := netip.AddrPortFrom(tokenAddress, s.listeners.selectedPort())
-	cached, bindingReady, loaded := s.sharedUDPClientTable.cachedPacketState(client, tokenAddress)
+	key, cached, bindingReady, loaded := s.sharedUDPClientTable.cachedPacketState(client, tokenAddress)
 	original := cached.original
 	flow := cached.sharedFlow
 	retainedFlow := false
@@ -100,15 +100,20 @@ func (s *sharedRewrite) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 			return
 		}
 		retainedFlow = true
+		key = udpSessionKey{
+			Source:         client,
+			Scope:          udpSessionScopeSharedRewrite,
+			InterfaceIndex: flow.InterfaceIndex(),
+		}
 	}
 	if !bindingReady {
-		released, installed := s.sharedUDPClientTable.setSharedBinding(client, original, tokenAddress, flow)
+		released, installed := s.sharedUDPClientTable.setSharedBinding(key, original, tokenAddress, flow)
 		if retainedFlow && !installed {
 			s.releaseFlow(flow)
 		}
 		s.releaseFlows(released)
 	}
-	s.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination), nil)
+	s.udpNat.NewPacket(key, [][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(original.Destination))
 }
 
 func (s *sharedRewrite) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -118,23 +123,28 @@ func (s *sharedRewrite) NewPacketConnectionEx(ctx context.Context, conn N.Packet
 		Source:      source,
 		Destination: destination,
 	}
-	if clientState, loaded := s.sharedUDPClientTable.load(source.AddrPort()); loaded {
+	key, keyLoaded := udpSessionKeyFromContext(ctx)
+	if clientState, loaded := s.sharedUDPClientTable.load(key); keyLoaded && loaded {
 		metadata.SourceMACAddress = clientState.sourceMACAddress()
 	}
 	s.inbound.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (s *sharedRewrite) preparePacketConnection(source M.Socksaddr, destination M.Socksaddr, _ any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
+func (s *sharedRewrite) preparePacketConnection(source M.Socksaddr, destination M.Socksaddr, userData any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
+	metadata, loaded := userData.(udpNATPacketMetadata)
+	if !loaded {
+		return false, nil, nil, nil
+	}
 	ctx := log.ContextWithNewID(s.inbound.ctx)
-	client := source.AddrPort()
-	clientState := s.sharedUDPClientTable.loadOrCreate(client)
+	key := metadata.key
+	clientState := s.sharedUDPClientTable.loadOrCreate(key)
 	writer := &sharedPacketWriter{
 		sharedRewrite: s,
-		client:        client,
+		key:           key,
 		clientState:   clientState,
 	}
 	return true, ctx, writer, func(error) {
-		s.releaseFlows(s.sharedUDPClientTable.deleteShared(client, clientState))
+		s.releaseFlows(s.sharedUDPClientTable.deleteShared(key, clientState))
 	}
 }
 
@@ -159,7 +169,7 @@ func (s *sharedRewrite) releaseFlow(flow *ECommon.SharedNetworkFlowHandle) {
 
 type sharedPacketWriter struct {
 	sharedRewrite *sharedRewrite
-	client        netip.AddrPort
+	key           udpSessionKey
 	clientState   *sharedUDPClientState
 }
 
@@ -176,7 +186,7 @@ func (w *sharedPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socks
 			return E.Cause(err, "recover missing shared-network UDP token for ", destination)
 		}
 	}
-	return w.sharedRewrite.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)
+	return w.sharedRewrite.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.address)
 }
 
 func (w *sharedPacketWriter) reserveReplyBinding(destination netip.AddrPort) (sharedUDPRedirectBinding, error) {
@@ -197,7 +207,7 @@ func (w *sharedPacketWriter) reserveReplyBinding(destination netip.AddrPort) (sh
 		return sharedUDPRedirectBinding{}, err
 	}
 	released, installed := w.sharedRewrite.sharedUDPClientTable.setSharedReplyBinding(
-		w.client,
+		w.key,
 		w.clientState,
 		ECommon.OriginalDestination{Destination: destination, SourceMAC: sourceMAC},
 		redirectAddress,

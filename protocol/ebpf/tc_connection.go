@@ -78,8 +78,18 @@ func (i *Inbound) newTCPacket(
 	if assignment.Path == commonEBPF.TCPathShared && assignment.SourceMACValid != 0 {
 		sourceMAC = net.HardwareAddr(assignment.SourceMAC[:])
 	}
-	i.udpClientTable.setDirectBinding(client, destination, sourceMAC, assignment.SocketCookie)
-	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(destination), nil)
+	scope := udpSessionScopeLocalTC
+	if assignment.Path == commonEBPF.TCPathShared {
+		scope = udpSessionScopeSharedTC
+	}
+	key := udpSessionKey{
+		Source:         client,
+		Scope:          scope,
+		SocketCookie:   assignment.SocketCookie,
+		InterfaceIndex: assignment.InterfaceIndex,
+	}
+	i.udpClientTable.setDirectBinding(key, destination, sourceMAC, assignment.SocketCookie)
+	i.udpNat.NewPacket(key, [][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(destination))
 }
 
 func (i *Inbound) lookupProcessInfo(socketCookie uint64) *adapter.ConnectionOwner {
@@ -106,21 +116,21 @@ func (i *Inbound) lookupProcessInfo(socketCookie uint64) *adapter.ConnectionOwne
 }
 
 func (i *Inbound) prepareTCPacketConnection(
-	source M.Socksaddr,
 	_ M.Socksaddr,
+	_ M.Socksaddr,
+	key udpSessionKey,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	ctx := log.ContextWithNewID(i.ctx)
-	client := source.AddrPort()
-	clientState := i.udpClientTable.loadOrCreate(client)
-	writer := &tcPacketWriter{inbound: i, client: client, clientState: clientState}
+	clientState := i.udpClientTable.loadOrCreate(key)
+	writer := &tcPacketWriter{inbound: i, key: key, clientState: clientState}
 	return true, ctx, writer, func(error) {
-		i.deleteCgroupUDPRedirects(i.udpClientTable.delete(client, clientState))
+		i.deleteCgroupUDPRedirects(i.udpClientTable.delete(key, clientState))
 	}
 }
 
 type tcPacketWriter struct {
 	inbound     *Inbound
-	client      netip.AddrPort
+	key         udpSessionKey
 	clientState *udpClientState
 }
 
@@ -138,7 +148,7 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 			if err != nil {
 				return err
 			}
-			if !w.inbound.udpClientTable.setCgroupReplyBinding(w.client, w.clientState, destinationAddress, redirectAddress) {
+			if !w.inbound.udpClientTable.setCgroupReplyBinding(w.key, w.clientState, destinationAddress, redirectAddress) {
 				_ = backend.DeleteRedirect(
 					commonEBPF.ProtocolUDP,
 					netip.AddrPortFrom(redirectAddress, w.inbound.listeners.selectedPort()),
@@ -156,7 +166,7 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 			return E.New("TC eBPF UDP reply alias limit reached or address family unavailable")
 		}
 		installed := w.inbound.udpClientTable.setDirectReplyBinding(
-			w.client,
+			w.key,
 			w.clientState,
 			destinationAddress,
 		)
@@ -169,7 +179,7 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 		}
 	}
 	if w.clientState.isCgroupDataPlane() {
-		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.redirectAddress)
+		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.redirectAddress)
 	}
 	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
 	if err != nil {
@@ -182,7 +192,7 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 		return err
 	}
 	defer release()
-	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.client)
+	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.key.Source)
 	return err
 }
 

@@ -112,6 +112,13 @@ type SharedNetworkFlowHandle struct {
 	generation  uint64
 }
 
+func (h *SharedNetworkFlowHandle) InterfaceIndex() uint32 {
+	if h == nil {
+		return 0
+	}
+	return h.originalKey.InterfaceIndex
+}
+
 type SharedNetworkFlowSweepResult struct {
 	Scanned  uint32
 	Removed  uint32

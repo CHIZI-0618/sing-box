@@ -18,7 +18,6 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	udpnat "github.com/sagernet/sing/common/udpnat2"
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 )
@@ -70,7 +69,7 @@ type Inbound struct {
 	processInfoCache         *processInfoCache
 	usePlatformProcessFinder bool
 	listeners                internalListenerSet
-	udpNat                   *udpnat.Service
+	udpNat                   *udpNATService
 	tcDataPlane              *tcDataPlane
 	udpTimeout               time.Duration
 	enableTCP                bool
@@ -342,7 +341,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
 	inbound.udpTimeout = udpTimeout
-	inbound.udpNat = udpnat.New(inbound, inbound.preparePacketConnection, udpTimeout, false)
+	inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout, false)
 	return inbound, nil
 }
 

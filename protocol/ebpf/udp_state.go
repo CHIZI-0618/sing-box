@@ -34,12 +34,19 @@ const (
 var errUDPReplySocketCapacity = errors.New("UDP eBPF reply socket pool is at capacity")
 
 type udpClientTable struct {
-	clientShards [udpClientShardCount]udpClientShard
+	clientShards     [udpClientShardCount]udpClientShard
+	redirectAccess   sync.RWMutex
+	redirectSessions map[udpRedirectSessionKey]udpSessionKey
 }
 
 type udpClientShard struct {
 	access  sync.RWMutex
-	clients map[netip.AddrPort]*udpClientState
+	clients map[udpSessionKey]*udpClientState
+}
+
+type udpRedirectSessionKey struct {
+	client  netip.AddrPort
+	address netip.Addr
 }
 
 type udpClientState struct {
@@ -60,48 +67,55 @@ type udpRedirectBinding struct {
 	connected       bool
 }
 
-func (t *udpClientTable) load(client netip.AddrPort) (*udpClientState, bool) {
-	shard := t.clientShard(client)
+func (t *udpClientTable) load(key udpSessionKey) (*udpClientState, bool) {
+	shard := t.clientShard(key)
 	shard.access.RLock()
-	state, loaded := shard.clients[client]
+	state, loaded := shard.clients[key]
 	shard.access.RUnlock()
 	return state, loaded
 }
 
-func (t *udpClientTable) loadOrCreate(client netip.AddrPort) *udpClientState {
-	if state, loaded := t.load(client); loaded {
+func (t *udpClientTable) loadOrCreate(key udpSessionKey) *udpClientState {
+	if state, loaded := t.load(key); loaded {
 		return state
 	}
-	shard := t.clientShard(client)
+	shard := t.clientShard(key)
 	shard.access.Lock()
 	defer shard.access.Unlock()
-	if state, loaded := shard.clients[client]; loaded {
+	if state, loaded := shard.clients[key]; loaded {
 		return state
 	}
 	if shard.clients == nil {
-		shard.clients = make(map[netip.AddrPort]*udpClientState)
+		shard.clients = make(map[udpSessionKey]*udpClientState)
 	}
 	state := &udpClientState{
 		bindings:        make(map[netip.AddrPort]udpRedirectBinding),
 		cgroupOriginals: make(map[netip.Addr]commonEBPF.OriginalDestination),
 	}
-	shard.clients[client] = state
+	shard.clients[key] = state
 	return state
 }
 
-func (t *udpClientTable) cachedCgroupOriginal(client netip.AddrPort, redirectAddress netip.Addr) (commonEBPF.OriginalDestination, bool) {
-	state, loaded := t.load(client)
+func (t *udpClientTable) cachedCgroupOriginal(client netip.AddrPort, redirectAddress netip.Addr) (udpSessionKey, commonEBPF.OriginalDestination, bool) {
+	lookupKey := udpRedirectSessionKey{client: client, address: redirectAddress}
+	t.redirectAccess.RLock()
+	key, loaded := t.redirectSessions[lookupKey]
+	t.redirectAccess.RUnlock()
 	if !loaded {
-		return commonEBPF.OriginalDestination{}, false
+		return udpSessionKey{}, commonEBPF.OriginalDestination{}, false
+	}
+	state, loaded := t.load(key)
+	if !loaded {
+		return udpSessionKey{}, commonEBPF.OriginalDestination{}, false
 	}
 	state.access.RLock()
 	original, loaded := state.cgroupOriginals[redirectAddress]
 	state.access.RUnlock()
-	return original, loaded
+	return key, original, loaded
 }
 
-func (t *udpClientTable) setCgroupBinding(client netip.AddrPort, original commonEBPF.OriginalDestination, redirectAddress netip.Addr) {
-	state := t.loadOrCreate(client)
+func (t *udpClientTable) setCgroupBinding(key udpSessionKey, original commonEBPF.OriginalDestination, redirectAddress netip.Addr) {
+	state := t.loadOrCreate(key)
 	state.access.Lock()
 	state.cgroupOriginals[redirectAddress] = original
 	state.socketCookie = original.SocketCookie
@@ -112,13 +126,19 @@ func (t *udpClientTable) setCgroupBinding(client netip.AddrPort, original common
 		connected:       original.ConnectedUDP,
 	}
 	state.access.Unlock()
+	t.redirectAccess.Lock()
+	if t.redirectSessions == nil {
+		t.redirectSessions = make(map[udpRedirectSessionKey]udpSessionKey)
+	}
+	t.redirectSessions[udpRedirectSessionKey{client: key.Source, address: redirectAddress}] = key
+	t.redirectAccess.Unlock()
 }
 
-func (t *udpClientTable) setCgroupReplyBinding(client netip.AddrPort, expected *udpClientState, destination netip.AddrPort, redirectAddress netip.Addr) bool {
-	shard := t.clientShard(client)
+func (t *udpClientTable) setCgroupReplyBinding(key udpSessionKey, expected *udpClientState, destination netip.AddrPort, redirectAddress netip.Addr) bool {
+	shard := t.clientShard(key)
 	shard.access.RLock()
 	defer shard.access.RUnlock()
-	if shard.clients[client] != expected {
+	if shard.clients[key] != expected {
 		return false
 	}
 	expected.access.Lock()
@@ -134,11 +154,17 @@ func (t *udpClientTable) setCgroupReplyBinding(client netip.AddrPort, expected *
 		packetInfo:      sourcePacketInfo(redirectAddress),
 	}
 	expected.replyAliasCount++
+	t.redirectAccess.Lock()
+	if t.redirectSessions == nil {
+		t.redirectSessions = make(map[udpRedirectSessionKey]udpSessionKey)
+	}
+	t.redirectSessions[udpRedirectSessionKey{client: key.Source, address: redirectAddress}] = key
+	t.redirectAccess.Unlock()
 	return true
 }
 
-func (t *udpClientTable) clientShard(client netip.AddrPort) *udpClientShard {
-	return &t.clientShards[shardIndexForAddrPort(client, udpClientShardCount)]
+func (t *udpClientTable) clientShard(key udpSessionKey) *udpClientShard {
+	return &t.clientShards[shardIndexForAddrPort(key.Source, udpClientShardCount)]
 }
 
 // shardIndexForAddrPort distributes addr:port pairs across shardCount (a
@@ -201,12 +227,12 @@ func (t *udpClientTable) count() int {
 }
 
 func (t *udpClientTable) setDirectBinding(
-	client netip.AddrPort,
+	key udpSessionKey,
 	destination netip.AddrPort,
 	sourceMAC net.HardwareAddr,
 	socketCookie uint64,
 ) {
-	state := t.loadOrCreate(client)
+	state := t.loadOrCreate(key)
 	state.access.Lock()
 	defer state.access.Unlock()
 	if len(sourceMAC) > 0 {
@@ -217,14 +243,14 @@ func (t *udpClientTable) setDirectBinding(
 }
 
 func (t *udpClientTable) setDirectReplyBinding(
-	client netip.AddrPort,
+	key udpSessionKey,
 	expected *udpClientState,
 	destination netip.AddrPort,
 ) bool {
-	shard := t.clientShard(client)
+	shard := t.clientShard(key)
 	shard.access.RLock()
 	defer shard.access.RUnlock()
-	if shard.clients[client] != expected {
+	if shard.clients[key] != expected {
 		return false
 	}
 	expected.access.Lock()
@@ -243,14 +269,14 @@ func (t *udpClientTable) setDirectReplyBinding(
 	return true
 }
 
-func (t *udpClientTable) delete(client netip.AddrPort, expected *udpClientState) []netip.Addr {
-	shard := t.clientShard(client)
+func (t *udpClientTable) delete(key udpSessionKey, expected *udpClientState) []netip.Addr {
+	shard := t.clientShard(key)
 	shard.access.Lock()
 	defer shard.access.Unlock()
-	if shard.clients[client] != expected {
+	if shard.clients[key] != expected {
 		return nil
 	}
-	delete(shard.clients, client)
+	delete(shard.clients, key)
 	expected.access.Lock()
 	redirects := make([]netip.Addr, 0, len(expected.cgroupOriginals))
 	for address := range expected.cgroupOriginals {
@@ -262,6 +288,14 @@ func (t *udpClientTable) delete(client netip.AddrPort, expected *udpClientState)
 	expected.cgroupDataPlane = false
 	expected.replyAliasCount = 0
 	expected.access.Unlock()
+	t.redirectAccess.Lock()
+	for _, address := range redirects {
+		lookupKey := udpRedirectSessionKey{client: key.Source, address: address}
+		if t.redirectSessions[lookupKey] == key {
+			delete(t.redirectSessions, lookupKey)
+		}
+	}
+	t.redirectAccess.Unlock()
 	return redirects
 }
 

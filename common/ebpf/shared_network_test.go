@@ -129,6 +129,9 @@ func TestMakeSharedNetworkFlowHandle(t *testing.T) {
 	}
 	copy(value.Addr[:], original.Addr().AsSlice())
 	flow := makeSharedNetworkFlowHandle(key, value)
+	if flow.InterfaceIndex() != value.InterfaceIndex {
+		t.Fatalf("unexpected flow interface index: %d", flow.InterfaceIndex())
+	}
 	if flow.originalKey.InterfaceIndex != 42 ||
 		flow.originalKey.OriginalPort != original.Port() ||
 		flow.listenerKey != key ||

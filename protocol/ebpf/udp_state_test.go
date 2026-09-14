@@ -14,10 +14,11 @@ import (
 func TestUDPDirectBinding(t *testing.T) {
 	var table udpClientTable
 	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	key := udpSessionKey{Source: client, Scope: udpSessionScopeLocalTC, SocketCookie: 42}
 	destination := netip.MustParseAddrPort("1.1.1.1:53")
 	sourceMAC := net.HardwareAddr{0x02, 0, 0, 0, 0, 1}
-	table.setDirectBinding(client, destination, sourceMAC, 42)
-	state, loaded := table.load(client)
+	table.setDirectBinding(key, destination, sourceMAC, 42)
+	state, loaded := table.load(key)
 	if !loaded {
 		t.Fatal("client state was not created")
 	}
@@ -32,27 +33,75 @@ func TestUDPDirectBinding(t *testing.T) {
 	}
 }
 
-func TestUDPCgroupBindingLifecycle(t *testing.T) {
+func TestUDPClientTableSeparatesSocketCookies(t *testing.T) {
 	var table udpClientTable
 	client := netip.MustParseAddrPort("192.0.2.10:53000")
 	destination := netip.MustParseAddrPort("1.1.1.1:53")
+	firstKey := udpSessionKey{Source: client, Scope: udpSessionScopeLocalTC, SocketCookie: 1}
+	secondKey := udpSessionKey{Source: client, Scope: udpSessionScopeLocalTC, SocketCookie: 2}
+	table.setDirectBinding(firstKey, destination, nil, 1)
+	table.setDirectBinding(secondKey, destination, nil, 2)
+	first, firstLoaded := table.load(firstKey)
+	second, secondLoaded := table.load(secondKey)
+	if !firstLoaded || !secondLoaded || first == second {
+		t.Fatal("same-source sockets did not receive independent client state")
+	}
+	if first.processSocketCookie() != 1 || second.processSocketCookie() != 2 {
+		t.Fatalf("socket cookies crossed sessions: %d %d", first.processSocketCookie(), second.processSocketCookie())
+	}
+}
+
+func TestUDPCgroupBindingLifecycle(t *testing.T) {
+	var table udpClientTable
+	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	key := udpSessionKey{Source: client, Scope: udpSessionScopeLocalCgroup, SocketCookie: 42}
+	destination := netip.MustParseAddrPort("1.1.1.1:53")
 	redirect := netip.MustParseAddr("127.128.0.7")
-	table.setCgroupBinding(client, commonEBPF.OriginalDestination{
+	table.setCgroupBinding(key, commonEBPF.OriginalDestination{
 		Destination:  destination,
 		ConnectedUDP: true,
 		SocketCookie: 42,
 	}, redirect)
-	state, loaded := table.load(client)
+	state, loaded := table.load(key)
 	if !loaded || !state.isCgroupDataPlane() {
 		t.Fatal("cgroup client state was not created")
+	}
+	cachedKey, cached, cachedLoaded := table.cachedCgroupOriginal(client, redirect)
+	if !cachedLoaded || cachedKey != key || cached.SocketCookie != 42 {
+		t.Fatalf("redirect index returned the wrong cgroup session: key=%+v original=%+v", cachedKey, cached)
 	}
 	binding, loaded := state.redirectBinding(destination)
 	if !loaded || binding.redirectAddress != redirect || !binding.connected {
 		t.Fatalf("unexpected cgroup binding: %+v", binding)
 	}
-	released := table.delete(client, state)
+	released := table.delete(key, state)
 	if len(released) != 1 || released[0] != redirect {
 		t.Fatalf("unexpected released redirects: %v", released)
+	}
+	if _, _, loaded = table.cachedCgroupOriginal(client, redirect); loaded {
+		t.Fatal("deleted cgroup session remained in redirect index")
+	}
+}
+
+func TestSharedUDPClientTableSeparatesIngressInterfaces(t *testing.T) {
+	var table sharedUDPClientTable
+	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	destination := netip.MustParseAddrPort("1.1.1.1:53")
+	firstRedirect := netip.MustParseAddr("127.128.0.1")
+	secondRedirect := netip.MustParseAddr("127.128.0.2")
+	firstKey := udpSessionKey{Source: client, Scope: udpSessionScopeSharedRewrite, InterfaceIndex: 10}
+	secondKey := udpSessionKey{Source: client, Scope: udpSessionScopeSharedRewrite, InterfaceIndex: 20}
+	table.setBinding(firstKey, destination, firstRedirect, false)
+	table.setBinding(secondKey, destination, secondRedirect, false)
+	if first, loaded := table.load(firstKey); !loaded || first == nil {
+		t.Fatal("first ingress session is missing")
+	}
+	if second, loaded := table.load(secondKey); !loaded || second == nil {
+		t.Fatal("second ingress session is missing")
+	}
+	key, _, _, loaded := table.cachedPacketState(client, secondRedirect)
+	if !loaded || key != secondKey {
+		t.Fatalf("redirect index selected the wrong ingress session: %+v", key)
 	}
 }
 
@@ -145,18 +194,19 @@ func TestUDPReplySocketPoolResetsForNetworkChange(t *testing.T) {
 func TestUDPDirectReplyBindingChecksGeneration(t *testing.T) {
 	var table udpClientTable
 	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	key := udpSessionKey{Source: client, Scope: udpSessionScopeLocalTC}
 	base := netip.MustParseAddrPort("1.1.1.1:53")
 	reply := netip.MustParseAddrPort("8.8.8.8:53")
-	table.setDirectBinding(client, base, nil, 0)
-	state, _ := table.load(client)
-	if !table.setDirectReplyBinding(client, state, reply) {
+	table.setDirectBinding(key, base, nil, 0)
+	state, _ := table.load(key)
+	if !table.setDirectReplyBinding(key, state, reply) {
 		t.Fatal("reply binding was not installed")
 	}
 	if binding, loaded := state.redirectBinding(reply); !loaded || !binding.replyAlias {
 		t.Fatalf("unexpected reply binding: %+v", binding)
 	}
-	table.delete(client, state)
-	if table.setDirectReplyBinding(client, state, netip.MustParseAddrPort("9.9.9.9:53")) {
+	table.delete(key, state)
+	if table.setDirectReplyBinding(key, state, netip.MustParseAddrPort("9.9.9.9:53")) {
 		t.Fatal("closed session was resurrected")
 	}
 }
@@ -206,7 +256,7 @@ func TestUDPClientTableShardsSpreadAcrossClientAddress(t *testing.T) {
 			netip.AddrFrom4([4]byte{192, 168, byte(i >> 8), byte(i)}),
 			51413,
 		)
-		counts[table.clientShard(client)]++
+		counts[table.clientShard(udpSessionKey{Source: client})]++
 	}
 	if len(counts) < 2 {
 		t.Fatalf(
