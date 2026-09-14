@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"os"
 	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -14,6 +15,7 @@ import (
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/buf"
+	sBufio "github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -129,41 +131,60 @@ func (i *Inbound) prepareTCPacketConnection(
 }
 
 type tcPacketWriter struct {
-	inbound     *Inbound
-	key         udpSessionKey
-	clientState *udpClientState
+	inbound        *Inbound
+	key            udpSessionKey
+	clientState    *udpClientState
+	newReplySocket func(netip.AddrPort) (*net.UDPConn, error)
 }
 
 func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	defer buffer.Release()
 	destinationAddress := destination.AddrPort()
+	binding, err := w.ensureReplyBinding(destinationAddress)
+	if err != nil {
+		return err
+	}
+	if w.clientState.isCgroupDataPlane() {
+		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.redirectAddress)
+	}
+	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.replySocketFactory())
+	if err != nil {
+		w.logReplySocketError(err)
+		return err
+	}
+	defer release()
+	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.key.Source)
+	return err
+}
+
+func (w *tcPacketWriter) ensureReplyBinding(destinationAddress netip.AddrPort) (udpRedirectBinding, error) {
 	binding, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
 		if w.clientState.isCgroupDataPlane() {
 			backend := w.inbound.cgroupBackendInstance()
 			if backend == nil {
-				return E.New("cgroup eBPF backend is closed")
+				return udpRedirectBinding{}, E.New("cgroup eBPF backend is closed")
 			}
 			redirectAddress, err := backend.ReserveUDPReplyRedirect(destinationAddress, w.inbound.listeners.selectedPort())
 			if err != nil {
-				return err
+				return udpRedirectBinding{}, err
 			}
 			if !w.inbound.udpClientTable.setCgroupReplyBinding(w.key, w.clientState, destinationAddress, redirectAddress) {
 				_ = backend.DeleteRedirect(
 					commonEBPF.ProtocolUDP,
 					netip.AddrPortFrom(redirectAddress, w.inbound.listeners.selectedPort()),
 				)
-				return E.New("cgroup eBPF UDP reply binding was rejected")
+				return udpRedirectBinding{}, E.New("cgroup eBPF UDP reply binding was rejected")
 			}
 			binding, loaded = w.clientState.redirectBinding(destinationAddress)
 			if !loaded {
-				return E.New("cgroup eBPF UDP reply binding is unavailable")
+				return udpRedirectBinding{}, E.New("cgroup eBPF UDP reply binding is unavailable")
 			}
 		}
 	}
 	if !loaded {
 		if !w.clientState.hasAddressFamily(destinationAddress.Addr().Is4()) {
-			return E.New("TC eBPF UDP reply alias limit reached or address family unavailable")
+			return udpRedirectBinding{}, E.New("TC eBPF UDP reply alias limit reached or address family unavailable")
 		}
 		installed := w.inbound.udpClientTable.setDirectReplyBinding(
 			w.key,
@@ -171,30 +192,84 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 			destinationAddress,
 		)
 		if !installed {
-			return E.New("TC eBPF UDP session closed or reply alias was rejected")
+			return udpRedirectBinding{}, E.New("TC eBPF UDP session closed or reply alias was rejected")
 		}
 		binding, loaded = w.clientState.redirectBinding(destinationAddress)
 		if !loaded {
-			return E.New("TC eBPF UDP reply binding is unavailable")
+			return udpRedirectBinding{}, E.New("TC eBPF UDP reply binding is unavailable")
 		}
+	}
+	return binding, nil
+}
+
+func (w *tcPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []M.Socksaddr) error {
+	if len(buffers) == 0 || len(buffers) != len(destinations) {
+		buf.ReleaseMulti(buffers)
+		return os.ErrInvalid
 	}
 	if w.clientState.isCgroupDataPlane() {
-		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.redirectAddress)
-	}
-	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.inbound.newTCUDPReplySocket)
-	if err != nil {
-		if errors.Is(err, errUDPReplySocketCapacity) {
-			w.inbound.udpWarnings.replySocketCapacity.warn(
-				w.inbound.logger,
-				"UDP eBPF reply socket pool reached its global capacity; all sockets are currently in use",
-			)
+		for index, buffer := range buffers {
+			if err := w.WritePacket(buffer, destinations[index]); err != nil {
+				buf.ReleaseMulti(buffers[index+1:])
+				return err
+			}
 		}
-		return err
+		return nil
 	}
-	defer release()
-	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.key.Source)
-	return err
+	type packetGroup struct {
+		buffers      []*buf.Buffer
+		destinations []M.Socksaddr
+	}
+	groups := make(map[netip.AddrPort]*packetGroup)
+	client := M.SocksaddrFromNetIP(w.key.Source)
+	for index, destination := range destinations {
+		destinationAddress := destination.AddrPort()
+		if _, err := w.ensureReplyBinding(destinationAddress); err != nil {
+			buf.ReleaseMulti(buffers)
+			return err
+		}
+		group := groups[destinationAddress]
+		if group == nil {
+			group = &packetGroup{}
+			groups[destinationAddress] = group
+		}
+		group.buffers = append(group.buffers, buffers[index])
+		group.destinations = append(group.destinations, client)
+	}
+	var batchErr error
+	for source, group := range groups {
+		socket, release, err := w.inbound.udpReplySockets.get(source, w.replySocketFactory())
+		if err != nil {
+			w.logReplySocketError(err)
+			buf.ReleaseMulti(group.buffers)
+			batchErr = errors.Join(batchErr, err)
+			continue
+		}
+		writer := sBufio.NewPacketBatchWriter(sBufio.NewPacketConn(socket))
+		err = writer.WritePacketBatch(group.buffers, group.destinations)
+		release()
+		batchErr = errors.Join(batchErr, err)
+	}
+	return batchErr
 }
+
+func (w *tcPacketWriter) logReplySocketError(err error) {
+	if errors.Is(err, errUDPReplySocketCapacity) {
+		w.inbound.udpWarnings.replySocketCapacity.warn(
+			w.inbound.logger,
+			"UDP eBPF reply socket pool reached its global capacity; all sockets are currently in use",
+		)
+	}
+}
+
+func (w *tcPacketWriter) replySocketFactory() func(netip.AddrPort) (*net.UDPConn, error) {
+	if w.newReplySocket != nil {
+		return w.newReplySocket
+	}
+	return w.inbound.newTCUDPReplySocket
+}
+
+var _ N.PacketBatchWriter = (*tcPacketWriter)(nil)
 
 func (i *Inbound) deleteCgroupUDPRedirects(addresses []netip.Addr) {
 	backend := i.cgroupBackendInstance()
