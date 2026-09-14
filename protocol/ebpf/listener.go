@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -65,11 +66,12 @@ func (i *Inbound) startTCListeners() error {
 }
 
 type internalListenerSet struct {
-	tcp4 *listener.Listener
-	tcp6 *listener.Listener
-	udp4 *listener.Listener
-	udp6 *listener.Listener
-	port uint16
+	access sync.RWMutex
+	tcp4   *listener.Listener
+	tcp6   *listener.Listener
+	udp4   *listener.Listener
+	udp6   *listener.Listener
+	port   uint16
 }
 
 func (s *internalListenerSet) start(
@@ -79,7 +81,9 @@ func (s *internalListenerSet) start(
 	enableIPv6 bool,
 	newListener func(network string, ipv6 bool, port uint16) *listener.Listener,
 ) error {
-	if !s.isClosed() || s.port != 0 {
+	s.access.Lock()
+	defer s.access.Unlock()
+	if !s.isClosedLocked() || s.port != 0 {
 		return E.New("internal eBPF listeners are already started")
 	}
 	type listenerSpec struct {
@@ -130,6 +134,8 @@ func (s *internalListenerSet) start(
 }
 
 func (s *internalListenerSet) close() error {
+	s.access.Lock()
+	defer s.access.Unlock()
 	listeners := []*listener.Listener{s.tcp4, s.tcp6, s.udp4, s.udp6}
 	s.tcp4 = nil
 	s.tcp6 = nil
@@ -146,14 +152,24 @@ func (s *internalListenerSet) close() error {
 }
 
 func (s *internalListenerSet) isClosed() bool {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.isClosedLocked()
+}
+
+func (s *internalListenerSet) isClosedLocked() bool {
 	return s.tcp4 == nil && s.tcp6 == nil && s.udp4 == nil && s.udp6 == nil
 }
 
 func (s *internalListenerSet) selectedPort() uint16 {
+	s.access.RLock()
+	defer s.access.RUnlock()
 	return s.port
 }
 
 func (s *internalListenerSet) registerTCTCPListeners(backend *commonEBPF.TCBackend) error {
+	s.access.RLock()
+	defer s.access.RUnlock()
 	for _, registration := range []struct {
 		ipv6     bool
 		listener net.Listener
@@ -193,6 +209,8 @@ func listenerTCP(current *listener.Listener) net.Listener {
 }
 
 func (s *internalListenerSet) writeUDP(payload, packetInfo []byte, client netip.AddrPort, source netip.Addr) error {
+	s.access.RLock()
+	defer s.access.RUnlock()
 	current := s.udp4
 	if source.Is6() {
 		current = s.udp6
@@ -205,6 +223,8 @@ func (s *internalListenerSet) writeUDP(payload, packetInfo []byte, client netip.
 }
 
 func (s *internalListenerSet) String() string {
+	s.access.RLock()
+	defer s.access.RUnlock()
 	var listeners []string
 	if s.tcp4 != nil {
 		listeners = append(listeners, "tcp4="+s.tcp4.TCPListener().Addr().String())

@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 	"unsafe"
 
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
@@ -70,6 +72,67 @@ func TestInternalListenerSetsSelectIndependentPorts(t *testing.T) {
 	t.Cleanup(func() { _ = second.close() })
 	if second.selectedPort() == 0 || second.selectedPort() == first.selectedPort() {
 		t.Fatalf("listener sets did not select independent ports: first=%d second=%d", first.selectedPort(), second.selectedPort())
+	}
+}
+
+func TestInternalListenerSetSynchronizesCloseAndUDPWrite(t *testing.T) {
+	newListener := func(network string, _ bool, port uint16) *listener.Listener {
+		return listener.New(listener.Options{
+			Context: context.Background(),
+			Logger:  log.NewNOPFactory().Logger(),
+			Network: []string{network},
+			Listen: option.ListenOptions{
+				Listen:     common.Ptr(badoption.Addr(netip.IPv4Unspecified())),
+				ListenPort: port,
+			},
+			DisablePacketOutput: true,
+			DisableLog:          true,
+		})
+	}
+	var listeners internalListenerSet
+	if err := listeners.start(false, true, true, false, newListener); err != nil {
+		t.Fatal(err)
+	}
+
+	client := netip.MustParseAddrPort("127.0.0.1:9")
+	source := netip.MustParseAddr("127.0.0.1")
+	var writers sync.WaitGroup
+	for range 8 {
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			for range 256 {
+				_ = listeners.selectedPort()
+				_ = listeners.String()
+				_ = listeners.writeUDP([]byte{0}, nil, client, source)
+			}
+		}()
+	}
+	if err := listeners.close(); err != nil {
+		t.Fatal(err)
+	}
+	writers.Wait()
+	if !listeners.isClosed() || listeners.selectedPort() != 0 {
+		t.Fatal("listener set did not publish its closed state")
+	}
+
+	listeners.access.RLock()
+	closed := make(chan error, 1)
+	go func() { closed <- listeners.close() }()
+	select {
+	case <-closed:
+		listeners.access.RUnlock()
+		t.Fatal("close did not wait for an active listener reader")
+	case <-time.After(20 * time.Millisecond):
+	}
+	listeners.access.RUnlock()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close remained blocked after listener reader exited")
 	}
 }
 
