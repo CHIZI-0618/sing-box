@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common/canceler"
@@ -63,17 +64,23 @@ type udpNATSession struct {
 	deletePending bool
 }
 
+const udpNATSessionShardCount = 32
+
+type udpNATSessionShard struct {
+	access   sync.Mutex
+	sessions map[udpSessionKey]*udpNATSession
+}
+
 // udpNATService adapts udpnat2's source-address cache to the stronger eBPF
 // session key without carrying a private copy of sing's UDP NAT machinery.
 // The synthetic address is only an internal cache key; handlers continue to
 // receive the real source address through udpNATHandler.
 type udpNATService struct {
-	access   sync.Mutex
-	sessions map[udpSessionKey]*udpNATSession
-	nextID   uint64
-	service  *udpnat.Service
-	handler  N.UDPConnectionHandlerEx
-	prepare  udpnat.PrepareFunc
+	shards  [udpNATSessionShardCount]udpNATSessionShard
+	nextID  atomic.Uint64
+	service *udpnat.Service
+	handler N.UDPConnectionHandlerEx
+	prepare udpnat.PrepareFunc
 }
 
 func newUDPNATService(
@@ -83,9 +90,8 @@ func newUDPNATService(
 	shared bool,
 ) *udpNATService {
 	service := &udpNATService{
-		sessions: make(map[udpSessionKey]*udpNATSession),
-		handler:  handler,
-		prepare:  prepare,
+		handler: handler,
+		prepare: prepare,
 	}
 	service.service = udpnat.New(udpNATHandler{service}, service.prepareSession, timeout, shared)
 	return service
@@ -108,37 +114,42 @@ func (s *udpNATService) NewPacket(
 }
 
 func (s *udpNATService) beginSession(key udpSessionKey, source M.Socksaddr) *udpNATSession {
-	s.access.Lock()
-	defer s.access.Unlock()
-	session := s.sessions[key]
+	shard := s.sessionShard(key)
+	shard.access.Lock()
+	defer shard.access.Unlock()
+	session := shard.sessions[key]
 	if session == nil {
-		s.nextID++
-		if s.nextID == 0 {
+		identifier := s.nextID.Add(1)
+		if identifier == 0 {
 			panic("eBPF UDP NAT session identifier exhausted")
 		}
 		var address [16]byte
 		address[0] = 0xfd
 		for index := 0; index < 8; index++ {
-			address[15-index] = byte(s.nextID >> (index * 8))
+			address[15-index] = byte(identifier >> (index * 8))
 		}
 		session = &udpNATSession{
 			key:    key,
 			alias:  M.SocksaddrFromNetIP(netip.AddrPortFrom(netip.AddrFrom16(address), 1)),
 			source: source,
 		}
-		s.sessions[key] = session
+		if shard.sessions == nil {
+			shard.sessions = make(map[udpSessionKey]*udpNATSession)
+		}
+		shard.sessions[key] = session
 	}
 	session.inFlight++
 	return session
 }
 
 func (s *udpNATService) endSession(session *udpNATSession) {
-	s.access.Lock()
+	shard := s.sessionShard(session.key)
+	shard.access.Lock()
 	session.inFlight--
-	if session.inFlight == 0 && session.deletePending && s.sessions[session.key] == session {
-		delete(s.sessions, session.key)
+	if session.inFlight == 0 && session.deletePending && shard.sessions[session.key] == session {
+		delete(shard.sessions, session.key)
 	}
-	s.access.Unlock()
+	shard.access.Unlock()
 }
 
 func (s *udpNATService) prepareSession(
@@ -150,17 +161,18 @@ func (s *udpNATService) prepareSession(
 	if !loaded {
 		return false, nil, nil, nil
 	}
-	s.access.Lock()
-	session := s.sessions[metadata.key]
+	shard := s.sessionShard(metadata.key)
+	shard.access.Lock()
+	session := shard.sessions[metadata.key]
 	if session == nil {
-		s.access.Unlock()
+		shard.access.Unlock()
 		return false, nil, nil, nil
 	}
 	session.generation++
 	generation := session.generation
 	session.deletePending = false
 	source := session.source
-	s.access.Unlock()
+	shard.access.Unlock()
 	ok, ctx, writer, onClose := s.prepare(source, destination, metadata)
 	if !ok {
 		s.closeSession(session, generation)
@@ -174,23 +186,52 @@ func (s *udpNATService) prepareSession(
 }
 
 func (s *udpNATService) closeSession(session *udpNATSession, generation uint64) {
-	s.access.Lock()
-	defer s.access.Unlock()
-	if s.sessions[session.key] != session || session.generation != generation {
+	shard := s.sessionShard(session.key)
+	shard.access.Lock()
+	defer shard.access.Unlock()
+	if shard.sessions[session.key] != session || session.generation != generation {
 		return
 	}
 	if session.inFlight > 0 {
 		session.deletePending = true
 		return
 	}
-	delete(s.sessions, session.key)
+	delete(shard.sessions, session.key)
 }
 
 func (s *udpNATService) Purge() {
+	for index := range s.shards {
+		shard := &s.shards[index]
+		shard.access.Lock()
+		clear(shard.sessions)
+		shard.access.Unlock()
+	}
 	s.service.Purge()
-	s.access.Lock()
-	clear(s.sessions)
-	s.access.Unlock()
+}
+
+func (s *udpNATService) sessionShard(key udpSessionKey) *udpNATSessionShard {
+	const (
+		offset64 = 14695981039346656037
+		prime64  = 1099511628211
+	)
+	hash := uint64(offset64)
+	add := func(value byte) {
+		hash ^= uint64(value)
+		hash *= prime64
+	}
+	for _, value := range key.Source.Addr().As16() {
+		add(value)
+	}
+	add(byte(key.Source.Port()))
+	add(byte(key.Source.Port() >> 8))
+	add(byte(key.Scope))
+	for offset := 0; offset < 8; offset++ {
+		add(byte(key.SocketCookie >> (offset * 8)))
+	}
+	for offset := 0; offset < 4; offset++ {
+		add(byte(key.InterfaceIndex >> (offset * 8)))
+	}
+	return &s.shards[hash&(udpNATSessionShardCount-1)]
 }
 
 type udpNATHandler struct {

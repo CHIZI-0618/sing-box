@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,4 +80,44 @@ func TestUDPNATServiceSeparatesKernelIdentities(t *testing.T) {
 	if !keys[firstKey] || !keys[secondKey] {
 		t.Fatalf("handler received unexpected session keys: %v %v", first.key, second.key)
 	}
+}
+
+func TestUDPNATSessionShardsUseKernelIdentity(t *testing.T) {
+	service := &udpNATService{}
+	source := M.ParseSocksaddr("192.0.2.10:53000").AddrPort()
+	shards := make(map[*udpNATSessionShard]bool)
+	for cookie := uint64(1); cookie <= 256; cookie++ {
+		shards[service.sessionShard(udpSessionKey{
+			Source:       source,
+			Scope:        udpSessionScopeLocalTC,
+			SocketCookie: cookie,
+		})] = true
+	}
+	if len(shards) < udpNATSessionShardCount/2 {
+		t.Fatalf("kernel identities only reached %d/%d session shards", len(shards), udpNATSessionShardCount)
+	}
+}
+
+func BenchmarkUDPNATSessionTrackingParallel(b *testing.B) {
+	service := &udpNATService{}
+	source := M.ParseSocksaddr("192.0.2.10:53000")
+	keys := make([]udpSessionKey, 256)
+	for index := range keys {
+		keys[index] = udpSessionKey{
+			Source:       source.AddrPort(),
+			Scope:        udpSessionScopeLocalTC,
+			SocketCookie: uint64(index + 1),
+		}
+		session := service.beginSession(keys[index], source)
+		service.endSession(session)
+	}
+	b.ResetTimer()
+	var index atomic.Uint64
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			key := keys[index.Add(1)&uint64(len(keys)-1)]
+			session := service.beginSession(key, source)
+			service.endSession(session)
+		}
+	})
 }
