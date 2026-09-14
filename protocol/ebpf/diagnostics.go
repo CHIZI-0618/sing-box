@@ -292,7 +292,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.AttachmentDiagnostics()...)
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
-		diagnostics.Attachments = append(diagnostics.Attachments, shared.dataPlaneInstance().attachmentDiagnostics()...)
+		if sharedDataPlane := shared.dataPlaneInstance(); sharedDataPlane != nil {
+			diagnostics.Attachments = append(diagnostics.Attachments, sharedDataPlane.AttachmentDiagnostics()...)
+		}
 	}
 	if i.localCgroupEnabled() {
 		if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {

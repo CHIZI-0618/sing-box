@@ -575,23 +575,6 @@ func restoreSharedRewriteLocalnet(interfaceName string) error {
 	return nil
 }
 
-// retryOutcome classifies a failed reconcile for the recovery backoff. Repeating
-// an attach can only help while the backend is still usable: once it is closed
-// or has to be rebuilt, every later attempt fails the same way, and recovery has
-// to come from a restart instead.
-func (d *sharedRewriteDataPlane) retryOutcome() tcSharedRewriteOutcome {
-	if d == nil {
-		return tcSharedRewriteUnrecoverable
-	}
-	d.access.Lock()
-	defer d.access.Unlock()
-	closed, requiresRebuild := d.backendStateLocked()
-	if closed || requiresRebuild {
-		return tcSharedRewriteUnrecoverable
-	}
-	return tcSharedRewriteRecoverable
-}
-
 // backendStateLocked reports the two conditions that make another attach
 // pointless. A backend that has not been built yet is neither: the next attempt
 // may manage to build it.

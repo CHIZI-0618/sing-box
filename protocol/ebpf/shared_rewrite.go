@@ -29,7 +29,7 @@ type sharedRewrite struct {
 	inbound              *Inbound
 	interfaces           []string
 	sharedBackend        *ECommon.SharedNetworkBackend
-	dataPlane            *sharedRewriteDataPlane
+	dataPlane            sharedKernelRuntime
 	listeners            internalListenerSet
 	udpNat               *udpNATService
 	sharedUDPClientTable sharedUDPClientTable
@@ -79,7 +79,7 @@ func (s *sharedRewrite) Start(interfaceNames []string, hostAddresses []netip.Add
 	}
 	dataPlane := newSharedRewriteDataPlane(s, s.tcPriority)
 	s.setDataPlane(dataPlane)
-	if err := dataPlane.reconcile(interfaceNames, hostAddresses); err != nil {
+	if err := dataPlane.Reconcile(interfaceNames, hostAddresses); err != nil {
 		return E.Errors(err, s.Close())
 	}
 	if s.sharedBackendInstance() == nil {
@@ -202,22 +202,21 @@ func (s *sharedRewrite) IsClosed() bool {
 // interface-monitor update loop, and the flow janitor goroutine all read
 // this field with no relationship to Close's own lifecycleAccess lock,
 // which only ever protected the write -- confirmed racing with go test
-// -race. dataPlaneInstance's returned *sharedRewriteDataPlane is itself
-// nil-receiver-safe on every method a caller would call on it, so callers
-// do not need their own nil check before using the result.
-func (s *sharedRewrite) dataPlaneInstance() *sharedRewriteDataPlane {
+// -race. The returned interface must be checked for nil before use; concrete
+// implementations may not support nil receivers after this runtime moves.
+func (s *sharedRewrite) dataPlaneInstance() sharedKernelRuntime {
 	s.dataPlaneAccess.RLock()
 	defer s.dataPlaneAccess.RUnlock()
 	return s.dataPlane
 }
 
-func (s *sharedRewrite) setDataPlane(dataPlane *sharedRewriteDataPlane) {
+func (s *sharedRewrite) setDataPlane(dataPlane sharedKernelRuntime) {
 	s.dataPlaneAccess.Lock()
 	s.dataPlane = dataPlane
 	s.dataPlaneAccess.Unlock()
 }
 
-func (s *sharedRewrite) takeDataPlane() *sharedRewriteDataPlane {
+func (s *sharedRewrite) takeDataPlane() sharedKernelRuntime {
 	s.dataPlaneAccess.Lock()
 	dataPlane := s.dataPlane
 	s.dataPlane = nil
@@ -340,7 +339,8 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			resetReleaseTimer(backend)
 			continue
 		}
-		if !s.dataPlaneInstance().isEnabled() {
+		dataPlane := s.dataPlaneInstance()
+		if dataPlane == nil || !dataPlane.IsEnabled() {
 			pressure = false
 			knownPressure = false
 			belowExitRounds = 0

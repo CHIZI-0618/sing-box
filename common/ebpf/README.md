@@ -33,6 +33,12 @@ file descriptors. The current implementation remains in `protocol/ebpf` while
 it is migrated; moving it to the standalone library does not require another
 change to the inbound lifecycle.
 
+Shared packet-rewrite attachment reconciliation is likewise consumed through
+the `sharedKernelRuntime` contract. The mechanism reports only enabled, closed,
+and rebuild-required state plus attachment snapshots; sing-box retains retry
+classification and scheduling. This prevents an extracted library from
+depending on protocol-layer recovery enums.
+
 Some kernel resource orchestration predates this boundary and remains in the
 adapter temporarily. It must be migrated by ownership unit rather than by
 individual helper:

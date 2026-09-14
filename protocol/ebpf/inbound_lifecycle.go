@@ -263,7 +263,9 @@ func (i *Inbound) startInbound() error {
 				attachments = append(attachments, dataPlane.AttachmentDescriptions()...)
 			}
 			if shared := i.sharedRewriteInstance(); shared != nil {
-				attachments = append(attachments, shared.dataPlaneInstance().attachmentDescriptions()...)
+				if sharedDataPlane := shared.dataPlaneInstance(); sharedDataPlane != nil {
+					attachments = append(attachments, sharedDataPlane.AttachmentDescriptions()...)
+				}
 			}
 			return strings.Join(attachments, ", ")
 		}(), "]",
