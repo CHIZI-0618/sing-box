@@ -12,3 +12,13 @@ type AttachmentInfo struct {
 	Mechanism      string `json:"mechanism"`
 	FakeIPICMP     bool   `json:"fakeip_icmp"`
 }
+
+// TCNetworkInfo is the stable userspace-visible part of a TC runtime's
+// delivery and policy-routing state. It intentionally omits netlink objects,
+// routes, rules, sysctl ownership records, and file descriptors.
+type TCNetworkInfo struct {
+	DeliveryInterface string
+	RoutingMark       uint32
+	RoutingTable      int
+	RoutingPriority   int
+}

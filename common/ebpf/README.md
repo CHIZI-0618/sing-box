@@ -27,7 +27,8 @@ reach into generated objects or duplicate their ABI.
 
 The inbound consumes TC kernel-resource orchestration through the narrow
 `tcRuntime` lifecycle contract. That contract exposes reconciliation,
-health/diagnostic snapshots, policy refresh, disable, and close operations, but
+health/diagnostic snapshots, a value-only delivery/routing snapshot, policy
+refresh, disable, and close operations, but
 no netlink objects, BPF links, qdiscs, routes, sysctl records, or raw program
 file descriptors. The current implementation remains in `protocol/ebpf` while
 it is migrated; moving it to the standalone library does not require another

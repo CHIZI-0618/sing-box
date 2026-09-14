@@ -142,23 +142,22 @@ func (i *Inbound) startInbound() error {
 	}
 	if backend != nil {
 		if err = i.listeners.registerTCTCPListeners(backend); err != nil {
-			i.setTCDataPlane(&tcDataPlane{backend: backend})
+			i.setTCDataPlane(newUnstartedTCRuntime(backend))
 			return E.Errors(err, i.closeTCDataPlane())
 		}
 	}
-	var dataPlane *tcDataPlane
+	var dataPlane tcRuntime
 	if backend != nil {
 		tcIPv6Enabled := localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6
-		dataPlane, err = startTCDataPlane(
-			backend,
-			localTCEnabled,
-			tcIPv6Enabled,
-			localInterface,
-			tcSharedInterfaces,
-			hostAddresses,
-			len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
-			i.tcPriority,
-		)
+		dataPlane, err = newTCRuntime(backend, tcRuntimeConfig{
+			LocalEnabled:          localTCEnabled,
+			IPv6Enabled:           tcIPv6Enabled,
+			LocalInterface:        localInterface,
+			SharedInterfaces:      tcSharedInterfaces,
+			HostAddresses:         hostAddresses,
+			SharedSourceMACPolicy: len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
+			Priority:              i.tcPriority,
+		})
 		i.setTCDataPlane(dataPlane)
 		if err != nil {
 			return err
@@ -213,6 +212,10 @@ func (i *Inbound) startInbound() error {
 		)
 		i.logStartupSummary()
 		return nil
+	}
+	tcNetworkInfo := commonEBPF.TCNetworkInfo{}
+	if dataPlane != nil {
+		tcNetworkInfo = dataPlane.NetworkInfo()
 	}
 	i.logger.Debug(
 		"eBPF TC active: local_data_plane=", func() string {
@@ -286,28 +289,25 @@ func (i *Inbound) startInbound() error {
 			return backend.TCPListenerLookupMode()
 		}(),
 		", delivery_interface=", func() string {
-			if dataPlane == nil {
-				return ""
-			}
-			return dataPlane.deliveryName()
+			return tcNetworkInfo.DeliveryInterface
 		}(),
 		", routing_mark=", func() string {
-			if dataPlane == nil {
+			if tcNetworkInfo.RoutingMark == 0 {
 				return ""
 			}
-			return "0x" + strconv.FormatUint(uint64(dataPlane.routing.mark), 16)
+			return "0x" + strconv.FormatUint(uint64(tcNetworkInfo.RoutingMark), 16)
 		}(),
 		", routing_table=", func() string {
-			if dataPlane == nil {
+			if tcNetworkInfo.RoutingTable == 0 {
 				return ""
 			}
-			return strconv.Itoa(dataPlane.routing.table)
+			return strconv.Itoa(tcNetworkInfo.RoutingTable)
 		}(),
 		", routing_priority=", func() string {
-			if dataPlane == nil {
+			if tcNetworkInfo.RoutingPriority == 0 {
 				return ""
 			}
-			return strconv.Itoa(dataPlane.routing.priority)
+			return strconv.Itoa(tcNetworkInfo.RoutingPriority)
 		}(),
 		", self_bypass=", i.selfBypassMode(),
 		", process_tracking=", i.processTrackingMode(),
