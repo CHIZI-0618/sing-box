@@ -4,11 +4,11 @@ package ebpf
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/sagernet/netlink"
-
-	"golang.org/x/sys/unix"
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
 
 // TestCheckRedirectRouteConflictSeesARouteOnAnotherInterface proves the
@@ -53,7 +53,7 @@ func TestCheckRedirectRouteConflictSeesARouteOnAnotherInterface(t *testing.T) {
 		t.Fatalf("add a conflicting route on a non-loopback interface: %v", err)
 	}
 
-	if err = checkRedirectRouteConflict(loopback.Attrs().Index, unix.AF_INET6, candidate); err == nil {
+	if _, err = commonEBPF.SelectRedirectPrefix(netlink.FAMILY_V6, []netip.Prefix{candidate}, nil); err == nil {
 		t.Fatalf("checkRedirectRouteConflict missed a route on interface %s conflicting with %s", self.Attrs().Name, candidate)
 	}
 }
@@ -107,7 +107,7 @@ func TestCheckRedirectRouteConflictSeesANonMainTableRoute(t *testing.T) {
 		t.Fatalf("add a conflicting route in table %d: %v", customTable, err)
 	}
 
-	if err = checkRedirectRouteConflict(loopback.Attrs().Index, unix.AF_INET, candidate); err == nil {
+	if _, err = commonEBPF.SelectRedirectPrefix(netlink.FAMILY_V4, []netip.Prefix{candidate}, nil); err == nil {
 		t.Fatalf("checkRedirectRouteConflict missed a route in non-main table %d conflicting with %s", customTable, candidate)
 	}
 }

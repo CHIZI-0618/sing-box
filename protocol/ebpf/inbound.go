@@ -60,7 +60,7 @@ type Inbound struct {
 	localDataPlane           string
 	cgroupPath               string
 	cgroupBackend            *commonEBPF.CgroupBackend
-	localRoutes              []*localRoute
+	localRoutes              *commonEBPF.LocalRouteSet
 	redirectIPv4Prefix       netip.Prefix
 	redirectIPv6Prefix       netip.Prefix
 	selfBypass               *commonEBPF.SelfBypass

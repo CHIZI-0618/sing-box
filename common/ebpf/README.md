@@ -32,7 +32,7 @@ individual helper:
 | Ownership unit | Current location | Target |
 | --- | --- | --- |
 | BPF source, objects, ABI, loaders, maps and capability probes | `common/ebpf` | standalone library core |
-| cgroup program attachment, self-bypass and socket process tracking | `common/ebpf` | standalone library core |
+| cgroup attachment, redirect token routes, self-bypass and socket process tracking | `common/ebpf` | standalone library core |
 | TC/TCX attachment, clsact fallback and attachment health | `protocol/ebpf` | standalone library runtime |
 | delivery veth, policy routes/rules and modified sysctls | `protocol/ebpf` | standalone library runtime |
 | shared packet-rewrite attachment and kernel-state reconciliation | `protocol/ebpf` | standalone library runtime |
