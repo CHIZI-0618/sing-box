@@ -38,6 +38,10 @@ type sharedKernelRuntimeHooks struct {
 	WarnFlowPurge      func(interfaceName string, err error)
 }
 
+func newSharedKernelRuntime(hooks sharedKernelRuntimeHooks, priority uint16) sharedKernelRuntime {
+	return newSharedRewriteDataPlane(hooks, priority)
+}
+
 func (s *sharedRewrite) kernelRuntimeHooks() sharedKernelRuntimeHooks {
 	return sharedKernelRuntimeHooks{
 		PrepareBackend: s.prepareBackend,

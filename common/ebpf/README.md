@@ -15,9 +15,8 @@ protocol/ebpf  --->  common/ebpf  --->  BPF objects and Linux APIs
 Go/C ABI, maps, programs, capability selection, generic policy compilation,
 and cgroup attachment lifecycles. It may depend on Linux/eBPF libraries and
 small general-purpose packages, but must not import sing-box application
-packages. `boundary_test.go` enforces this rule. Its import of
-`common/ebpf/internal/bpfgen` is a self-reference to generated objects that
-moves with the package.
+packages. `boundary_test.go` enforces this recursively for production code,
+tests, nested tools, and generated-object self-imports.
 
 `protocol/ebpf` owns sing-box configuration and validation, route-rule and
 rule-set translation, Android package-to-UID resolution, listeners, UDP NAT and
@@ -45,6 +44,12 @@ userspace-flow invalidation, ready notification, and warning delivery cross the
 boundary through an explicit callback set. The callback surface carries only
 mechanism values and ordinary Go values; it does not expose listeners, UDP NAT
 tables, loggers, routers, or the inbound itself.
+
+Both runtime implementations are created behind one adapter-side bridge each.
+All production consumers hold only the runtime interfaces; concrete runtime
+types are confined to those bridges and implementation files. Extraction can
+therefore replace the bridges with standalone-library constructors without
+rewriting inbound startup, monitoring, diagnostics, or shutdown.
 
 Some kernel resource orchestration predates this boundary and remains in the
 adapter temporarily. It must be migrated by ownership unit rather than by
