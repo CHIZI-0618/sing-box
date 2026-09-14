@@ -38,14 +38,15 @@ func temporarySharedRewriteAttachmentOptions() sharedRewriteAttachmentOptions {
 }
 
 type sharedRewriteDataPlane struct {
-	access        sync.Mutex
-	hooks         sharedKernelRuntimeHooks
-	backend       *commonEBPF.SharedNetworkBackend
-	attachments   map[string]*sharedRewriteAttachment
-	hostAddresses []netip.Addr
-	priority      uint16
-	enabled       bool
-	ready         bool
+	access             sync.Mutex
+	hooks              sharedKernelRuntimeHooks
+	backend            *commonEBPF.SharedNetworkBackend
+	attachments        map[string]*sharedRewriteAttachment
+	retiredAttachments []*sharedRewriteAttachment
+	hostAddresses      []netip.Addr
+	priority           uint16
+	enabled            bool
+	ready              bool
 }
 
 type sharedRewriteAttachment struct {
@@ -70,6 +71,9 @@ type sharedRewriteAttachment struct {
 	// off, the same as every other field here is nil when it does not apply.
 	icmpFilter *netlink.BpfFilter
 	icmpLink   link.Link
+	// detachFilter is nil in production; tests inject detach failures to prove
+	// that ownership is retained for a later cleanup retry.
+	detachFilter func(*netlink.BpfFilter) error
 }
 
 func newSharedRewriteDataPlane(hooks sharedKernelRuntimeHooks, priority uint16) *sharedRewriteDataPlane {
@@ -80,12 +84,15 @@ func newSharedRewriteDataPlane(hooks sharedKernelRuntimeHooks, priority uint16) 
 	}
 }
 
-func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresses []netip.Addr) error {
+func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresses []netip.Addr) (reconcileErr error) {
 	if d == nil {
 		return nil
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	defer func() {
+		reconcileErr = E.Errors(reconcileErr, d.closeRetiredLocked())
+	}()
 	changed := false
 	// Runs before the unlock on every return, including an early error exit,
 	// so a rollback that already detached something never leaves stale NAT
@@ -134,7 +141,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 			if newBackend {
 				return E.Errors(
 					E.Cause(err, "update shared packet-rewrite host addresses"),
-					d.discardBackend(backend),
+					backend.Close(),
 				)
 			}
 			return E.Cause(err, "update shared packet-rewrite host addresses")
@@ -158,6 +165,9 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	cleanupCandidates := func(cause error) error {
 		for _, attachment := range slices.Backward(created) {
 			cause = E.Errors(cause, attachment.Close())
+			if !attachment.IsClosed() {
+				d.retiredAttachments = append(d.retiredAttachments, attachment)
+			}
 		}
 		if hostChanged {
 			rollbackErr := backend.UpdateHostAddresses(d.hostAddresses)
@@ -165,8 +175,12 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 				cause = E.Errors(cause, E.Cause(rollbackErr, "rollback shared packet-rewrite host addresses"))
 			}
 		}
-		if newBackend {
-			cause = E.Errors(cause, d.discardBackend(backend))
+		if newBackend && len(d.retiredAttachments) == 0 {
+			cause = E.Errors(cause, backend.Close())
+		} else if newBackend {
+			// A filter or TCX link still references this backend's programs. Keep
+			// the backend reachable until a later cleanup retry detaches it.
+			d.backend = backend
 		}
 		return cause
 	}
@@ -247,6 +261,9 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 				if replacement.lock == nil {
 					replacement.lock = lock
 				}
+				if !previous.IsClosed() {
+					d.retiredAttachments = append(d.retiredAttachments, previous)
+				}
 				continue
 			}
 			replacement.lock = lock
@@ -256,6 +273,9 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 				// cannot prevent a newly discovered interface from being used.
 				closeErr = E.Errors(closeErr, E.Cause(err, "detach shared packet-rewrite interface ", previous.interfaceName))
 				changed = true
+				if !previous.IsClosed() {
+					d.retiredAttachments = append(d.retiredAttachments, previous)
+				}
 			}
 		}
 	}
@@ -272,16 +292,6 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	}
 
 	return closeErr
-}
-
-func (d *sharedRewriteDataPlane) discardBackend(backend *commonEBPF.SharedNetworkBackend) error {
-	if backend == nil {
-		return nil
-	}
-	if d.hooks.DiscardBackend != nil {
-		return d.hooks.DiscardBackend(backend)
-	}
-	return backend.Close()
 }
 
 func (d *sharedRewriteDataPlane) detachLocked(attachment *sharedRewriteAttachment) error {
@@ -360,9 +370,38 @@ func (d *sharedRewriteDataPlane) Close() error {
 	}
 	for name, attachment := range d.attachments {
 		closeErr = E.Errors(closeErr, d.detachLocked(attachment))
-		delete(d.attachments, name)
+		if attachment.IsClosed() {
+			delete(d.attachments, name)
+		}
+	}
+	closeErr = E.Errors(closeErr, d.closeRetiredLocked())
+	if len(d.attachments) != 0 || len(d.retiredAttachments) != 0 {
+		return closeErr
+	}
+	if d.backend != nil {
+		closeErr = E.Errors(closeErr, d.backend.Close())
+		if d.backend.IsClosed() {
+			d.backend = nil
+		}
 	}
 	return closeErr
+}
+
+func (d *sharedRewriteDataPlane) closeRetiredLocked() error {
+	var closeErr error
+	for _, attachment := range d.retiredAttachments {
+		closeErr = E.Errors(closeErr, d.detachLocked(attachment))
+	}
+	d.retiredAttachments = openSharedRewriteAttachments(d.retiredAttachments)
+	return closeErr
+}
+
+func openSharedRewriteAttachments(attachments []*sharedRewriteAttachment) []*sharedRewriteAttachment {
+	attachments = slices.DeleteFunc(attachments, (*sharedRewriteAttachment).IsClosed)
+	if len(attachments) == 0 {
+		return nil
+	}
+	return attachments
 }
 
 func attachSharedRewriteInterface(
@@ -500,40 +539,48 @@ func (a *sharedRewriteAttachment) healthy(device netlink.Link, priority uint16, 
 func (a *sharedRewriteAttachment) closeLinks() error {
 	var closeErr error
 	if a.ingressLink != nil {
-		closeErr = a.ingressLink.Close()
-		a.ingressLink = nil
+		closeErr = closeOwned(&a.ingressLink)
 	}
 	if a.egressLink != nil {
-		closeErr = E.Errors(closeErr, a.egressLink.Close())
-		a.egressLink = nil
+		closeErr = E.Errors(closeErr, closeOwned(&a.egressLink))
 	}
 	if a.icmpLink != nil {
-		closeErr = E.Errors(closeErr, a.icmpLink.Close())
-		a.icmpLink = nil
+		closeErr = E.Errors(closeErr, closeOwned(&a.icmpLink))
 	}
 	return closeErr
+}
+
+func (a *sharedRewriteAttachment) IsClosed() bool {
+	return a == nil || a.ingressFilter == nil && a.egressFilter == nil && a.icmpFilter == nil &&
+		a.ingressLink == nil && a.egressLink == nil && a.icmpLink == nil &&
+		!a.restoreLocalnet && a.lock == nil
 }
 
 func (a *sharedRewriteAttachment) Close() error {
 	if a == nil {
 		return nil
 	}
-	closeErr := E.Errors(
-		a.closeLinks(),
-		detachTCFilter(a.ingressFilter),
-		detachTCFilter(a.egressFilter),
-		detachTCFilter(a.icmpFilter),
+	detach := a.detachFilter
+	if detach == nil {
+		detach = detachTCFilter
+	}
+	closeErr := E.Errors(a.closeLinks(),
+		detachTCFilterOwnedWith(&a.ingressFilter, detach),
+		detachTCFilterOwnedWith(&a.egressFilter, detach),
+		detachTCFilterOwnedWith(&a.icmpFilter, detach),
 	)
-	a.ingressFilter = nil
-	a.egressFilter = nil
-	a.icmpFilter = nil
+	if a.ingressFilter != nil || a.egressFilter != nil || a.icmpFilter != nil ||
+		a.ingressLink != nil || a.egressLink != nil || a.icmpLink != nil {
+		return closeErr
+	}
 	if a.restoreLocalnet {
-		closeErr = E.Errors(closeErr, restoreSharedRewriteLocalnet(a.interfaceName))
+		if err := restoreSharedRewriteLocalnet(a.interfaceName); err != nil {
+			return E.Errors(closeErr, err)
+		}
 		a.restoreLocalnet = false
 	}
 	if a.lock != nil {
-		closeErr = E.Errors(closeErr, a.lock.Close())
-		a.lock = nil
+		closeErr = E.Errors(closeErr, closeOwned(&a.lock))
 	}
 	return closeErr
 }

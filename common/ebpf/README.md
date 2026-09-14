@@ -48,6 +48,12 @@ boundary through an explicit callback set. The callback surface carries only
 mechanism values and ordinary Go values; it does not expose listeners, UDP NAT
 tables, loggers, routers, or the inbound itself.
 
+`SharedNetworkBackend` is owned exclusively by the shared runtime. The adapter
+may borrow it through the runtime contract for flow lookup and policy updates,
+but does not close or retain a second ownership handle. Failed attachment,
+`route_localnet`, or interface-lock cleanup remains recorded by the runtime and
+is retried before the backend programs and maps are released.
+
 Both runtime implementations are created behind one adapter-side bridge each.
 All production consumers hold only the runtime interfaces; concrete runtime
 types are confined to those bridges and implementation files. Extraction can

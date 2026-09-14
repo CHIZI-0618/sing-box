@@ -28,7 +28,6 @@ const (
 type sharedRewrite struct {
 	inbound              *Inbound
 	interfaces           []string
-	sharedBackend        *ECommon.SharedNetworkBackend
 	dataPlane            sharedKernelRuntime
 	listeners            internalListenerSet
 	udpNat               *udpNATService
@@ -42,7 +41,6 @@ type sharedRewrite struct {
 	janitorDone          chan struct{}
 	tcPriority           uint16
 	lifecycleAccess      sync.RWMutex
-	backendAccess        sync.RWMutex
 	dataPlaneAccess      sync.RWMutex
 }
 
@@ -118,9 +116,6 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedNetworkBackend, error) 
 	} else {
 		_, err = backend.UpdateCompiledBypassCIDR(s.inbound.bypassRuleSetPolicy)
 	}
-	if err == nil {
-		s.setSharedBackend(backend)
-	}
 	s.inbound.bypassRuleSetAccess.Unlock()
 	if err != nil {
 		return nil, E.Errors(err, backend.Close())
@@ -163,25 +158,20 @@ func (s *sharedRewrite) Close() error {
 	}
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
+	s.stopFlowJanitor()
 	var closeErr error
 	if dataPlane := s.takeDataPlane(); dataPlane != nil {
 		closeErr = dataPlane.Close()
-	}
-	s.stopFlowJanitor()
-	backend := s.takeSharedBackend()
-	var backendErr error
-	if backend != nil {
-		backendErr = backend.Close()
-		if !backend.IsClosed() {
-			s.setSharedBackend(backend)
-			if backendErr == nil {
-				backendErr = E.New("shared-network eBPF backend remained open after close")
+		if !dataPlane.IsClosed() {
+			s.setDataPlane(dataPlane)
+			if closeErr == nil {
+				closeErr = E.New("shared packet-rewrite runtime remained open after close")
 			}
 		}
 	}
 	listenerErr := s.closeListeners()
 	s.udpNat.Purge()
-	return E.Errors(closeErr, backendErr, listenerErr)
+	return E.Errors(closeErr, listenerErr)
 }
 
 func (s *sharedRewrite) closeListeners() error {
@@ -194,16 +184,15 @@ func (s *sharedRewrite) IsClosed() bool {
 	}
 	s.lifecycleAccess.RLock()
 	defer s.lifecycleAccess.RUnlock()
-	return s.dataPlaneInstance() == nil && s.sharedBackendInstance() == nil && s.listeners.isClosed()
+	return s.dataPlaneInstance() == nil && s.listeners.isClosed()
 }
 
-// dataPlaneInstance, setDataPlane, and takeDataPlane guard s.dataPlane the
-// same way backendAccess guards s.sharedBackend above: Diagnostics, the
-// interface-monitor update loop, and the flow janitor goroutine all read
-// this field with no relationship to Close's own lifecycleAccess lock,
-// which only ever protected the write -- confirmed racing with go test
-// -race. The returned interface must be checked for nil before use; concrete
-// implementations may not support nil receivers after this runtime moves.
+// dataPlaneInstance, setDataPlane, and takeDataPlane guard s.dataPlane:
+// Diagnostics, the interface-monitor update loop, and the flow janitor
+// goroutine all read this field with no relationship to Close's own
+// lifecycleAccess lock. The returned interface must be checked for nil before
+// use; concrete implementations may not support nil receivers after this
+// runtime moves.
 func (s *sharedRewrite) dataPlaneInstance() sharedKernelRuntime {
 	s.dataPlaneAccess.RLock()
 	defer s.dataPlaneAccess.RUnlock()
@@ -225,23 +214,11 @@ func (s *sharedRewrite) takeDataPlane() sharedKernelRuntime {
 }
 
 func (s *sharedRewrite) sharedBackendInstance() *ECommon.SharedNetworkBackend {
-	s.backendAccess.RLock()
-	defer s.backendAccess.RUnlock()
-	return s.sharedBackend
-}
-
-func (s *sharedRewrite) takeSharedBackend() *ECommon.SharedNetworkBackend {
-	s.backendAccess.Lock()
-	backend := s.sharedBackend
-	s.sharedBackend = nil
-	s.backendAccess.Unlock()
-	return backend
-}
-
-func (s *sharedRewrite) setSharedBackend(backend *ECommon.SharedNetworkBackend) {
-	s.backendAccess.Lock()
-	s.sharedBackend = backend
-	s.backendAccess.Unlock()
+	dataPlane := s.dataPlaneInstance()
+	if dataPlane == nil {
+		return nil
+	}
+	return dataPlane.Backend()
 }
 
 func (s *sharedRewrite) startFlowJanitor() {

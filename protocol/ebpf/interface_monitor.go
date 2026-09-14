@@ -569,7 +569,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		if err = sharedDataPlane.Reconcile(sharedInterfaces, hostAddresses); err != nil {
 			i.counters.sharedReconcileFailures.Add(1)
 			i.interfaceWarnings.reconcile.warn(i.logger, "refresh shared packet-rewrite interfaces: ", err)
-			if sharedDataPlane.IsClosed() || sharedDataPlane.RequiresRebuild() {
+			if sharedDataPlane.BackendClosed() || sharedDataPlane.RequiresRebuild() {
 				outcome.sharedRewrite = tcSharedRewriteUnrecoverable
 			} else {
 				outcome.sharedRewrite = tcSharedRewriteRecoverable
