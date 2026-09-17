@@ -1,13 +1,12 @@
 package daemon
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -7396,6 +7395,1114 @@ func (x *NotificationCancel) GetTypeID() int32 {
 	return 0
 }
 
+type EBPFDiagnosticsResponse struct {
+	state         protoimpl.MessageState        `protogen:"open.v1"`
+	Inbounds      []*EBPFInboundDiagnostics     `protobuf:"bytes,1,rep,name=inbounds,proto3" json:"inbounds,omitempty"`
+	KernelRuntime *EBPFKernelRuntimeDiagnostics `protobuf:"bytes,2,opt,name=kernelRuntime,proto3" json:"kernelRuntime,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EBPFDiagnosticsResponse) Reset() {
+	*x = EBPFDiagnosticsResponse{}
+	mi := &file_daemon_started_service_proto_msgTypes[102]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFDiagnosticsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFDiagnosticsResponse) ProtoMessage() {}
+
+func (x *EBPFDiagnosticsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[102]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFDiagnosticsResponse.ProtoReflect.Descriptor instead.
+func (*EBPFDiagnosticsResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{102}
+}
+
+func (x *EBPFDiagnosticsResponse) GetInbounds() []*EBPFInboundDiagnostics {
+	if x != nil {
+		return x.Inbounds
+	}
+	return nil
+}
+
+func (x *EBPFDiagnosticsResponse) GetKernelRuntime() *EBPFKernelRuntimeDiagnostics {
+	if x != nil {
+		return x.KernelRuntime
+	}
+	return nil
+}
+
+type EBPFKernelRuntimeDiagnostics struct {
+	state         protoimpl.MessageState       `protogen:"open.v1"`
+	ObservedAt    int64                        `protobuf:"varint,1,opt,name=observedAt,proto3" json:"observedAt,omitempty"`
+	Programs      []*EBPFProgramDiagnostics    `protobuf:"bytes,2,rep,name=programs,proto3" json:"programs,omitempty"`
+	ProgramsError string                       `protobuf:"bytes,3,opt,name=programsError,proto3" json:"programsError,omitempty"`
+	MapOccupancy  *EBPFMapOccupancyDiagnostics `protobuf:"bytes,4,opt,name=mapOccupancy,proto3" json:"mapOccupancy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EBPFKernelRuntimeDiagnostics) Reset() {
+	*x = EBPFKernelRuntimeDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[103]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFKernelRuntimeDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFKernelRuntimeDiagnostics) ProtoMessage() {}
+
+func (x *EBPFKernelRuntimeDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[103]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFKernelRuntimeDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFKernelRuntimeDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{103}
+}
+
+func (x *EBPFKernelRuntimeDiagnostics) GetObservedAt() int64 {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return 0
+}
+
+func (x *EBPFKernelRuntimeDiagnostics) GetPrograms() []*EBPFProgramDiagnostics {
+	if x != nil {
+		return x.Programs
+	}
+	return nil
+}
+
+func (x *EBPFKernelRuntimeDiagnostics) GetProgramsError() string {
+	if x != nil {
+		return x.ProgramsError
+	}
+	return ""
+}
+
+func (x *EBPFKernelRuntimeDiagnostics) GetMapOccupancy() *EBPFMapOccupancyDiagnostics {
+	if x != nil {
+		return x.MapOccupancy
+	}
+	return nil
+}
+
+type EBPFProgramDiagnostics struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	MapCount      int32                  `protobuf:"varint,4,opt,name=mapCount,proto3" json:"mapCount,omitempty"`
+	MapIDs        []uint32               `protobuf:"varint,5,rep,packed,name=mapIDs,proto3" json:"mapIDs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EBPFProgramDiagnostics) Reset() {
+	*x = EBPFProgramDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[104]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFProgramDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFProgramDiagnostics) ProtoMessage() {}
+
+func (x *EBPFProgramDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[104]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFProgramDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFProgramDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{104}
+}
+
+func (x *EBPFProgramDiagnostics) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *EBPFProgramDiagnostics) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *EBPFProgramDiagnostics) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *EBPFProgramDiagnostics) GetMapCount() int32 {
+	if x != nil {
+		return x.MapCount
+	}
+	return 0
+}
+
+func (x *EBPFProgramDiagnostics) GetMapIDs() []uint32 {
+	if x != nil {
+		return x.MapIDs
+	}
+	return nil
+}
+
+type EBPFMapOccupancyDiagnostics struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	Maps          []*EBPFMapDiagnostics  `protobuf:"bytes,2,rep,name=maps,proto3" json:"maps,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EBPFMapOccupancyDiagnostics) Reset() {
+	*x = EBPFMapOccupancyDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[105]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFMapOccupancyDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFMapOccupancyDiagnostics) ProtoMessage() {}
+
+func (x *EBPFMapOccupancyDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[105]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFMapOccupancyDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFMapOccupancyDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{105}
+}
+
+func (x *EBPFMapOccupancyDiagnostics) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *EBPFMapOccupancyDiagnostics) GetMaps() []*EBPFMapDiagnostics {
+	if x != nil {
+		return x.Maps
+	}
+	return nil
+}
+
+func (x *EBPFMapOccupancyDiagnostics) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type EBPFMapDiagnostics struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Type          string                 `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	MaxEntries    uint32                 `protobuf:"varint,4,opt,name=maxEntries,proto3" json:"maxEntries,omitempty"`
+	KeySize       uint32                 `protobuf:"varint,5,opt,name=keySize,proto3" json:"keySize,omitempty"`
+	ValueSize     uint32                 `protobuf:"varint,6,opt,name=valueSize,proto3" json:"valueSize,omitempty"`
+	Flags         uint32                 `protobuf:"varint,7,opt,name=flags,proto3" json:"flags,omitempty"`
+	Entries       uint32                 `protobuf:"varint,8,opt,name=entries,proto3" json:"entries,omitempty"`
+	Supported     bool                   `protobuf:"varint,9,opt,name=supported,proto3" json:"supported,omitempty"`
+	Error         string                 `protobuf:"bytes,10,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EBPFMapDiagnostics) Reset() {
+	*x = EBPFMapDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[106]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFMapDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFMapDiagnostics) ProtoMessage() {}
+
+func (x *EBPFMapDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[106]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFMapDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFMapDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{106}
+}
+
+func (x *EBPFMapDiagnostics) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *EBPFMapDiagnostics) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *EBPFMapDiagnostics) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *EBPFMapDiagnostics) GetMaxEntries() uint32 {
+	if x != nil {
+		return x.MaxEntries
+	}
+	return 0
+}
+
+func (x *EBPFMapDiagnostics) GetKeySize() uint32 {
+	if x != nil {
+		return x.KeySize
+	}
+	return 0
+}
+
+func (x *EBPFMapDiagnostics) GetValueSize() uint32 {
+	if x != nil {
+		return x.ValueSize
+	}
+	return 0
+}
+
+func (x *EBPFMapDiagnostics) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *EBPFMapDiagnostics) GetEntries() uint32 {
+	if x != nil {
+		return x.Entries
+	}
+	return 0
+}
+
+func (x *EBPFMapDiagnostics) GetSupported() bool {
+	if x != nil {
+		return x.Supported
+	}
+	return false
+}
+
+func (x *EBPFMapDiagnostics) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type EBPFInboundDiagnostics struct {
+	state                              protoimpl.MessageState                    `protogen:"open.v1"`
+	SchemaVersion                      int32                                     `protobuf:"varint,1,opt,name=schemaVersion,proto3" json:"schemaVersion,omitempty"`
+	ObservedAt                         int64                                     `protobuf:"varint,2,opt,name=observedAt,proto3" json:"observedAt,omitempty"`
+	Tag                                string                                    `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
+	State                              string                                    `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
+	LocalEnabled                       bool                                      `protobuf:"varint,5,opt,name=localEnabled,proto3" json:"localEnabled,omitempty"`
+	LocalDataPlane                     string                                    `protobuf:"bytes,6,opt,name=localDataPlane,proto3" json:"localDataPlane,omitempty"`
+	SharedEnabled                      bool                                      `protobuf:"varint,7,opt,name=sharedEnabled,proto3" json:"sharedEnabled,omitempty"`
+	SharedDataPlane                    string                                    `protobuf:"bytes,8,opt,name=sharedDataPlane,proto3" json:"sharedDataPlane,omitempty"`
+	FakeIPICMPReply                    bool                                      `protobuf:"varint,9,opt,name=fakeIPICMPReply,proto3" json:"fakeIPICMPReply,omitempty"`
+	Attachments                        []*EBPFAttachmentDiagnostics              `protobuf:"bytes,10,rep,name=attachments,proto3" json:"attachments,omitempty"`
+	LastError                          string                                    `protobuf:"bytes,11,opt,name=lastError,proto3" json:"lastError,omitempty"`
+	LastErrorAt                        *int64                                    `protobuf:"varint,12,opt,name=lastErrorAt,proto3,oneof" json:"lastErrorAt,omitempty"`
+	LastRecoveryAt                     *int64                                    `protobuf:"varint,13,opt,name=lastRecoveryAt,proto3,oneof" json:"lastRecoveryAt,omitempty"`
+	RecoveryPending                    bool                                      `protobuf:"varint,14,opt,name=recoveryPending,proto3" json:"recoveryPending,omitempty"`
+	RecoveryUnrecoverable              bool                                      `protobuf:"varint,15,opt,name=recoveryUnrecoverable,proto3" json:"recoveryUnrecoverable,omitempty"`
+	NextRetryAt                        *int64                                    `protobuf:"varint,16,opt,name=nextRetryAt,proto3,oneof" json:"nextRetryAt,omitempty"`
+	BypassRuleSetConsistent            bool                                      `protobuf:"varint,17,opt,name=bypassRuleSetConsistent,proto3" json:"bypassRuleSetConsistent,omitempty"`
+	BypassRuleSetPending               bool                                      `protobuf:"varint,18,opt,name=bypassRuleSetPending,proto3" json:"bypassRuleSetPending,omitempty"`
+	BypassRuleSetPolicyVersion         uint64                                    `protobuf:"varint,19,opt,name=bypassRuleSetPolicyVersion,proto3" json:"bypassRuleSetPolicyVersion,omitempty"`
+	BypassRuleSetExpectedPolicyVersion uint64                                    `protobuf:"varint,20,opt,name=bypassRuleSetExpectedPolicyVersion,proto3" json:"bypassRuleSetExpectedPolicyVersion,omitempty"`
+	BypassRuleSetRetryCount            uint64                                    `protobuf:"varint,21,opt,name=bypassRuleSetRetryCount,proto3" json:"bypassRuleSetRetryCount,omitempty"`
+	BypassRuleSetBackendState          map[string]*EBPFBypassRuleSetBackendState `protobuf:"bytes,22,rep,name=bypassRuleSetBackendState,proto3" json:"bypassRuleSetBackendState,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	UdpSessionCount                    int64                                     `protobuf:"varint,23,opt,name=udpSessionCount,proto3" json:"udpSessionCount,omitempty"`
+	UdpReplySockets                    *EBPFUDPReplySocketDiagnostics            `protobuf:"bytes,24,opt,name=udpReplySockets,proto3" json:"udpReplySockets,omitempty"`
+	Counters                           *EBPFCounters                             `protobuf:"bytes,25,opt,name=counters,proto3" json:"counters,omitempty"`
+	UdpNAT                             *EBPFUDPNATDiagnostics                    `protobuf:"bytes,26,opt,name=udpNAT,proto3" json:"udpNAT,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
+}
+
+func (x *EBPFInboundDiagnostics) Reset() {
+	*x = EBPFInboundDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[107]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFInboundDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFInboundDiagnostics) ProtoMessage() {}
+
+func (x *EBPFInboundDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[107]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFInboundDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFInboundDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{107}
+}
+
+func (x *EBPFInboundDiagnostics) GetSchemaVersion() int32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetObservedAt() int64 {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalEnabled() bool {
+	if x != nil {
+		return x.LocalEnabled
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalDataPlane() string {
+	if x != nil {
+		return x.LocalDataPlane
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetSharedEnabled() bool {
+	if x != nil {
+		return x.SharedEnabled
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetSharedDataPlane() string {
+	if x != nil {
+		return x.SharedDataPlane
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetFakeIPICMPReply() bool {
+	if x != nil {
+		return x.FakeIPICMPReply
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetAttachments() []*EBPFAttachmentDiagnostics {
+	if x != nil {
+		return x.Attachments
+	}
+	return nil
+}
+
+func (x *EBPFInboundDiagnostics) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLastErrorAt() int64 {
+	if x != nil && x.LastErrorAt != nil {
+		return *x.LastErrorAt
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetLastRecoveryAt() int64 {
+	if x != nil && x.LastRecoveryAt != nil {
+		return *x.LastRecoveryAt
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetRecoveryPending() bool {
+	if x != nil {
+		return x.RecoveryPending
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetRecoveryUnrecoverable() bool {
+	if x != nil {
+		return x.RecoveryUnrecoverable
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetNextRetryAt() int64 {
+	if x != nil && x.NextRetryAt != nil {
+		return *x.NextRetryAt
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetBypassRuleSetConsistent() bool {
+	if x != nil {
+		return x.BypassRuleSetConsistent
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetBypassRuleSetPending() bool {
+	if x != nil {
+		return x.BypassRuleSetPending
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetBypassRuleSetPolicyVersion() uint64 {
+	if x != nil {
+		return x.BypassRuleSetPolicyVersion
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetBypassRuleSetExpectedPolicyVersion() uint64 {
+	if x != nil {
+		return x.BypassRuleSetExpectedPolicyVersion
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetBypassRuleSetRetryCount() uint64 {
+	if x != nil {
+		return x.BypassRuleSetRetryCount
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetBypassRuleSetBackendState() map[string]*EBPFBypassRuleSetBackendState {
+	if x != nil {
+		return x.BypassRuleSetBackendState
+	}
+	return nil
+}
+
+func (x *EBPFInboundDiagnostics) GetUdpSessionCount() int64 {
+	if x != nil {
+		return x.UdpSessionCount
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetUdpReplySockets() *EBPFUDPReplySocketDiagnostics {
+	if x != nil {
+		return x.UdpReplySockets
+	}
+	return nil
+}
+
+func (x *EBPFInboundDiagnostics) GetCounters() *EBPFCounters {
+	if x != nil {
+		return x.Counters
+	}
+	return nil
+}
+
+func (x *EBPFInboundDiagnostics) GetUdpNAT() *EBPFUDPNATDiagnostics {
+	if x != nil {
+		return x.UdpNAT
+	}
+	return nil
+}
+
+type EBPFAttachmentDiagnostics struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	InterfaceName  string                 `protobuf:"bytes,1,opt,name=interfaceName,proto3" json:"interfaceName,omitempty"`
+	InterfaceIndex int32                  `protobuf:"varint,2,opt,name=interfaceIndex,proto3" json:"interfaceIndex,omitempty"`
+	Role           string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
+	Framing        string                 `protobuf:"bytes,4,opt,name=framing,proto3" json:"framing,omitempty"`
+	Mechanism      string                 `protobuf:"bytes,5,opt,name=mechanism,proto3" json:"mechanism,omitempty"`
+	IcmpEchoReply  bool                   `protobuf:"varint,6,opt,name=icmpEchoReply,proto3" json:"icmpEchoReply,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *EBPFAttachmentDiagnostics) Reset() {
+	*x = EBPFAttachmentDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[108]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFAttachmentDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFAttachmentDiagnostics) ProtoMessage() {}
+
+func (x *EBPFAttachmentDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[108]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFAttachmentDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFAttachmentDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{108}
+}
+
+func (x *EBPFAttachmentDiagnostics) GetInterfaceName() string {
+	if x != nil {
+		return x.InterfaceName
+	}
+	return ""
+}
+
+func (x *EBPFAttachmentDiagnostics) GetInterfaceIndex() int32 {
+	if x != nil {
+		return x.InterfaceIndex
+	}
+	return 0
+}
+
+func (x *EBPFAttachmentDiagnostics) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *EBPFAttachmentDiagnostics) GetFraming() string {
+	if x != nil {
+		return x.Framing
+	}
+	return ""
+}
+
+func (x *EBPFAttachmentDiagnostics) GetMechanism() string {
+	if x != nil {
+		return x.Mechanism
+	}
+	return ""
+}
+
+func (x *EBPFAttachmentDiagnostics) GetIcmpEchoReply() bool {
+	if x != nil {
+		return x.IcmpEchoReply
+	}
+	return false
+}
+
+type EBPFBypassRuleSetBackendState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       uint64                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Known         bool                   `protobuf:"varint,2,opt,name=known,proto3" json:"known,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EBPFBypassRuleSetBackendState) Reset() {
+	*x = EBPFBypassRuleSetBackendState{}
+	mi := &file_daemon_started_service_proto_msgTypes[109]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFBypassRuleSetBackendState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFBypassRuleSetBackendState) ProtoMessage() {}
+
+func (x *EBPFBypassRuleSetBackendState) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[109]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFBypassRuleSetBackendState.ProtoReflect.Descriptor instead.
+func (*EBPFBypassRuleSetBackendState) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{109}
+}
+
+func (x *EBPFBypassRuleSetBackendState) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *EBPFBypassRuleSetBackendState) GetKnown() bool {
+	if x != nil {
+		return x.Known
+	}
+	return false
+}
+
+type EBPFUDPReplySocketDiagnostics struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Count            int64                  `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	Peak             int64                  `protobuf:"varint,2,opt,name=peak,proto3" json:"peak,omitempty"`
+	Evicted          int64                  `protobuf:"varint,3,opt,name=evicted,proto3" json:"evicted,omitempty"`
+	CapacityRejected int64                  `protobuf:"varint,4,opt,name=capacityRejected,proto3" json:"capacityRejected,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *EBPFUDPReplySocketDiagnostics) Reset() {
+	*x = EBPFUDPReplySocketDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[110]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFUDPReplySocketDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFUDPReplySocketDiagnostics) ProtoMessage() {}
+
+func (x *EBPFUDPReplySocketDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[110]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFUDPReplySocketDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFUDPReplySocketDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{110}
+}
+
+func (x *EBPFUDPReplySocketDiagnostics) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *EBPFUDPReplySocketDiagnostics) GetPeak() int64 {
+	if x != nil {
+		return x.Peak
+	}
+	return 0
+}
+
+func (x *EBPFUDPReplySocketDiagnostics) GetEvicted() int64 {
+	if x != nil {
+		return x.Evicted
+	}
+	return 0
+}
+
+func (x *EBPFUDPReplySocketDiagnostics) GetCapacityRejected() int64 {
+	if x != nil {
+		return x.CapacityRejected
+	}
+	return 0
+}
+
+type EBPFCounters struct {
+	state                         protoimpl.MessageState `protogen:"open.v1"`
+	AssignmentLookupFailures      uint64                 `protobuf:"varint,1,opt,name=assignmentLookupFailures,proto3" json:"assignmentLookupFailures,omitempty"`
+	TcSocketLookupFailures        uint64                 `protobuf:"varint,2,opt,name=tcSocketLookupFailures,proto3" json:"tcSocketLookupFailures,omitempty"`
+	TcSKAssignFailures            uint64                 `protobuf:"varint,3,opt,name=tcSKAssignFailures,proto3" json:"tcSKAssignFailures,omitempty"`
+	TcAssignmentUpdateFailures    uint64                 `protobuf:"varint,4,opt,name=tcAssignmentUpdateFailures,proto3" json:"tcAssignmentUpdateFailures,omitempty"`
+	TcLocalFragmentPasses         uint64                 `protobuf:"varint,5,opt,name=tcLocalFragmentPasses,proto3" json:"tcLocalFragmentPasses,omitempty"`
+	TcSharedFragmentPasses        uint64                 `protobuf:"varint,6,opt,name=tcSharedFragmentPasses,proto3" json:"tcSharedFragmentPasses,omitempty"`
+	TokenReservationFailures      uint64                 `protobuf:"varint,7,opt,name=tokenReservationFailures,proto3" json:"tokenReservationFailures,omitempty"`
+	RewriteFailures               uint64                 `protobuf:"varint,8,opt,name=rewriteFailures,proto3" json:"rewriteFailures,omitempty"`
+	SharedIngressPasses           uint64                 `protobuf:"varint,9,opt,name=sharedIngressPasses,proto3" json:"sharedIngressPasses,omitempty"`
+	SharedEgressPasses            uint64                 `protobuf:"varint,10,opt,name=sharedEgressPasses,proto3" json:"sharedEgressPasses,omitempty"`
+	SharedIngressFragmentPasses   uint64                 `protobuf:"varint,11,opt,name=sharedIngressFragmentPasses,proto3" json:"sharedIngressFragmentPasses,omitempty"`
+	SharedEgressFragmentPasses    uint64                 `protobuf:"varint,12,opt,name=sharedEgressFragmentPasses,proto3" json:"sharedEgressFragmentPasses,omitempty"`
+	SharedReconcileFailures       uint64                 `protobuf:"varint,13,opt,name=sharedReconcileFailures,proto3" json:"sharedReconcileFailures,omitempty"`
+	RecoveryAttempts              uint64                 `protobuf:"varint,14,opt,name=recoveryAttempts,proto3" json:"recoveryAttempts,omitempty"`
+	RecoverySuccesses             uint64                 `protobuf:"varint,15,opt,name=recoverySuccesses,proto3" json:"recoverySuccesses,omitempty"`
+	RecoveryFailures              uint64                 `protobuf:"varint,16,opt,name=recoveryFailures,proto3" json:"recoveryFailures,omitempty"`
+	FakeIPICMPReplies             uint64                 `protobuf:"varint,17,opt,name=fakeIPICMPReplies,proto3" json:"fakeIPICMPReplies,omitempty"`
+	FakeIPICMPPassThrough         uint64                 `protobuf:"varint,18,opt,name=fakeIPICMPPassThrough,proto3" json:"fakeIPICMPPassThrough,omitempty"`
+	FakeIPICMPRewriteFailureDrops uint64                 `protobuf:"varint,19,opt,name=fakeIPICMPRewriteFailureDrops,proto3" json:"fakeIPICMPRewriteFailureDrops,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
+}
+
+func (x *EBPFCounters) Reset() {
+	*x = EBPFCounters{}
+	mi := &file_daemon_started_service_proto_msgTypes[111]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFCounters) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFCounters) ProtoMessage() {}
+
+func (x *EBPFCounters) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[111]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFCounters.ProtoReflect.Descriptor instead.
+func (*EBPFCounters) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{111}
+}
+
+func (x *EBPFCounters) GetAssignmentLookupFailures() uint64 {
+	if x != nil {
+		return x.AssignmentLookupFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcSocketLookupFailures() uint64 {
+	if x != nil {
+		return x.TcSocketLookupFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcSKAssignFailures() uint64 {
+	if x != nil {
+		return x.TcSKAssignFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcAssignmentUpdateFailures() uint64 {
+	if x != nil {
+		return x.TcAssignmentUpdateFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcLocalFragmentPasses() uint64 {
+	if x != nil {
+		return x.TcLocalFragmentPasses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcSharedFragmentPasses() uint64 {
+	if x != nil {
+		return x.TcSharedFragmentPasses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTokenReservationFailures() uint64 {
+	if x != nil {
+		return x.TokenReservationFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetRewriteFailures() uint64 {
+	if x != nil {
+		return x.RewriteFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetSharedIngressPasses() uint64 {
+	if x != nil {
+		return x.SharedIngressPasses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetSharedEgressPasses() uint64 {
+	if x != nil {
+		return x.SharedEgressPasses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetSharedIngressFragmentPasses() uint64 {
+	if x != nil {
+		return x.SharedIngressFragmentPasses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetSharedEgressFragmentPasses() uint64 {
+	if x != nil {
+		return x.SharedEgressFragmentPasses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetSharedReconcileFailures() uint64 {
+	if x != nil {
+		return x.SharedReconcileFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetRecoveryAttempts() uint64 {
+	if x != nil {
+		return x.RecoveryAttempts
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetRecoverySuccesses() uint64 {
+	if x != nil {
+		return x.RecoverySuccesses
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetRecoveryFailures() uint64 {
+	if x != nil {
+		return x.RecoveryFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetFakeIPICMPReplies() uint64 {
+	if x != nil {
+		return x.FakeIPICMPReplies
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetFakeIPICMPPassThrough() uint64 {
+	if x != nil {
+		return x.FakeIPICMPPassThrough
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetFakeIPICMPRewriteFailureDrops() uint64 {
+	if x != nil {
+		return x.FakeIPICMPRewriteFailureDrops
+	}
+	return 0
+}
+
+type EBPFUDPNATDiagnostics struct {
+	state                          protoimpl.MessageState `protogen:"open.v1"`
+	ActiveSessions                 int64                  `protobuf:"varint,1,opt,name=activeSessions,proto3" json:"activeSessions,omitempty"`
+	CreatedSessions                uint64                 `protobuf:"varint,2,opt,name=createdSessions,proto3" json:"createdSessions,omitempty"`
+	CapacityEvictions              uint64                 `protobuf:"varint,3,opt,name=capacityEvictions,proto3" json:"capacityEvictions,omitempty"`
+	QueueDrops                     uint64                 `protobuf:"varint,4,opt,name=queueDrops,proto3" json:"queueDrops,omitempty"`
+	SocketReleaseEvents            uint64                 `protobuf:"varint,5,opt,name=socketReleaseEvents,proto3" json:"socketReleaseEvents,omitempty"`
+	SocketReleaseMatched           uint64                 `protobuf:"varint,6,opt,name=socketReleaseMatched,proto3" json:"socketReleaseMatched,omitempty"`
+	PendingReleaseCapacityRejected uint64                 `protobuf:"varint,7,opt,name=pendingReleaseCapacityRejected,proto3" json:"pendingReleaseCapacityRejected,omitempty"`
+	ReleaseNotificationDrops       uint64                 `protobuf:"varint,8,opt,name=releaseNotificationDrops,proto3" json:"releaseNotificationDrops,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
+}
+
+func (x *EBPFUDPNATDiagnostics) Reset() {
+	*x = EBPFUDPNATDiagnostics{}
+	mi := &file_daemon_started_service_proto_msgTypes[112]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EBPFUDPNATDiagnostics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EBPFUDPNATDiagnostics) ProtoMessage() {}
+
+func (x *EBPFUDPNATDiagnostics) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[112]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EBPFUDPNATDiagnostics.ProtoReflect.Descriptor instead.
+func (*EBPFUDPNATDiagnostics) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{112}
+}
+
+func (x *EBPFUDPNATDiagnostics) GetActiveSessions() int64 {
+	if x != nil {
+		return x.ActiveSessions
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetCreatedSessions() uint64 {
+	if x != nil {
+		return x.CreatedSessions
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetCapacityEvictions() uint64 {
+	if x != nil {
+		return x.CapacityEvictions
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetQueueDrops() uint64 {
+	if x != nil {
+		return x.QueueDrops
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetSocketReleaseEvents() uint64 {
+	if x != nil {
+		return x.SocketReleaseEvents
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetSocketReleaseMatched() uint64 {
+	if x != nil {
+		return x.SocketReleaseMatched
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetPendingReleaseCapacityRejected() uint64 {
+	if x != nil {
+		return x.PendingReleaseCapacityRejected
+	}
+	return 0
+}
+
+func (x *EBPFUDPNATDiagnostics) GetReleaseNotificationDrops() uint64 {
+	if x != nil {
+		return x.ReleaseNotificationDrops
+	}
+	return 0
+}
+
 type Log_Message struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Level         LogLevel               `protobuf:"varint,1,opt,name=level,proto3,enum=daemon.LogLevel" json:"level,omitempty"`
@@ -7406,7 +8513,7 @@ type Log_Message struct {
 
 func (x *Log_Message) Reset() {
 	*x = Log_Message{}
-	mi := &file_daemon_started_service_proto_msgTypes[102]
+	mi := &file_daemon_started_service_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7418,7 +8525,7 @@ func (x *Log_Message) String() string {
 func (*Log_Message) ProtoMessage() {}
 
 func (x *Log_Message) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[102]
+	mi := &file_daemon_started_service_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8016,7 +9123,124 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\n" +
 	"identifier\x18\x01 \x01(\tR\n" +
 	"identifier\x12\x16\n" +
-	"\x06typeID\x18\x02 \x01(\x05R\x06typeID*U\n" +
+	"\x06typeID\x18\x02 \x01(\x05R\x06typeID\"\xa1\x01\n" +
+	"\x17EBPFDiagnosticsResponse\x12:\n" +
+	"\binbounds\x18\x01 \x03(\v2\x1e.daemon.EBPFInboundDiagnosticsR\binbounds\x12J\n" +
+	"\rkernelRuntime\x18\x02 \x01(\v2$.daemon.EBPFKernelRuntimeDiagnosticsR\rkernelRuntime\"\xe9\x01\n" +
+	"\x1cEBPFKernelRuntimeDiagnostics\x12\x1e\n" +
+	"\n" +
+	"observedAt\x18\x01 \x01(\x03R\n" +
+	"observedAt\x12:\n" +
+	"\bprograms\x18\x02 \x03(\v2\x1e.daemon.EBPFProgramDiagnosticsR\bprograms\x12$\n" +
+	"\rprogramsError\x18\x03 \x01(\tR\rprogramsError\x12G\n" +
+	"\fmapOccupancy\x18\x04 \x01(\v2#.daemon.EBPFMapOccupancyDiagnosticsR\fmapOccupancy\"\x84\x01\n" +
+	"\x16EBPFProgramDiagnostics\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x1a\n" +
+	"\bmapCount\x18\x04 \x01(\x05R\bmapCount\x12\x16\n" +
+	"\x06mapIDs\x18\x05 \x03(\rR\x06mapIDs\"{\n" +
+	"\x1bEBPFMapOccupancyDiagnostics\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12.\n" +
+	"\x04maps\x18\x02 \x03(\v2\x1a.daemon.EBPFMapDiagnosticsR\x04maps\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\x88\x02\n" +
+	"\x12EBPFMapDiagnostics\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x1e\n" +
+	"\n" +
+	"maxEntries\x18\x04 \x01(\rR\n" +
+	"maxEntries\x12\x18\n" +
+	"\akeySize\x18\x05 \x01(\rR\akeySize\x12\x1c\n" +
+	"\tvalueSize\x18\x06 \x01(\rR\tvalueSize\x12\x14\n" +
+	"\x05flags\x18\a \x01(\rR\x05flags\x12\x18\n" +
+	"\aentries\x18\b \x01(\rR\aentries\x12\x1c\n" +
+	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
+	"\x05error\x18\n" +
+	" \x01(\tR\x05error\"\xcb\v\n" +
+	"\x16EBPFInboundDiagnostics\x12$\n" +
+	"\rschemaVersion\x18\x01 \x01(\x05R\rschemaVersion\x12\x1e\n" +
+	"\n" +
+	"observedAt\x18\x02 \x01(\x03R\n" +
+	"observedAt\x12\x10\n" +
+	"\x03tag\x18\x03 \x01(\tR\x03tag\x12\x14\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\x12\"\n" +
+	"\flocalEnabled\x18\x05 \x01(\bR\flocalEnabled\x12&\n" +
+	"\x0elocalDataPlane\x18\x06 \x01(\tR\x0elocalDataPlane\x12$\n" +
+	"\rsharedEnabled\x18\a \x01(\bR\rsharedEnabled\x12(\n" +
+	"\x0fsharedDataPlane\x18\b \x01(\tR\x0fsharedDataPlane\x12(\n" +
+	"\x0ffakeIPICMPReply\x18\t \x01(\bR\x0ffakeIPICMPReply\x12C\n" +
+	"\vattachments\x18\n" +
+	" \x03(\v2!.daemon.EBPFAttachmentDiagnosticsR\vattachments\x12\x1c\n" +
+	"\tlastError\x18\v \x01(\tR\tlastError\x12%\n" +
+	"\vlastErrorAt\x18\f \x01(\x03H\x00R\vlastErrorAt\x88\x01\x01\x12+\n" +
+	"\x0elastRecoveryAt\x18\r \x01(\x03H\x01R\x0elastRecoveryAt\x88\x01\x01\x12(\n" +
+	"\x0frecoveryPending\x18\x0e \x01(\bR\x0frecoveryPending\x124\n" +
+	"\x15recoveryUnrecoverable\x18\x0f \x01(\bR\x15recoveryUnrecoverable\x12%\n" +
+	"\vnextRetryAt\x18\x10 \x01(\x03H\x02R\vnextRetryAt\x88\x01\x01\x128\n" +
+	"\x17bypassRuleSetConsistent\x18\x11 \x01(\bR\x17bypassRuleSetConsistent\x122\n" +
+	"\x14bypassRuleSetPending\x18\x12 \x01(\bR\x14bypassRuleSetPending\x12>\n" +
+	"\x1abypassRuleSetPolicyVersion\x18\x13 \x01(\x04R\x1abypassRuleSetPolicyVersion\x12N\n" +
+	"\"bypassRuleSetExpectedPolicyVersion\x18\x14 \x01(\x04R\"bypassRuleSetExpectedPolicyVersion\x128\n" +
+	"\x17bypassRuleSetRetryCount\x18\x15 \x01(\x04R\x17bypassRuleSetRetryCount\x12{\n" +
+	"\x19bypassRuleSetBackendState\x18\x16 \x03(\v2=.daemon.EBPFInboundDiagnostics.BypassRuleSetBackendStateEntryR\x19bypassRuleSetBackendState\x12(\n" +
+	"\x0fudpSessionCount\x18\x17 \x01(\x03R\x0fudpSessionCount\x12O\n" +
+	"\x0fudpReplySockets\x18\x18 \x01(\v2%.daemon.EBPFUDPReplySocketDiagnosticsR\x0fudpReplySockets\x120\n" +
+	"\bcounters\x18\x19 \x01(\v2\x14.daemon.EBPFCountersR\bcounters\x125\n" +
+	"\x06udpNAT\x18\x1a \x01(\v2\x1d.daemon.EBPFUDPNATDiagnosticsR\x06udpNAT\x1as\n" +
+	"\x1eBypassRuleSetBackendStateEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12;\n" +
+	"\x05value\x18\x02 \x01(\v2%.daemon.EBPFBypassRuleSetBackendStateR\x05value:\x028\x01B\x0e\n" +
+	"\f_lastErrorAtB\x11\n" +
+	"\x0f_lastRecoveryAtB\x0e\n" +
+	"\f_nextRetryAt\"\xdb\x01\n" +
+	"\x19EBPFAttachmentDiagnostics\x12$\n" +
+	"\rinterfaceName\x18\x01 \x01(\tR\rinterfaceName\x12&\n" +
+	"\x0einterfaceIndex\x18\x02 \x01(\x05R\x0einterfaceIndex\x12\x12\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\x12\x18\n" +
+	"\aframing\x18\x04 \x01(\tR\aframing\x12\x1c\n" +
+	"\tmechanism\x18\x05 \x01(\tR\tmechanism\x12$\n" +
+	"\ricmpEchoReply\x18\x06 \x01(\bR\ricmpEchoReply\"O\n" +
+	"\x1dEBPFBypassRuleSetBackendState\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x14\n" +
+	"\x05known\x18\x02 \x01(\bR\x05known\"\x8f\x01\n" +
+	"\x1dEBPFUDPReplySocketDiagnostics\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\x03R\x05count\x12\x12\n" +
+	"\x04peak\x18\x02 \x01(\x03R\x04peak\x12\x18\n" +
+	"\aevicted\x18\x03 \x01(\x03R\aevicted\x12*\n" +
+	"\x10capacityRejected\x18\x04 \x01(\x03R\x10capacityRejected\"\x94\b\n" +
+	"\fEBPFCounters\x12:\n" +
+	"\x18assignmentLookupFailures\x18\x01 \x01(\x04R\x18assignmentLookupFailures\x126\n" +
+	"\x16tcSocketLookupFailures\x18\x02 \x01(\x04R\x16tcSocketLookupFailures\x12.\n" +
+	"\x12tcSKAssignFailures\x18\x03 \x01(\x04R\x12tcSKAssignFailures\x12>\n" +
+	"\x1atcAssignmentUpdateFailures\x18\x04 \x01(\x04R\x1atcAssignmentUpdateFailures\x124\n" +
+	"\x15tcLocalFragmentPasses\x18\x05 \x01(\x04R\x15tcLocalFragmentPasses\x126\n" +
+	"\x16tcSharedFragmentPasses\x18\x06 \x01(\x04R\x16tcSharedFragmentPasses\x12:\n" +
+	"\x18tokenReservationFailures\x18\a \x01(\x04R\x18tokenReservationFailures\x12(\n" +
+	"\x0frewriteFailures\x18\b \x01(\x04R\x0frewriteFailures\x120\n" +
+	"\x13sharedIngressPasses\x18\t \x01(\x04R\x13sharedIngressPasses\x12.\n" +
+	"\x12sharedEgressPasses\x18\n" +
+	" \x01(\x04R\x12sharedEgressPasses\x12@\n" +
+	"\x1bsharedIngressFragmentPasses\x18\v \x01(\x04R\x1bsharedIngressFragmentPasses\x12>\n" +
+	"\x1asharedEgressFragmentPasses\x18\f \x01(\x04R\x1asharedEgressFragmentPasses\x128\n" +
+	"\x17sharedReconcileFailures\x18\r \x01(\x04R\x17sharedReconcileFailures\x12*\n" +
+	"\x10recoveryAttempts\x18\x0e \x01(\x04R\x10recoveryAttempts\x12,\n" +
+	"\x11recoverySuccesses\x18\x0f \x01(\x04R\x11recoverySuccesses\x12*\n" +
+	"\x10recoveryFailures\x18\x10 \x01(\x04R\x10recoveryFailures\x12,\n" +
+	"\x11fakeIPICMPReplies\x18\x11 \x01(\x04R\x11fakeIPICMPReplies\x124\n" +
+	"\x15fakeIPICMPPassThrough\x18\x12 \x01(\x04R\x15fakeIPICMPPassThrough\x12D\n" +
+	"\x1dfakeIPICMPRewriteFailureDrops\x18\x13 \x01(\x04R\x1dfakeIPICMPRewriteFailureDrops\"\xa1\x03\n" +
+	"\x15EBPFUDPNATDiagnostics\x12&\n" +
+	"\x0eactiveSessions\x18\x01 \x01(\x03R\x0eactiveSessions\x12(\n" +
+	"\x0fcreatedSessions\x18\x02 \x01(\x04R\x0fcreatedSessions\x12,\n" +
+	"\x11capacityEvictions\x18\x03 \x01(\x04R\x11capacityEvictions\x12\x1e\n" +
+	"\n" +
+	"queueDrops\x18\x04 \x01(\x04R\n" +
+	"queueDrops\x120\n" +
+	"\x13socketReleaseEvents\x18\x05 \x01(\x04R\x13socketReleaseEvents\x122\n" +
+	"\x14socketReleaseMatched\x18\x06 \x01(\x04R\x14socketReleaseMatched\x12F\n" +
+	"\x1ependingReleaseCapacityRejected\x18\a \x01(\x04R\x1ependingReleaseCapacityRejected\x12:\n" +
+	"\x18releaseNotificationDrops\x18\b \x01(\x04R\x18releaseNotificationDrops*U\n" +
 	"\bLogLevel\x12\t\n" +
 	"\x05PANIC\x10\x00\x12\t\n" +
 	"\x05FATAL\x10\x01\x12\t\n" +
@@ -8039,7 +9263,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x17USB_BACKEND_LINUX_SYSFS\x10\x01\x12\x17\n" +
 	"\x13USB_BACKEND_DYNAMIC\x10\x02\x12\x1c\n" +
 	"\x18USB_BACKEND_DARWIN_IOKIT\x10\x03\x12\x1f\n" +
-	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\xdb\x1a\n" +
+	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\xac\x1b\n" +
 	"\x0eStartedService\x127\n" +
 	"\n" +
 	"GetVersion\x12\x16.google.protobuf.Empty\x1a\x0f.daemon.Version\"\x00\x12K\n" +
@@ -8059,7 +9283,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x0fCloseConnection\x12\x1e.daemon.CloseConnectionRequest\x1a\x16.google.protobuf.Empty\"\x00\x12G\n" +
 	"\x13CloseAllConnections\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x00\x12M\n" +
 	"\x15GetDeprecatedWarnings\x12\x16.google.protobuf.Empty\x1a\x1a.daemon.DeprecatedWarnings\"\x00\x12;\n" +
-	"\fGetStartedAt\x12\x16.google.protobuf.Empty\x1a\x11.daemon.StartedAt\"\x00\x12F\n" +
+	"\fGetStartedAt\x12\x16.google.protobuf.Empty\x1a\x11.daemon.StartedAt\"\x00\x12O\n" +
+	"\x12GetEBPFDiagnostics\x12\x16.google.protobuf.Empty\x1a\x1f.daemon.EBPFDiagnosticsResponse\"\x00\x12F\n" +
 	"\x12SubscribeOutbounds\x12\x16.google.protobuf.Empty\x1a\x14.daemon.OutboundList\"\x000\x01\x12d\n" +
 	"\x17StartNetworkQualityTest\x12!.daemon.NetworkQualityTestRequest\x1a\".daemon.NetworkQualityTestProgress\"\x000\x01\x12F\n" +
 	"\rStartSTUNTest\x12\x17.daemon.STUNTestRequest\x1a\x18.daemon.STUNTestProgress\"\x000\x01\x12U\n" +
@@ -8097,126 +9322,135 @@ func file_daemon_started_service_proto_rawDescGZIP() []byte {
 	return file_daemon_started_service_proto_rawDescData
 }
 
-var (
-	file_daemon_started_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-	file_daemon_started_service_proto_msgTypes  = make([]protoimpl.MessageInfo, 104)
-	file_daemon_started_service_proto_goTypes   = []any{
-		LogLevel(0),                               // 0: daemon.LogLevel
-		ConnectionEventType(0),                    // 1: daemon.ConnectionEventType
-		USBDeviceState(0),                         // 2: daemon.USBDeviceState
-		USBBackend(0),                             // 3: daemon.USBBackend
-		ServiceStatus_Type(0),                     // 4: daemon.ServiceStatus.Type
-		(*Version)(nil),                           // 5: daemon.Version
-		(*ServiceStatus)(nil),                     // 6: daemon.ServiceStatus
-		(*SubscribeStatusRequest)(nil),            // 7: daemon.SubscribeStatusRequest
-		(*Log)(nil),                               // 8: daemon.Log
-		(*DefaultLogLevel)(nil),                   // 9: daemon.DefaultLogLevel
-		(*Status)(nil),                            // 10: daemon.Status
-		(*Groups)(nil),                            // 11: daemon.Groups
-		(*Group)(nil),                             // 12: daemon.Group
-		(*GroupItem)(nil),                         // 13: daemon.GroupItem
-		(*URLTestRequest)(nil),                    // 14: daemon.URLTestRequest
-		(*SelectOutboundRequest)(nil),             // 15: daemon.SelectOutboundRequest
-		(*SetGroupExpandRequest)(nil),             // 16: daemon.SetGroupExpandRequest
-		(*ClashMode)(nil),                         // 17: daemon.ClashMode
-		(*ClashModeStatus)(nil),                   // 18: daemon.ClashModeStatus
-		(*SubscribeConnectionsRequest)(nil),       // 19: daemon.SubscribeConnectionsRequest
-		(*ConnectionEvent)(nil),                   // 20: daemon.ConnectionEvent
-		(*ConnectionEvents)(nil),                  // 21: daemon.ConnectionEvents
-		(*Connection)(nil),                        // 22: daemon.Connection
-		(*ProcessInfo)(nil),                       // 23: daemon.ProcessInfo
-		(*CloseConnectionRequest)(nil),            // 24: daemon.CloseConnectionRequest
-		(*DeprecatedWarnings)(nil),                // 25: daemon.DeprecatedWarnings
-		(*DeprecatedWarning)(nil),                 // 26: daemon.DeprecatedWarning
-		(*StartedAt)(nil),                         // 27: daemon.StartedAt
-		(*OutboundList)(nil),                      // 28: daemon.OutboundList
-		(*NetworkQualityTestRequest)(nil),         // 29: daemon.NetworkQualityTestRequest
-		(*NetworkQualityTestProgress)(nil),        // 30: daemon.NetworkQualityTestProgress
-		(*STUNTestRequest)(nil),                   // 31: daemon.STUNTestRequest
-		(*STUNTestProgress)(nil),                  // 32: daemon.STUNTestProgress
-		(*TailscaleStatusUpdate)(nil),             // 33: daemon.TailscaleStatusUpdate
-		(*TailscaleEndpointStatus)(nil),           // 34: daemon.TailscaleEndpointStatus
-		(*TailscaleUserGroup)(nil),                // 35: daemon.TailscaleUserGroup
-		(*TailscalePeer)(nil),                     // 36: daemon.TailscalePeer
-		(*TailscalePingRequest)(nil),              // 37: daemon.TailscalePingRequest
-		(*TailscalePingResponse)(nil),             // 38: daemon.TailscalePingResponse
-		(*SetTailscaleExitNodeRequest)(nil),       // 39: daemon.SetTailscaleExitNodeRequest
-		(*TailscaleLogoutRequest)(nil),            // 40: daemon.TailscaleLogoutRequest
-		(*TailscaleCertificateRequest)(nil),       // 41: daemon.TailscaleCertificateRequest
-		(*TailscaleCertificate)(nil),              // 42: daemon.TailscaleCertificate
-		(*TailscaleSSHClientMessage)(nil),         // 43: daemon.TailscaleSSHClientMessage
-		(*TailscaleSSHStart)(nil),                 // 44: daemon.TailscaleSSHStart
-		(*TailscaleSSHInput)(nil),                 // 45: daemon.TailscaleSSHInput
-		(*TailscaleSSHResize)(nil),                // 46: daemon.TailscaleSSHResize
-		(*TailscaleSSHServerMessage)(nil),         // 47: daemon.TailscaleSSHServerMessage
-		(*TailscaleSSHAuthBanner)(nil),            // 48: daemon.TailscaleSSHAuthBanner
-		(*TailscaleSSHReady)(nil),                 // 49: daemon.TailscaleSSHReady
-		(*TailscaleSSHOutput)(nil),                // 50: daemon.TailscaleSSHOutput
-		(*TailscaleSSHExit)(nil),                  // 51: daemon.TailscaleSSHExit
-		(*TailscaleSSHError)(nil),                 // 52: daemon.TailscaleSSHError
-		(*SubscribeTaildropInboxRequest)(nil),     // 53: daemon.SubscribeTaildropInboxRequest
-		(*MarkTaildropInboxReadRequest)(nil),      // 54: daemon.MarkTaildropInboxReadRequest
-		(*TaildropInbox)(nil),                     // 55: daemon.TaildropInbox
-		(*TaildropFile)(nil),                      // 56: daemon.TaildropFile
-		(*TaildropReceivingFile)(nil),             // 57: daemon.TaildropReceivingFile
-		(*TaildropSendClientMessage)(nil),         // 58: daemon.TaildropSendClientMessage
-		(*TaildropSendStart)(nil),                 // 59: daemon.TaildropSendStart
-		(*TaildropOutgoingFile)(nil),              // 60: daemon.TaildropOutgoingFile
-		(*TaildropFileChunk)(nil),                 // 61: daemon.TaildropFileChunk
-		(*TaildropFileDone)(nil),                  // 62: daemon.TaildropFileDone
-		(*TaildropSendServerMessage)(nil),         // 63: daemon.TaildropSendServerMessage
-		(*TaildropSendProgress)(nil),              // 64: daemon.TaildropSendProgress
-		(*DownloadTaildropFileRequest)(nil),       // 65: daemon.DownloadTaildropFileRequest
-		(*DownloadTaildropFileChunk)(nil),         // 66: daemon.DownloadTaildropFileChunk
-		(*DeleteTaildropFileRequest)(nil),         // 67: daemon.DeleteTaildropFileRequest
-		(*CancelTaildropReceivingRequest)(nil),    // 68: daemon.CancelTaildropReceivingRequest
-		(*USBProviderMessage)(nil),                // 69: daemon.USBProviderMessage
-		(*USBServerMessage)(nil),                  // 70: daemon.USBServerMessage
-		(*USBDeviceDescriptor)(nil),               // 71: daemon.USBDeviceDescriptor
-		(*USBDeviceAttach)(nil),                   // 72: daemon.USBDeviceAttach
-		(*USBInterface)(nil),                      // 73: daemon.USBInterface
-		(*USBDeviceDetach)(nil),                   // 74: daemon.USBDeviceDetach
-		(*USBDeviceReady)(nil),                    // 75: daemon.USBDeviceReady
-		(*USBURBRequest)(nil),                     // 76: daemon.USBURBRequest
-		(*USBURBResponse)(nil),                    // 77: daemon.USBURBResponse
-		(*USBIsoPacket)(nil),                      // 78: daemon.USBIsoPacket
-		(*USBEndpointAbort)(nil),                  // 79: daemon.USBEndpointAbort
-		(*USBError)(nil),                          // 80: daemon.USBError
-		(*USBIPServerStatusUpdate)(nil),           // 81: daemon.USBIPServerStatusUpdate
-		(*USBIPServerStatus)(nil),                 // 82: daemon.USBIPServerStatus
-		(*USBSharedDevice)(nil),                   // 83: daemon.USBSharedDevice
-		(*OpenConnectStatusUpdate)(nil),           // 84: daemon.OpenConnectStatusUpdate
-		(*OpenConnectEndpointStatus)(nil),         // 85: daemon.OpenConnectEndpointStatus
-		(*OpenConnectTunnelInfo)(nil),             // 86: daemon.OpenConnectTunnelInfo
-		(*OpenConnectAuthChallenge)(nil),          // 87: daemon.OpenConnectAuthChallenge
-		(*OpenConnectAuthForm)(nil),               // 88: daemon.OpenConnectAuthForm
-		(*OpenConnectAuthFormField)(nil),          // 89: daemon.OpenConnectAuthFormField
-		(*OpenConnectAuthFormChoice)(nil),         // 90: daemon.OpenConnectAuthFormChoice
-		(*OpenConnectBrowserRequest)(nil),         // 91: daemon.OpenConnectBrowserRequest
-		(*OpenConnectBrowserCookie)(nil),          // 92: daemon.OpenConnectBrowserCookie
-		(*OpenConnectBrowserHeader)(nil),          // 93: daemon.OpenConnectBrowserHeader
-		(*OpenConnectAuthFormResponse)(nil),       // 94: daemon.OpenConnectAuthFormResponse
-		(*OpenConnectBrowserResult)(nil),          // 95: daemon.OpenConnectBrowserResult
-		(*OpenConnectAuthResponseSubmission)(nil), // 96: daemon.OpenConnectAuthResponseSubmission
-		(*OpenConnectAuthChallengeCancel)(nil),    // 97: daemon.OpenConnectAuthChallengeCancel
-		(*OpenVPNStatusUpdate)(nil),               // 98: daemon.OpenVPNStatusUpdate
-		(*OpenVPNEndpointStatus)(nil),             // 99: daemon.OpenVPNEndpointStatus
-		(*OpenVPNTunnelInfo)(nil),                 // 100: daemon.OpenVPNTunnelInfo
-		(*OpenVPNChallenge)(nil),                  // 101: daemon.OpenVPNChallenge
-		(*OpenVPNChallengeSubmission)(nil),        // 102: daemon.OpenVPNChallengeSubmission
-		(*OpenVPNChallengeCancel)(nil),            // 103: daemon.OpenVPNChallengeCancel
-		(*NotificationEvent)(nil),                 // 104: daemon.NotificationEvent
-		(*Notification)(nil),                      // 105: daemon.Notification
-		(*NotificationCancel)(nil),                // 106: daemon.NotificationCancel
-		(*Log_Message)(nil),                       // 107: daemon.Log.Message
-		nil,                                       // 108: daemon.OpenConnectAuthFormResponse.ValuesEntry
-		(*emptypb.Empty)(nil),                     // 109: google.protobuf.Empty
-	}
-)
-
+var file_daemon_started_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_daemon_started_service_proto_msgTypes = make([]protoimpl.MessageInfo, 116)
+var file_daemon_started_service_proto_goTypes = []any{
+	(LogLevel)(0),                             // 0: daemon.LogLevel
+	(ConnectionEventType)(0),                  // 1: daemon.ConnectionEventType
+	(USBDeviceState)(0),                       // 2: daemon.USBDeviceState
+	(USBBackend)(0),                           // 3: daemon.USBBackend
+	(ServiceStatus_Type)(0),                   // 4: daemon.ServiceStatus.Type
+	(*Version)(nil),                           // 5: daemon.Version
+	(*ServiceStatus)(nil),                     // 6: daemon.ServiceStatus
+	(*SubscribeStatusRequest)(nil),            // 7: daemon.SubscribeStatusRequest
+	(*Log)(nil),                               // 8: daemon.Log
+	(*DefaultLogLevel)(nil),                   // 9: daemon.DefaultLogLevel
+	(*Status)(nil),                            // 10: daemon.Status
+	(*Groups)(nil),                            // 11: daemon.Groups
+	(*Group)(nil),                             // 12: daemon.Group
+	(*GroupItem)(nil),                         // 13: daemon.GroupItem
+	(*URLTestRequest)(nil),                    // 14: daemon.URLTestRequest
+	(*SelectOutboundRequest)(nil),             // 15: daemon.SelectOutboundRequest
+	(*SetGroupExpandRequest)(nil),             // 16: daemon.SetGroupExpandRequest
+	(*ClashMode)(nil),                         // 17: daemon.ClashMode
+	(*ClashModeStatus)(nil),                   // 18: daemon.ClashModeStatus
+	(*SubscribeConnectionsRequest)(nil),       // 19: daemon.SubscribeConnectionsRequest
+	(*ConnectionEvent)(nil),                   // 20: daemon.ConnectionEvent
+	(*ConnectionEvents)(nil),                  // 21: daemon.ConnectionEvents
+	(*Connection)(nil),                        // 22: daemon.Connection
+	(*ProcessInfo)(nil),                       // 23: daemon.ProcessInfo
+	(*CloseConnectionRequest)(nil),            // 24: daemon.CloseConnectionRequest
+	(*DeprecatedWarnings)(nil),                // 25: daemon.DeprecatedWarnings
+	(*DeprecatedWarning)(nil),                 // 26: daemon.DeprecatedWarning
+	(*StartedAt)(nil),                         // 27: daemon.StartedAt
+	(*OutboundList)(nil),                      // 28: daemon.OutboundList
+	(*NetworkQualityTestRequest)(nil),         // 29: daemon.NetworkQualityTestRequest
+	(*NetworkQualityTestProgress)(nil),        // 30: daemon.NetworkQualityTestProgress
+	(*STUNTestRequest)(nil),                   // 31: daemon.STUNTestRequest
+	(*STUNTestProgress)(nil),                  // 32: daemon.STUNTestProgress
+	(*TailscaleStatusUpdate)(nil),             // 33: daemon.TailscaleStatusUpdate
+	(*TailscaleEndpointStatus)(nil),           // 34: daemon.TailscaleEndpointStatus
+	(*TailscaleUserGroup)(nil),                // 35: daemon.TailscaleUserGroup
+	(*TailscalePeer)(nil),                     // 36: daemon.TailscalePeer
+	(*TailscalePingRequest)(nil),              // 37: daemon.TailscalePingRequest
+	(*TailscalePingResponse)(nil),             // 38: daemon.TailscalePingResponse
+	(*SetTailscaleExitNodeRequest)(nil),       // 39: daemon.SetTailscaleExitNodeRequest
+	(*TailscaleLogoutRequest)(nil),            // 40: daemon.TailscaleLogoutRequest
+	(*TailscaleCertificateRequest)(nil),       // 41: daemon.TailscaleCertificateRequest
+	(*TailscaleCertificate)(nil),              // 42: daemon.TailscaleCertificate
+	(*TailscaleSSHClientMessage)(nil),         // 43: daemon.TailscaleSSHClientMessage
+	(*TailscaleSSHStart)(nil),                 // 44: daemon.TailscaleSSHStart
+	(*TailscaleSSHInput)(nil),                 // 45: daemon.TailscaleSSHInput
+	(*TailscaleSSHResize)(nil),                // 46: daemon.TailscaleSSHResize
+	(*TailscaleSSHServerMessage)(nil),         // 47: daemon.TailscaleSSHServerMessage
+	(*TailscaleSSHAuthBanner)(nil),            // 48: daemon.TailscaleSSHAuthBanner
+	(*TailscaleSSHReady)(nil),                 // 49: daemon.TailscaleSSHReady
+	(*TailscaleSSHOutput)(nil),                // 50: daemon.TailscaleSSHOutput
+	(*TailscaleSSHExit)(nil),                  // 51: daemon.TailscaleSSHExit
+	(*TailscaleSSHError)(nil),                 // 52: daemon.TailscaleSSHError
+	(*SubscribeTaildropInboxRequest)(nil),     // 53: daemon.SubscribeTaildropInboxRequest
+	(*MarkTaildropInboxReadRequest)(nil),      // 54: daemon.MarkTaildropInboxReadRequest
+	(*TaildropInbox)(nil),                     // 55: daemon.TaildropInbox
+	(*TaildropFile)(nil),                      // 56: daemon.TaildropFile
+	(*TaildropReceivingFile)(nil),             // 57: daemon.TaildropReceivingFile
+	(*TaildropSendClientMessage)(nil),         // 58: daemon.TaildropSendClientMessage
+	(*TaildropSendStart)(nil),                 // 59: daemon.TaildropSendStart
+	(*TaildropOutgoingFile)(nil),              // 60: daemon.TaildropOutgoingFile
+	(*TaildropFileChunk)(nil),                 // 61: daemon.TaildropFileChunk
+	(*TaildropFileDone)(nil),                  // 62: daemon.TaildropFileDone
+	(*TaildropSendServerMessage)(nil),         // 63: daemon.TaildropSendServerMessage
+	(*TaildropSendProgress)(nil),              // 64: daemon.TaildropSendProgress
+	(*DownloadTaildropFileRequest)(nil),       // 65: daemon.DownloadTaildropFileRequest
+	(*DownloadTaildropFileChunk)(nil),         // 66: daemon.DownloadTaildropFileChunk
+	(*DeleteTaildropFileRequest)(nil),         // 67: daemon.DeleteTaildropFileRequest
+	(*CancelTaildropReceivingRequest)(nil),    // 68: daemon.CancelTaildropReceivingRequest
+	(*USBProviderMessage)(nil),                // 69: daemon.USBProviderMessage
+	(*USBServerMessage)(nil),                  // 70: daemon.USBServerMessage
+	(*USBDeviceDescriptor)(nil),               // 71: daemon.USBDeviceDescriptor
+	(*USBDeviceAttach)(nil),                   // 72: daemon.USBDeviceAttach
+	(*USBInterface)(nil),                      // 73: daemon.USBInterface
+	(*USBDeviceDetach)(nil),                   // 74: daemon.USBDeviceDetach
+	(*USBDeviceReady)(nil),                    // 75: daemon.USBDeviceReady
+	(*USBURBRequest)(nil),                     // 76: daemon.USBURBRequest
+	(*USBURBResponse)(nil),                    // 77: daemon.USBURBResponse
+	(*USBIsoPacket)(nil),                      // 78: daemon.USBIsoPacket
+	(*USBEndpointAbort)(nil),                  // 79: daemon.USBEndpointAbort
+	(*USBError)(nil),                          // 80: daemon.USBError
+	(*USBIPServerStatusUpdate)(nil),           // 81: daemon.USBIPServerStatusUpdate
+	(*USBIPServerStatus)(nil),                 // 82: daemon.USBIPServerStatus
+	(*USBSharedDevice)(nil),                   // 83: daemon.USBSharedDevice
+	(*OpenConnectStatusUpdate)(nil),           // 84: daemon.OpenConnectStatusUpdate
+	(*OpenConnectEndpointStatus)(nil),         // 85: daemon.OpenConnectEndpointStatus
+	(*OpenConnectTunnelInfo)(nil),             // 86: daemon.OpenConnectTunnelInfo
+	(*OpenConnectAuthChallenge)(nil),          // 87: daemon.OpenConnectAuthChallenge
+	(*OpenConnectAuthForm)(nil),               // 88: daemon.OpenConnectAuthForm
+	(*OpenConnectAuthFormField)(nil),          // 89: daemon.OpenConnectAuthFormField
+	(*OpenConnectAuthFormChoice)(nil),         // 90: daemon.OpenConnectAuthFormChoice
+	(*OpenConnectBrowserRequest)(nil),         // 91: daemon.OpenConnectBrowserRequest
+	(*OpenConnectBrowserCookie)(nil),          // 92: daemon.OpenConnectBrowserCookie
+	(*OpenConnectBrowserHeader)(nil),          // 93: daemon.OpenConnectBrowserHeader
+	(*OpenConnectAuthFormResponse)(nil),       // 94: daemon.OpenConnectAuthFormResponse
+	(*OpenConnectBrowserResult)(nil),          // 95: daemon.OpenConnectBrowserResult
+	(*OpenConnectAuthResponseSubmission)(nil), // 96: daemon.OpenConnectAuthResponseSubmission
+	(*OpenConnectAuthChallengeCancel)(nil),    // 97: daemon.OpenConnectAuthChallengeCancel
+	(*OpenVPNStatusUpdate)(nil),               // 98: daemon.OpenVPNStatusUpdate
+	(*OpenVPNEndpointStatus)(nil),             // 99: daemon.OpenVPNEndpointStatus
+	(*OpenVPNTunnelInfo)(nil),                 // 100: daemon.OpenVPNTunnelInfo
+	(*OpenVPNChallenge)(nil),                  // 101: daemon.OpenVPNChallenge
+	(*OpenVPNChallengeSubmission)(nil),        // 102: daemon.OpenVPNChallengeSubmission
+	(*OpenVPNChallengeCancel)(nil),            // 103: daemon.OpenVPNChallengeCancel
+	(*NotificationEvent)(nil),                 // 104: daemon.NotificationEvent
+	(*Notification)(nil),                      // 105: daemon.Notification
+	(*NotificationCancel)(nil),                // 106: daemon.NotificationCancel
+	(*EBPFDiagnosticsResponse)(nil),           // 107: daemon.EBPFDiagnosticsResponse
+	(*EBPFKernelRuntimeDiagnostics)(nil),      // 108: daemon.EBPFKernelRuntimeDiagnostics
+	(*EBPFProgramDiagnostics)(nil),            // 109: daemon.EBPFProgramDiagnostics
+	(*EBPFMapOccupancyDiagnostics)(nil),       // 110: daemon.EBPFMapOccupancyDiagnostics
+	(*EBPFMapDiagnostics)(nil),                // 111: daemon.EBPFMapDiagnostics
+	(*EBPFInboundDiagnostics)(nil),            // 112: daemon.EBPFInboundDiagnostics
+	(*EBPFAttachmentDiagnostics)(nil),         // 113: daemon.EBPFAttachmentDiagnostics
+	(*EBPFBypassRuleSetBackendState)(nil),     // 114: daemon.EBPFBypassRuleSetBackendState
+	(*EBPFUDPReplySocketDiagnostics)(nil),     // 115: daemon.EBPFUDPReplySocketDiagnostics
+	(*EBPFCounters)(nil),                      // 116: daemon.EBPFCounters
+	(*EBPFUDPNATDiagnostics)(nil),             // 117: daemon.EBPFUDPNATDiagnostics
+	(*Log_Message)(nil),                       // 118: daemon.Log.Message
+	nil,                                       // 119: daemon.OpenConnectAuthFormResponse.ValuesEntry
+	nil,                                       // 120: daemon.EBPFInboundDiagnostics.BypassRuleSetBackendStateEntry
+	(*emptypb.Empty)(nil),                     // 121: google.protobuf.Empty
+}
 var file_daemon_started_service_proto_depIdxs = []int32{
 	4,   // 0: daemon.ServiceStatus.status:type_name -> daemon.ServiceStatus.Type
-	107, // 1: daemon.Log.messages:type_name -> daemon.Log.Message
+	118, // 1: daemon.Log.messages:type_name -> daemon.Log.Message
 	0,   // 2: daemon.DefaultLogLevel.level:type_name -> daemon.LogLevel
 	12,  // 3: daemon.Groups.group:type_name -> daemon.Group
 	13,  // 4: daemon.Group.items:type_name -> daemon.GroupItem
@@ -8269,7 +9503,7 @@ var file_daemon_started_service_proto_depIdxs = []int32{
 	91,  // 51: daemon.OpenConnectAuthChallenge.browser:type_name -> daemon.OpenConnectBrowserRequest
 	89,  // 52: daemon.OpenConnectAuthForm.fields:type_name -> daemon.OpenConnectAuthFormField
 	90,  // 53: daemon.OpenConnectAuthFormField.options:type_name -> daemon.OpenConnectAuthFormChoice
-	108, // 54: daemon.OpenConnectAuthFormResponse.values:type_name -> daemon.OpenConnectAuthFormResponse.ValuesEntry
+	119, // 54: daemon.OpenConnectAuthFormResponse.values:type_name -> daemon.OpenConnectAuthFormResponse.ValuesEntry
 	92,  // 55: daemon.OpenConnectBrowserResult.cookies:type_name -> daemon.OpenConnectBrowserCookie
 	93,  // 56: daemon.OpenConnectBrowserResult.headers:type_name -> daemon.OpenConnectBrowserHeader
 	94,  // 57: daemon.OpenConnectAuthResponseSubmission.form:type_name -> daemon.OpenConnectAuthFormResponse
@@ -8279,96 +9513,109 @@ var file_daemon_started_service_proto_depIdxs = []int32{
 	100, // 61: daemon.OpenVPNEndpointStatus.tunnelInfo:type_name -> daemon.OpenVPNTunnelInfo
 	105, // 62: daemon.NotificationEvent.send:type_name -> daemon.Notification
 	106, // 63: daemon.NotificationEvent.cancel:type_name -> daemon.NotificationCancel
-	0,   // 64: daemon.Log.Message.level:type_name -> daemon.LogLevel
-	109, // 65: daemon.StartedService.GetVersion:input_type -> google.protobuf.Empty
-	109, // 66: daemon.StartedService.SubscribeServiceStatus:input_type -> google.protobuf.Empty
-	109, // 67: daemon.StartedService.SubscribeLog:input_type -> google.protobuf.Empty
-	109, // 68: daemon.StartedService.GetDefaultLogLevel:input_type -> google.protobuf.Empty
-	109, // 69: daemon.StartedService.ClearLogs:input_type -> google.protobuf.Empty
-	7,   // 70: daemon.StartedService.SubscribeStatus:input_type -> daemon.SubscribeStatusRequest
-	109, // 71: daemon.StartedService.SubscribeGroups:input_type -> google.protobuf.Empty
-	109, // 72: daemon.StartedService.GetClashModeStatus:input_type -> google.protobuf.Empty
-	109, // 73: daemon.StartedService.SubscribeClashMode:input_type -> google.protobuf.Empty
-	17,  // 74: daemon.StartedService.SetClashMode:input_type -> daemon.ClashMode
-	14,  // 75: daemon.StartedService.URLTest:input_type -> daemon.URLTestRequest
-	15,  // 76: daemon.StartedService.SelectOutbound:input_type -> daemon.SelectOutboundRequest
-	16,  // 77: daemon.StartedService.SetGroupExpand:input_type -> daemon.SetGroupExpandRequest
-	19,  // 78: daemon.StartedService.SubscribeConnections:input_type -> daemon.SubscribeConnectionsRequest
-	24,  // 79: daemon.StartedService.CloseConnection:input_type -> daemon.CloseConnectionRequest
-	109, // 80: daemon.StartedService.CloseAllConnections:input_type -> google.protobuf.Empty
-	109, // 81: daemon.StartedService.GetDeprecatedWarnings:input_type -> google.protobuf.Empty
-	109, // 82: daemon.StartedService.GetStartedAt:input_type -> google.protobuf.Empty
-	109, // 83: daemon.StartedService.SubscribeOutbounds:input_type -> google.protobuf.Empty
-	29,  // 84: daemon.StartedService.StartNetworkQualityTest:input_type -> daemon.NetworkQualityTestRequest
-	31,  // 85: daemon.StartedService.StartSTUNTest:input_type -> daemon.STUNTestRequest
-	109, // 86: daemon.StartedService.SubscribeTailscaleStatus:input_type -> google.protobuf.Empty
-	37,  // 87: daemon.StartedService.StartTailscalePing:input_type -> daemon.TailscalePingRequest
-	39,  // 88: daemon.StartedService.SetTailscaleExitNode:input_type -> daemon.SetTailscaleExitNodeRequest
-	40,  // 89: daemon.StartedService.TailscaleLogout:input_type -> daemon.TailscaleLogoutRequest
-	41,  // 90: daemon.StartedService.GetTailscaleCertificate:input_type -> daemon.TailscaleCertificateRequest
-	43,  // 91: daemon.StartedService.StartTailscaleSSHSession:input_type -> daemon.TailscaleSSHClientMessage
-	53,  // 92: daemon.StartedService.SubscribeTaildropInbox:input_type -> daemon.SubscribeTaildropInboxRequest
-	54,  // 93: daemon.StartedService.MarkTaildropInboxRead:input_type -> daemon.MarkTaildropInboxReadRequest
-	58,  // 94: daemon.StartedService.SendTaildropFiles:input_type -> daemon.TaildropSendClientMessage
-	65,  // 95: daemon.StartedService.DownloadTaildropFile:input_type -> daemon.DownloadTaildropFileRequest
-	67,  // 96: daemon.StartedService.DeleteTaildropFile:input_type -> daemon.DeleteTaildropFileRequest
-	68,  // 97: daemon.StartedService.CancelTaildropReceiving:input_type -> daemon.CancelTaildropReceivingRequest
-	69,  // 98: daemon.StartedService.ProvideUSBDevices:input_type -> daemon.USBProviderMessage
-	109, // 99: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
-	109, // 100: daemon.StartedService.SubscribeOpenConnectStatus:input_type -> google.protobuf.Empty
-	96,  // 101: daemon.StartedService.SubmitOpenConnectAuthResponse:input_type -> daemon.OpenConnectAuthResponseSubmission
-	97,  // 102: daemon.StartedService.CancelOpenConnectAuthChallenge:input_type -> daemon.OpenConnectAuthChallengeCancel
-	109, // 103: daemon.StartedService.SubscribeOpenVPNStatus:input_type -> google.protobuf.Empty
-	102, // 104: daemon.StartedService.SubmitOpenVPNChallengeResponse:input_type -> daemon.OpenVPNChallengeSubmission
-	103, // 105: daemon.StartedService.CancelOpenVPNChallenge:input_type -> daemon.OpenVPNChallengeCancel
-	109, // 106: daemon.StartedService.SubscribeNotifications:input_type -> google.protobuf.Empty
-	5,   // 107: daemon.StartedService.GetVersion:output_type -> daemon.Version
-	6,   // 108: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
-	8,   // 109: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
-	9,   // 110: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
-	109, // 111: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
-	10,  // 112: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
-	11,  // 113: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
-	18,  // 114: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
-	17,  // 115: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
-	109, // 116: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
-	109, // 117: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
-	109, // 118: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
-	109, // 119: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
-	21,  // 120: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
-	109, // 121: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
-	109, // 122: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
-	25,  // 123: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
-	27,  // 124: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
-	28,  // 125: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
-	30,  // 126: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
-	32,  // 127: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
-	33,  // 128: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
-	38,  // 129: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
-	109, // 130: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
-	109, // 131: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
-	42,  // 132: daemon.StartedService.GetTailscaleCertificate:output_type -> daemon.TailscaleCertificate
-	47,  // 133: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
-	55,  // 134: daemon.StartedService.SubscribeTaildropInbox:output_type -> daemon.TaildropInbox
-	109, // 135: daemon.StartedService.MarkTaildropInboxRead:output_type -> google.protobuf.Empty
-	63,  // 136: daemon.StartedService.SendTaildropFiles:output_type -> daemon.TaildropSendServerMessage
-	66,  // 137: daemon.StartedService.DownloadTaildropFile:output_type -> daemon.DownloadTaildropFileChunk
-	109, // 138: daemon.StartedService.DeleteTaildropFile:output_type -> google.protobuf.Empty
-	109, // 139: daemon.StartedService.CancelTaildropReceiving:output_type -> google.protobuf.Empty
-	70,  // 140: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
-	81,  // 141: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
-	84,  // 142: daemon.StartedService.SubscribeOpenConnectStatus:output_type -> daemon.OpenConnectStatusUpdate
-	109, // 143: daemon.StartedService.SubmitOpenConnectAuthResponse:output_type -> google.protobuf.Empty
-	109, // 144: daemon.StartedService.CancelOpenConnectAuthChallenge:output_type -> google.protobuf.Empty
-	98,  // 145: daemon.StartedService.SubscribeOpenVPNStatus:output_type -> daemon.OpenVPNStatusUpdate
-	109, // 146: daemon.StartedService.SubmitOpenVPNChallengeResponse:output_type -> google.protobuf.Empty
-	109, // 147: daemon.StartedService.CancelOpenVPNChallenge:output_type -> google.protobuf.Empty
-	104, // 148: daemon.StartedService.SubscribeNotifications:output_type -> daemon.NotificationEvent
-	107, // [107:149] is the sub-list for method output_type
-	65,  // [65:107] is the sub-list for method input_type
-	65,  // [65:65] is the sub-list for extension type_name
-	65,  // [65:65] is the sub-list for extension extendee
-	0,   // [0:65] is the sub-list for field type_name
+	112, // 64: daemon.EBPFDiagnosticsResponse.inbounds:type_name -> daemon.EBPFInboundDiagnostics
+	108, // 65: daemon.EBPFDiagnosticsResponse.kernelRuntime:type_name -> daemon.EBPFKernelRuntimeDiagnostics
+	109, // 66: daemon.EBPFKernelRuntimeDiagnostics.programs:type_name -> daemon.EBPFProgramDiagnostics
+	110, // 67: daemon.EBPFKernelRuntimeDiagnostics.mapOccupancy:type_name -> daemon.EBPFMapOccupancyDiagnostics
+	111, // 68: daemon.EBPFMapOccupancyDiagnostics.maps:type_name -> daemon.EBPFMapDiagnostics
+	113, // 69: daemon.EBPFInboundDiagnostics.attachments:type_name -> daemon.EBPFAttachmentDiagnostics
+	120, // 70: daemon.EBPFInboundDiagnostics.bypassRuleSetBackendState:type_name -> daemon.EBPFInboundDiagnostics.BypassRuleSetBackendStateEntry
+	115, // 71: daemon.EBPFInboundDiagnostics.udpReplySockets:type_name -> daemon.EBPFUDPReplySocketDiagnostics
+	116, // 72: daemon.EBPFInboundDiagnostics.counters:type_name -> daemon.EBPFCounters
+	117, // 73: daemon.EBPFInboundDiagnostics.udpNAT:type_name -> daemon.EBPFUDPNATDiagnostics
+	0,   // 74: daemon.Log.Message.level:type_name -> daemon.LogLevel
+	114, // 75: daemon.EBPFInboundDiagnostics.BypassRuleSetBackendStateEntry.value:type_name -> daemon.EBPFBypassRuleSetBackendState
+	121, // 76: daemon.StartedService.GetVersion:input_type -> google.protobuf.Empty
+	121, // 77: daemon.StartedService.SubscribeServiceStatus:input_type -> google.protobuf.Empty
+	121, // 78: daemon.StartedService.SubscribeLog:input_type -> google.protobuf.Empty
+	121, // 79: daemon.StartedService.GetDefaultLogLevel:input_type -> google.protobuf.Empty
+	121, // 80: daemon.StartedService.ClearLogs:input_type -> google.protobuf.Empty
+	7,   // 81: daemon.StartedService.SubscribeStatus:input_type -> daemon.SubscribeStatusRequest
+	121, // 82: daemon.StartedService.SubscribeGroups:input_type -> google.protobuf.Empty
+	121, // 83: daemon.StartedService.GetClashModeStatus:input_type -> google.protobuf.Empty
+	121, // 84: daemon.StartedService.SubscribeClashMode:input_type -> google.protobuf.Empty
+	17,  // 85: daemon.StartedService.SetClashMode:input_type -> daemon.ClashMode
+	14,  // 86: daemon.StartedService.URLTest:input_type -> daemon.URLTestRequest
+	15,  // 87: daemon.StartedService.SelectOutbound:input_type -> daemon.SelectOutboundRequest
+	16,  // 88: daemon.StartedService.SetGroupExpand:input_type -> daemon.SetGroupExpandRequest
+	19,  // 89: daemon.StartedService.SubscribeConnections:input_type -> daemon.SubscribeConnectionsRequest
+	24,  // 90: daemon.StartedService.CloseConnection:input_type -> daemon.CloseConnectionRequest
+	121, // 91: daemon.StartedService.CloseAllConnections:input_type -> google.protobuf.Empty
+	121, // 92: daemon.StartedService.GetDeprecatedWarnings:input_type -> google.protobuf.Empty
+	121, // 93: daemon.StartedService.GetStartedAt:input_type -> google.protobuf.Empty
+	121, // 94: daemon.StartedService.GetEBPFDiagnostics:input_type -> google.protobuf.Empty
+	121, // 95: daemon.StartedService.SubscribeOutbounds:input_type -> google.protobuf.Empty
+	29,  // 96: daemon.StartedService.StartNetworkQualityTest:input_type -> daemon.NetworkQualityTestRequest
+	31,  // 97: daemon.StartedService.StartSTUNTest:input_type -> daemon.STUNTestRequest
+	121, // 98: daemon.StartedService.SubscribeTailscaleStatus:input_type -> google.protobuf.Empty
+	37,  // 99: daemon.StartedService.StartTailscalePing:input_type -> daemon.TailscalePingRequest
+	39,  // 100: daemon.StartedService.SetTailscaleExitNode:input_type -> daemon.SetTailscaleExitNodeRequest
+	40,  // 101: daemon.StartedService.TailscaleLogout:input_type -> daemon.TailscaleLogoutRequest
+	41,  // 102: daemon.StartedService.GetTailscaleCertificate:input_type -> daemon.TailscaleCertificateRequest
+	43,  // 103: daemon.StartedService.StartTailscaleSSHSession:input_type -> daemon.TailscaleSSHClientMessage
+	53,  // 104: daemon.StartedService.SubscribeTaildropInbox:input_type -> daemon.SubscribeTaildropInboxRequest
+	54,  // 105: daemon.StartedService.MarkTaildropInboxRead:input_type -> daemon.MarkTaildropInboxReadRequest
+	58,  // 106: daemon.StartedService.SendTaildropFiles:input_type -> daemon.TaildropSendClientMessage
+	65,  // 107: daemon.StartedService.DownloadTaildropFile:input_type -> daemon.DownloadTaildropFileRequest
+	67,  // 108: daemon.StartedService.DeleteTaildropFile:input_type -> daemon.DeleteTaildropFileRequest
+	68,  // 109: daemon.StartedService.CancelTaildropReceiving:input_type -> daemon.CancelTaildropReceivingRequest
+	69,  // 110: daemon.StartedService.ProvideUSBDevices:input_type -> daemon.USBProviderMessage
+	121, // 111: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
+	121, // 112: daemon.StartedService.SubscribeOpenConnectStatus:input_type -> google.protobuf.Empty
+	96,  // 113: daemon.StartedService.SubmitOpenConnectAuthResponse:input_type -> daemon.OpenConnectAuthResponseSubmission
+	97,  // 114: daemon.StartedService.CancelOpenConnectAuthChallenge:input_type -> daemon.OpenConnectAuthChallengeCancel
+	121, // 115: daemon.StartedService.SubscribeOpenVPNStatus:input_type -> google.protobuf.Empty
+	102, // 116: daemon.StartedService.SubmitOpenVPNChallengeResponse:input_type -> daemon.OpenVPNChallengeSubmission
+	103, // 117: daemon.StartedService.CancelOpenVPNChallenge:input_type -> daemon.OpenVPNChallengeCancel
+	121, // 118: daemon.StartedService.SubscribeNotifications:input_type -> google.protobuf.Empty
+	5,   // 119: daemon.StartedService.GetVersion:output_type -> daemon.Version
+	6,   // 120: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
+	8,   // 121: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
+	9,   // 122: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
+	121, // 123: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
+	10,  // 124: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
+	11,  // 125: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
+	18,  // 126: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
+	17,  // 127: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
+	121, // 128: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
+	121, // 129: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
+	121, // 130: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
+	121, // 131: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
+	21,  // 132: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
+	121, // 133: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
+	121, // 134: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
+	25,  // 135: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
+	27,  // 136: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
+	107, // 137: daemon.StartedService.GetEBPFDiagnostics:output_type -> daemon.EBPFDiagnosticsResponse
+	28,  // 138: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
+	30,  // 139: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
+	32,  // 140: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
+	33,  // 141: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
+	38,  // 142: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
+	121, // 143: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
+	121, // 144: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
+	42,  // 145: daemon.StartedService.GetTailscaleCertificate:output_type -> daemon.TailscaleCertificate
+	47,  // 146: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
+	55,  // 147: daemon.StartedService.SubscribeTaildropInbox:output_type -> daemon.TaildropInbox
+	121, // 148: daemon.StartedService.MarkTaildropInboxRead:output_type -> google.protobuf.Empty
+	63,  // 149: daemon.StartedService.SendTaildropFiles:output_type -> daemon.TaildropSendServerMessage
+	66,  // 150: daemon.StartedService.DownloadTaildropFile:output_type -> daemon.DownloadTaildropFileChunk
+	121, // 151: daemon.StartedService.DeleteTaildropFile:output_type -> google.protobuf.Empty
+	121, // 152: daemon.StartedService.CancelTaildropReceiving:output_type -> google.protobuf.Empty
+	70,  // 153: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
+	81,  // 154: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
+	84,  // 155: daemon.StartedService.SubscribeOpenConnectStatus:output_type -> daemon.OpenConnectStatusUpdate
+	121, // 156: daemon.StartedService.SubmitOpenConnectAuthResponse:output_type -> google.protobuf.Empty
+	121, // 157: daemon.StartedService.CancelOpenConnectAuthChallenge:output_type -> google.protobuf.Empty
+	98,  // 158: daemon.StartedService.SubscribeOpenVPNStatus:output_type -> daemon.OpenVPNStatusUpdate
+	121, // 159: daemon.StartedService.SubmitOpenVPNChallengeResponse:output_type -> google.protobuf.Empty
+	121, // 160: daemon.StartedService.CancelOpenVPNChallenge:output_type -> google.protobuf.Empty
+	104, // 161: daemon.StartedService.SubscribeNotifications:output_type -> daemon.NotificationEvent
+	119, // [119:162] is the sub-list for method output_type
+	76,  // [76:119] is the sub-list for method input_type
+	76,  // [76:76] is the sub-list for extension type_name
+	76,  // [76:76] is the sub-list for extension extendee
+	0,   // [0:76] is the sub-list for field type_name
 }
 
 func init() { file_daemon_started_service_proto_init() }
@@ -8420,13 +9667,14 @@ func file_daemon_started_service_proto_init() {
 		(*NotificationEvent_Send)(nil),
 		(*NotificationEvent_Cancel)(nil),
 	}
+	file_daemon_started_service_proto_msgTypes[107].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_started_service_proto_rawDesc), len(file_daemon_started_service_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   104,
+			NumMessages:   116,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
