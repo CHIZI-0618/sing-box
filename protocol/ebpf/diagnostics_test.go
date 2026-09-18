@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/netip"
@@ -15,6 +16,37 @@ import (
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 )
+
+type captureLogger struct {
+	debugMessages []string
+	infoMessages  []string
+}
+
+func (l *captureLogger) Trace(args ...any) {}
+func (l *captureLogger) Debug(args ...any) {
+	var builder strings.Builder
+	for _, arg := range args {
+		if text, ok := arg.(string); ok {
+			builder.WriteString(text)
+		}
+	}
+	l.debugMessages = append(l.debugMessages, builder.String())
+}
+func (l *captureLogger) Info(args ...any)  { l.infoMessages = append(l.infoMessages, "called") }
+func (l *captureLogger) Warn(args ...any)  {}
+func (l *captureLogger) Error(args ...any) {}
+func (l *captureLogger) Fatal(args ...any) {}
+func (l *captureLogger) Panic(args ...any) {}
+
+func (l *captureLogger) TraceContext(context.Context, ...any)        {}
+func (l *captureLogger) DebugContext(_ context.Context, args ...any) { l.Debug(args...) }
+func (l *captureLogger) InfoContext(ctx context.Context, args ...any) {
+	l.Info(args...)
+}
+func (l *captureLogger) WarnContext(context.Context, ...any)  {}
+func (l *captureLogger) ErrorContext(context.Context, ...any) {}
+func (l *captureLogger) FatalContext(context.Context, ...any) {}
+func (l *captureLogger) PanicContext(context.Context, ...any) {}
 
 // TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet covers
 // the state that is not a failure at all: a data plane is configured but no
@@ -324,5 +356,157 @@ func TestDiagnosticsWriteTextIncludesTheKeyFields(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text output missing %q; got:\n%s", want, text)
 		}
+	}
+}
+
+// TestLogStartupSummaryNamesEachRequiredFact checks enabled paths, mounts,
+// waiting interfaces, and FakeIP coverage in the single Debug line.
+func TestLogStartupSummaryNamesEachRequiredFact(t *testing.T) {
+	logger := &captureLogger{}
+	inbound := &Inbound{
+		localEnabled:    true,
+		localDataPlane:  localDataPlaneTC,
+		fakeIPICMPReply: true,
+		logger:          logger,
+	}
+	inbound.logStartupSummary()
+
+	if len(logger.debugMessages) != 1 || len(logger.infoMessages) != 0 {
+		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=1 Info=0", len(logger.debugMessages), len(logger.infoMessages))
+	}
+	message := logger.debugMessages[0]
+	for _, want := range []string{"local=tc", "waiting_for_interface=[local]", "fakeip_icmp=[enabled, not yet covering any attachment]"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("summary %q missing %q", message, want)
+		}
+	}
+}
+
+// TestLogStartupSummaryReportsAnActualAttachmentAndItsFakeIPICMPCoverage
+// covers the other half: a real attachment gets named by interface and
+// mechanism, and when fakeip_icmp actually covers it, that attachment name
+// appears rather than the "not yet covering" fallback.
+func TestLogStartupSummaryReportsAnActualAttachmentAndItsFakeIPICMPCoverage(t *testing.T) {
+	logger := &captureLogger{}
+	inbound := &Inbound{
+		localEnabled:    true,
+		localDataPlane:  localDataPlaneTC,
+		fakeIPICMPReply: true,
+		logger:          logger,
+	}
+	inbound.tcDataPlane = &testTCRuntime{
+		attachments: []commonEBPF.AttachmentInfo{{
+			InterfaceName: "eth0",
+			Role:          "local",
+			Mechanism:     "tcx",
+			ICMPEchoReply: true,
+		}},
+	}
+	inbound.logStartupSummary()
+
+	if len(logger.debugMessages) != 1 || len(logger.infoMessages) != 0 {
+		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=1 Info=0", len(logger.debugMessages), len(logger.infoMessages))
+	}
+	message := logger.debugMessages[0]
+	for _, want := range []string{"mounts=[eth0(local,tcx)]", "waiting_for_interface=[none]", "fakeip_icmp=[eth0(local)]"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("summary %q missing %q", message, want)
+		}
+	}
+}
+
+// TestRecordTCUpdateOutcomeCountsRecoveryAttempts proves a round in which
+// any component reports Recoverable counts as one attempt, whether or not
+// any other component is settled at the same time.
+func TestRecordTCUpdateOutcomeCountsRecoveryAttempts(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteRecoverable,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if attempts := inbound.counters.recoveryAttempts.Load(); attempts != 1 {
+		t.Fatalf("recoveryAttempts = %d, want 1", attempts)
+	}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteSettled,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if attempts := inbound.counters.recoveryAttempts.Load(); attempts != 1 {
+		t.Fatalf("recoveryAttempts = %d, want still 1 after an all-settled round", attempts)
+	}
+}
+
+// TestRecordTCUpdateOutcomeCountsRecoverySuccessPerComponent proves each
+// component transitioning from Recoverable to Settled counts its own
+// success -- two components recovering in the same round count as two.
+func TestRecordTCUpdateOutcomeCountsRecoverySuccessPerComponent(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteRecoverable,
+		general:       tcSharedRewriteRecoverable,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if successes := inbound.counters.recoverySuccesses.Load(); successes != 0 {
+		t.Fatalf("recoverySuccesses = %d, want 0 before anything has settled", successes)
+	}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteSettled,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if successes := inbound.counters.recoverySuccesses.Load(); successes != 2 {
+		t.Fatalf("recoverySuccesses = %d, want 2 (both sharedRewrite and general settled)", successes)
+	}
+}
+
+// TestRecordTCUpdateOutcomeCountsRecoveryFailureOnUnrecoverable proves a
+// transition to Unrecoverable counts as a failure exactly once, not on
+// every subsequent round it stays Unrecoverable.
+func TestRecordTCUpdateOutcomeCountsRecoveryFailureOnUnrecoverable(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteRecoverable,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteUnrecoverable,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if failures := inbound.counters.recoveryFailures.Load(); failures != 1 {
+		t.Fatalf("recoveryFailures = %d, want 1", failures)
+	}
+	inbound.recordTCUpdateOutcome(tcUpdateOutcome{
+		sharedRewrite: tcSharedRewriteSettled,
+		general:       tcSharedRewriteUnrecoverable,
+		bypassRuleSet: tcSharedRewriteSettled,
+	})
+	if failures := inbound.counters.recoveryFailures.Load(); failures != 1 {
+		t.Fatalf("recoveryFailures = %d, want still 1 while it stays Unrecoverable", failures)
+	}
+}
+
+// TestAssignmentLookupFailureCounterInDiagnostics proves the counter
+// incremented at tc_connection.go's failure sites is what Diagnostics
+// reports -- exercised directly here rather than through a real lookup,
+// since the counter itself, not the lookup, is what this test is about.
+func TestAssignmentLookupFailureCounterInDiagnostics(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.counters.assignmentLookupFailures.Add(3)
+	if got := inbound.Diagnostics().Counters.AssignmentLookupFailures; got != 3 {
+		t.Fatalf("Counters.AssignmentLookupFailures = %d, want 3", got)
+	}
+}
+
+// TestSharedReconcileFailureCounterInDiagnostics is the same proof for the
+// shared packet-rewrite reconcile-failure counter.
+func TestSharedReconcileFailureCounterInDiagnostics(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.counters.sharedReconcileFailures.Add(2)
+	if got := inbound.Diagnostics().Counters.SharedReconcileFailures; got != 2 {
+		t.Fatalf("Counters.SharedReconcileFailures = %d, want 2", got)
 	}
 }

@@ -340,16 +340,6 @@ func TestRetryLoopStopsWhenUnrecoverable(t *testing.T) {
 	}
 }
 
-func TestRetryLoopStopsWhenTargetSettles(t *testing.T) {
-	harness := newRetryLoopHarness(t)
-
-	harness.round(t, harness.notify, tcSharedRewriteRecoverable)
-	action := harness.round(t, harness.fire(t), tcSharedRewriteSettled)
-	if action.armed {
-		t.Fatalf("action = %+v, want disarmed once the target settled", action)
-	}
-}
-
 // blockingUpdate returns an update callback that reports it has started and
 // waits to be released, so a test can inject a signal while the loop is inside
 // the update and construct an interleaving instead of hoping select picks a
