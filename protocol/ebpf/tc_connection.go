@@ -12,6 +12,7 @@ import (
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/listener"
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/buf"
@@ -298,7 +299,8 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, erro
 	if source.Addr().Is4() {
 		network = "udp4"
 	}
-	listenConfig := net.ListenConfig{Control: func(_ string, _ string, rawConn syscall.RawConn) error {
+	listenConfig := net.ListenConfig{Control: control.UDPSocketBuffer(listener.UDPSocketBufferSize())}
+	listenConfig.Control = control.Append(listenConfig.Control, func(_ string, _ string, rawConn syscall.RawConn) error {
 		err := control.Raw(rawConn, func(fd uintptr) error {
 			if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
 				return err
@@ -322,7 +324,7 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, erro
 			}
 		}
 		return nil
-	}}
+	})
 	packetConnection, err := listenConfig.ListenPacket(i.ctx, network, source.String())
 	if err != nil {
 		return nil, E.Cause(err, "bind TC eBPF UDP reply socket to ", source)
