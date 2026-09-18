@@ -1,5 +1,5 @@
 ---
-icon: material/linux
+icon: material/chip
 ---
 
 # eBPF kernel requirements
@@ -14,6 +14,20 @@ restrict individual facilities. The LPM-trie safety exception described below
 uses a conservative release check because affected kernels can fault while
 that capability is being probed. When TCX link creation is available it is
 preferred; otherwise sing-box uses the compatible `clsact` attachment.
+
+## Data-plane capability summary
+
+| Data plane | Hook and delivery | Link requirement | Main extra requirements |
+| --- | --- | --- | --- |
+| local `cgroup` | cgroup v2 socket-address hooks rewrite destinations to token addresses | No network-interface attachment | `CONFIG_CGROUP_BPF`, connect hooks, and UDP sendmsg/recvmsg hooks for enabled families |
+| local `tc` | default-interface egress, delivery veth ingress, socket assignment | Ethernet or supported L3 framing | TC classifiers, veth, policy routing, socket lookup/assignment and redirect helpers |
+| shared `socket_assign` | downstream ingress assigns packets to transparent listeners | Ethernet, raw-IP, PPP/SLIP, or supported tunnels | TC classifiers, policy routing and socket lookup/assignment helpers |
+| shared `packet_rewrite` | downstream ingress rewrites requests; egress restores replies | Ethernet only | TC classifiers, checksum/packet rewrite helpers and per-flow state |
+
+The four paths do not form a version ladder. A vendor kernel may support one
+path and reject another at object load or attachment time. Probe the exact path
+that will be configured and treat a successful real startup as the final
+attachment test.
 
 ## Kernel configuration
 
@@ -98,6 +112,36 @@ process searcher and does not prevent the inbound from starting.
 The object contains no BTF or CO-RE dependency. It is generated for both BPF
 endiannesses and avoids bounded loops so vendor verifier behavior remains
 predictable.
+
+## Object selection and attachment behavior
+
+Capability checks select complete object variants before any path is enabled:
+
+- TC TCP first attempts the SOCKMAP-capable object and falls back to a legacy
+  object that does not reference SOCKMAP. A failed modern load is not treated
+  as proof that the legacy section will load; the fallback is verified itself.
+- Local cgroup UDP uses the socket-release notification variant when its
+  program and attachment can be used. Otherwise it selects a bounded LRU
+  cleanup variant. Denial of the optional release hook alone must not make the
+  entire cgroup data plane unavailable.
+- TC attachment prefers TCX only with the default priority. Unsupported TCX
+  creation falls back to an owned `clsact` filter; an explicit custom priority
+  selects `clsact` directly.
+- cgroup programs first request multi-program attachment. Compatible vendor
+  failures can fall back to legacy exclusive attachment. Exclusive attachment
+  can replace an existing single program and can still conflict with a later
+  exclusive netd attach, so this fallback is observable in startup diagnostics.
+
+Preflight object loading proves verifier acceptance and map ABI only. It does
+not prove that the service can attach to a specific cgroup or interface, acquire
+the per-interface lock, install routes, change sysctls, or coexist with Android
+netd. Those operations are deliberately performed only during real startup.
+
+All embedded objects are generated without BTF/CO-RE using Android NDK r29
+Clang 21 and include little- and big-endian variants. Ordinary builds do not
+compile C and do not require the NDK; changing BPF C or the C/Go ABI requires
+regenerating both variants and passing the source/object manifest freshness
+check.
 
 ## Known LPM trie safety issue
 

@@ -1,7 +1,26 @@
+---
+icon: material/stethoscope
+---
+
 # eBPF 入站问题排查
 
 问题报告应覆盖进程启动、一次完整复现和停止过程。只有启动日志通常无法解释间歇性
 丢包、attachment 变化或资源持续增长。
+
+## 按现象快速定位
+
+| 现象 | 首要证据 | 主要区分方向 |
+| --- | --- | --- |
+| 启动在对象加载阶段失败 | `tools ebpf status --json`、verifier 日志、完整错误 | helper/program/map 能力缺失，或安全策略拒绝 |
+| 启动在挂载阶段失败 | 启动日志、目标 cgroup/接口、SELinux/LSM 日志 | 对象受支持，但真实 hook 无权限或已被占用 |
+| 启动成功但流量绕过 | `api ebpf`、attachment、filter 与放行/分片计数 | 路径/接口错误，或命中有意的策略/分片绕过 |
+| UDP 间歇异常 | 首条告警、UDP NAT 计数、map 占用、网络切换时间 | 队列/map 压力、assignment 过期、release 通知丢失或上游丢包 |
+| Wi-Fi/移动数据/热点切换后异常 | 切换前后运行报告、路由、链路和 TC filter | 等待新接口、受管状态恢复中，或系统热点状态已撤销 |
+| CPU 或内存持续增长 | pprof、活动 UDP 会话、回复 socket 池、map 占用 | Go heap/goroutine、用户态会话抖动或内核 map 分配 |
+| 设备重启或 kernel panic | `/sys/fs/pstore`、内核版本、已启用策略 | 内核 verifier/map/驱动问题，仅用户态日志不足以判断 |
+
+不要只凭“eBPF”一词推断责任路径。local `cgroup`、local `tc`、shared
+`socket_assign` 和 shared `packet_rewrite` 使用不同 hook、map、交付和清理机制。
 
 ## 最低限度材料
 
@@ -82,6 +101,53 @@ local/shared 角色和帧格式。网络事件仅在 attachment 或受管
 如果日志报告 assignment 或 UDP 原目标读取失败，请保留首次错误前后的完整日志，
 并同时采集下文的 TC attachment 信息。
 
+### 解读 `sing-box api ebpf`
+
+顶层状态是运行情况摘要：
+
+| 状态 | 含义 | 操作 |
+| --- | --- | --- |
+| `normal` | 所有已配置路径均已挂载，且没有待处理恢复。 | 对一次受控流量比较前后计数。 |
+| `waiting_for_interface` | 已配置 TC 路径，但当前没有合适接口。 | 检查默认/下游接口选择；这本身不是恢复失败。 |
+| `recovering` | 拓扑或策略错误仍可恢复，已安排重试。 | 保存 `last_error`、`next_retry_at` 和稍后的第二份快照。 |
+| `needs_attention` | 协调或策略回滚无法安全继续。 | 保存诊断，然后重启入站重建状态。 |
+
+attachment 列表是实际运行机制的准确信息。已配置路径没有对应 attachment 时，可能只是
+等待接口；cgroup attachment 本来就不存在网络接口 filter。
+
+计数器通常在当前进程或缓存生命周期内累计。应在一个小规模受控测试前后各取快照，
+不要脱离时间窗口解释单个大数值：
+
+- assignment、socket lookup、`sk_assign`、token reservation 或 rewrite 失败增加，
+  表示内核交付/丢弃点发生异常，应同时保存首条告警与 attachment 状态；
+- fragment-pass 增加表示 IPv4 分片或非 atomic IPv6 分片按设计放行，并非 parser
+  静默漏流量；
+- shared ingress/egress pass 覆盖所有显式放行出口，可用于识别不对称绕过或回复路径；
+- UDP `capacity_evictions`、`queue_drops`、pending-release 拒绝和 release 通知丢失是
+  不同压力信号，并不都代表 BPF assignment map 缺项；
+- map occupancy 只在显式请求诊断时采集。`UNKNOWN` 表示该 map 类型无法安全遍历或
+  检查被拒绝，不表示占用为零。
+
+program/map 枚举按 `sb_` 命名约定筛选，同一内核中其他可见的 sing-ebpf 进程也可能
+出现；每个入站自身的 attachment、策略状态、用户态会话和计数才是实例级证据。
+
+## 启动与挂载失败
+
+应以服务相同的 UID、capability、namespace、cgroup 视图和 SELinux/LSM domain 执行
+不挂载探测。交互 shell 中的 root 结果可能与服务管理器不同。
+
+- 对象加载时的 `operation not permitted` 通常指向 BPF syscall、verifier、capability、
+  lockdown 或 LSM 策略；存在 verifier 日志时必须保留。
+- 对象已成功加载，但 cgroup 程序挂载时报 `operation not permitted`，应检查所选层级、
+  delegation、multi/独占挂载支持和 Android netd 等现有 hook，并记录启动时最终选择的
+  cgroup 挂载方式。
+- 探测成功后 TC 挂载仍失败，需要实际链路类型、qdisc/filter 清单、接口锁结果和
+  netlink 错误；探测命令按设计不会修改 qdisc。
+- SOCKMAP 失败后可以正常选择 legacy TC 对象；只有回退对象也失败或入站未激活时，
+  才应作为启动故障报告。
+- 可选 cgroup socket-release observer 被拒绝后可以正常选择有界 LRU 清理；应检查
+  实际程序/attachment，而不是直接断定 local cgroup 不可用。
+
 ## CPU 和内存 profile
 
 在 loopback 开启标准 debug endpoint 即可使用 Go pprof：
@@ -138,6 +204,49 @@ tc -statistics filter show dev sbdXXXXXXXX ingress
 
 请将两个接口名替换为启动日志中的实际值。如果 local filter 计数增长而 delivery
 filter 不增长，请同时保留两条 filter 输出和对应的 `ip -details link show` 输出。
+
+## 流量绕过、丢弃与分片
+
+分别测试一个确认不会命中绕过规则的 TCP 和 UDP flow，记录目标、来源 UID 或下游
+来源、DNS 模式，以及测试前后诊断。按以下顺序检查：
+
+1. `attachments` 中存在预期角色和接口；
+2. 对应 TC filter 报文计数增长，或 cgroup 程序确实处于 active；
+3. 流量没有被地址族、协议、服务流量、自身绕过、UID/来源、端口、私网地址或规则集
+   策略排除；
+4. fragment-pass 或一般 pass 计数不能解释该结果；
+5. assignment/rewrite 失败计数没有增加；
+6. sing-box listener 和 router 收到了该 flow。
+
+IPv4 分片与非 atomic IPv6 分片按设计绕过，因为各 hook 上不一定存在完整传输层
+tuple；五元组代理不能安全地单独重定向后续分片。若不应出现分片，应抓取受影响接口
+两侧报文，判断 MTU、PMTU discovery、上游隧道或发送端是否制造了分片。
+
+怀疑校验和或硬件 offload 时，请使用专门的
+[校验和/offload 验证流程](/zh/manual/misc/ebpf-checksum-offload-verification/)。发送侧抓包
+可能在网卡完成 offload 前看到不完整校验和，应以接收 payload 与远端抓包为准。
+
+## 网络切换与恢复
+
+在切换前、故障期间和预期恢复后分别保存 `sing-box api ebpf`，关联
+`last_error_at`、`last_recovery_at`、`next_retry_at`、attachment ifindex 变化与
+route/link 事件。
+
+local TC 跟随当前默认接口。shared 接口仅在作为下游时可接管；暂时成为默认上游时会
+按设计卸载。旧 local attachment 可保留到新默认接口准备完成，以减少不必要的空窗。
+这些机制不会重新创建被 Android 撤销的热点 IPv6 前缀、默认路由、DHCP、NAT 或转发。
+
+状态持续为 `recovering` 时，应等待报告中的下一重试时间并再次采样。变为
+`needs_attention` 后，不应手工拼接不同 generation 的 route/filter；保存证据并重启。
+
+## 停止与残留状态
+
+优先正常停止并保存关闭日志。进程退出后，检查内部 delivery 链路、自有 filter handle、
+策略规则、路由、接口锁和修改过的 sysctl 是否已删除或恢复。不要仅因其他 `clsact`
+qdisc/filter 位于同一接口就删除它们。
+
+清理报错时，保留准确对象/接口标识；在人工删除前，优先尝试使用同一构建重新启动并
+正常停止。人工清理只能针对已明确确认由 sing-box 创建的状态。
 
 ## 隐私
 

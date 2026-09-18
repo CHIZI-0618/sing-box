@@ -1,3 +1,7 @@
+---
+icon: material/check-decagram
+---
+
 # eBPF checksum/offload verification
 
 This procedure verifies that packets rewritten by the eBPF TC data planes

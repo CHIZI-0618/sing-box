@@ -1,3 +1,7 @@
+---
+icon: material/check-decagram
+---
+
 # eBPF 校验和/卸载验证
 
 本流程验证 eBPF TC 数据面改写后的报文在启用校验和与分段卸载时仍然能以正确
