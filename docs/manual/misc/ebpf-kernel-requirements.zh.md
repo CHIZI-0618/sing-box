@@ -1,5 +1,5 @@
 ---
-icon: material/linux
+icon: material/chip
 ---
 
 # eBPF 内核要求
@@ -10,6 +10,18 @@ eBPF 入站的 local 接管默认使用 cgroup v2 socket-address 数据面，sha
 不使用最低 Linux 版本号判断。供应商内核可能回移、禁用或限制单项能力。下述 LPM
 trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，因此需要保守地检查
 版本范围。若 TCX link 能力可用则优先使用，否则回退兼容的 `clsact` 挂载。
+
+## 数据面能力概要
+
+| 数据面 | hook 与交付方式 | 链路要求 | 主要额外要求 |
+| --- | --- | --- | --- |
+| local `cgroup` | cgroup v2 socket-address hook 将目标改写为 token 地址 | 不挂载网络接口 | `CONFIG_CGROUP_BPF`、connect hook，以及启用地址族的 UDP sendmsg/recvmsg hook |
+| local `tc` | 默认接口 egress、delivery veth ingress 和 socket assignment | 以太网或受支持的 L3 帧 | TC classifier、veth、策略路由、socket lookup/assignment 与 redirect helper |
+| shared `socket_assign` | 下游 ingress 将报文分配给透明监听器 | 以太网、raw-IP、PPP/SLIP 或受支持隧道 | TC classifier、策略路由和 socket lookup/assignment helper |
+| shared `packet_rewrite` | 下游 ingress 改写请求，egress 恢复回复 | 仅以太网 | TC classifier、校验和/报文改写 helper 与逐 flow 状态 |
+
+这四条路径不是按内核版本递进的能力层级。厂商内核可能支持其中一条，却在另一条的
+对象加载或挂载阶段拒绝。应探测实际准备配置的路径，并以真实启动成功作为最终挂载验证。
 
 ## 内核配置
 
@@ -80,6 +92,29 @@ hook 以及 `bpf_get_socket_cookie`、`bpf_get_current_uid_gid`。它们将 sock
 
 对象不依赖 BTF 或 CO-RE，同时生成 BPF 大端和小端版本，并避免使用有界循环，
 以降低供应商 verifier 差异。
+
+## 对象选择与挂载行为
+
+能力检查会在启用路径前选择完整对象变体：
+
+- TC TCP 先尝试支持 SOCKMAP 的对象，失败后回退到完全不引用 SOCKMAP 的 legacy
+  对象。现代对象加载失败并不能证明 legacy section 可用，因此回退对象仍会单独通过
+  verifier 验证。
+- local cgroup UDP 在程序和挂载均可用时使用 socket-release 通知变体；否则选择有界
+  LRU 清理变体。仅可选 release hook 被拒绝时，不应导致整个 cgroup 数据面不可用。
+- TC 仅在默认优先级下优先尝试 TCX；TCX 创建不受支持时回退到自有 `clsact` filter。
+  显式配置自定义优先级时直接选择 `clsact`。
+- cgroup 程序先请求多程序挂载；厂商内核返回兼容错误时可回退旧式独占挂载。独占
+  挂载可能替换已有单程序，也可能与 netd 后续的独占挂载冲突，因此启动诊断会明确
+  报告实际采用的方式。
+
+预检对象加载只证明 verifier 接受对象且 map ABI 可用，并不能证明服务有权挂载到特定
+cgroup/接口、取得接口锁、安装路由、修改 sysctl 或与 Android netd 共存。这些操作只在
+真实启动时执行。
+
+所有内嵌对象均使用 Android NDK r29 Clang 21 生成，不含 BTF/CO-RE，同时提供大端与
+小端版本。普通构建不会编译 C，也不需要 NDK；修改 BPF C 或 C/Go ABI 后必须重新生成
+两种对象，并通过源码/对象 manifest 新鲜度检查。
 
 ## 已知 LPM trie 安全问题
 
