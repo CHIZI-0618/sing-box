@@ -71,6 +71,9 @@ func (m *testInboundManager) Create(
 }
 
 func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
+	if APIVersion < 6 {
+		t.Fatalf("eBPF diagnostics requires API version 6, got %d", APIVersion)
+	}
 	observedAt := time.UnixMilli(1700000000123)
 	lastErrorAt := observedAt.Add(time.Second)
 	manager := &testInboundManager{inbounds: []adapter.Inbound{
