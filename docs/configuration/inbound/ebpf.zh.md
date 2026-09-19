@@ -72,11 +72,6 @@ TC filter 优先级，范围 1 至 65535，默认 `1`。仅在需要与其他 fi
 修改。默认值允许在内核支持时使用 TCX；自定义优先级会使用 `clsact`，以保留数值
 排序语义。
 
-### bypass_rule_set
-
-目标 IP CIDR 命中这些规则集时绕过此入站，非 IP 规则会被忽略。更新以事务方式应用；
-若诊断显示 `needs_attention`，应重启入站，让所有数据面按同一策略重建。
-
 ### fakeip_icmp
 
 | 值 | 行为 |
@@ -124,6 +119,11 @@ Android 厂商的 netd hook 可能造成挂载冲突。sing-box 优先尝试多�
 ### local.bypass_private_address
 
 绕过私有和特殊用途目标地址，默认 `true`。
+
+### local.bypass_rule_set
+
+目标 IP CIDR 命中这些规则集时绕过 local 数据面，非 IP 规则会被忽略。该策略与
+`shared.bypass_rule_set` 独立，并以事务方式更新所有启用的 local 后端。
 
 ### local.include_uid
 
@@ -196,9 +196,15 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 
 绕过私有和特殊用途目标地址，默认 `true`。
 
+### shared.bypass_rule_set
+
+目标 IP CIDR 命中这些规则集时绕过 shared 数据面，非 IP 规则会被忽略。该策略与
+`local.bypass_rule_set` 独立，并以事务方式更新所有启用的 shared 后端。
+
 ### shared.include_source_cidr
 
-需要接管的客户端来源 CIDR。列表非空时，未匹配来源绕过。
+需要接管的客户端来源 CIDR。当 CIDR 或 MAC include 列表任一配置时，命中任一列表的
+来源即接管，均未命中时绕过。
 
 ### shared.exclude_source_cidr
 
@@ -206,11 +212,13 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 
 ### shared.include_mac_address
 
-需要接管的 48 位来源 MAC，仅适用于以太网帧接口。
+需要接管的 48 位来源 MAC，仅适用于以太网帧接口。MAC 与 CIDR include 是或（OR）关系，
+不是同时满足。
 
 ### shared.exclude_mac_address
 
-需要绕过的 48 位来源 MAC，仅适用于以太网帧接口；exclude 优先。
+需要绕过的 48 位来源 MAC，仅适用于以太网帧接口。CIDR 或 MAC 任一 exclude 命中都会
+优先绕过，覆盖所有 include。
 
 ### shared.bypass_port
 
@@ -228,7 +236,8 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 ## 策略顺序
 
 安全与服务流量绕过最先执行；随后 FakeIP 前缀强制接管；DNS 模式及 local UID/shared
-来源筛选早于端口、私网地址和规则集绕过。所有 exclude 筛选均优先于 include。
+来源筛选早于端口、私网地址和各自数据面的规则集绕过。local 与 shared 的规则集策略
+彼此独立。shared 的 CIDR 与 MAC include 为或关系，任一 exclude 命中都优先绕过。
 
 ## 诊断
 

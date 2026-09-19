@@ -75,12 +75,6 @@ TC filter priority from 1 through 65535. Default is `1`. Change it only when
 coordinating with other filters. The default permits TCX when supported; a
 custom priority uses `clsact` so numeric ordering remains meaningful.
 
-### bypass_rule_set
-
-Rule sets whose destination IP CIDRs bypass this inbound. Non-IP rules are
-ignored. Updates are transactional; if diagnostics report `needs_attention`,
-restart the inbound to rebuild every active data plane from one policy.
-
 ### fakeip_icmp
 
 | Value | Behavior |
@@ -132,6 +126,12 @@ Enables local IPv6 interception. Default is `true`.
 ### local.bypass_private_address
 
 Bypasses private and special-use destinations. Default is `true`.
+
+### local.bypass_rule_set
+
+Rule sets whose destination IP CIDRs bypass the local data plane. Non-IP rules
+are ignored. This policy is independent from `shared.bypass_rule_set` and is
+updated transactionally across the active local backends.
 
 ### local.include_uid
 
@@ -208,9 +208,17 @@ client addresses, router advertisements, forwarding or upstream IPv6 routing.
 
 Bypasses private and special-use destinations. Default is `true`.
 
+### shared.bypass_rule_set
+
+Rule sets whose destination IP CIDRs bypass the shared data plane. Non-IP rules
+are ignored. This policy is independent from `local.bypass_rule_set` and is
+updated transactionally across the active shared backends.
+
 ### shared.include_source_cidr
 
-Client source CIDRs to intercept. When non-empty, unmatched sources bypass.
+Client source CIDRs to intercept. When source CIDR and/or MAC include lists are
+configured, a source matching either include list is selected; unmatched
+sources bypass.
 
 ### shared.exclude_source_cidr
 
@@ -218,12 +226,13 @@ Client source CIDRs to bypass. Exclude policy takes precedence.
 
 ### shared.include_mac_address
 
-48-bit source MAC addresses to intercept. Ethernet-framed interfaces only.
+48-bit source MAC addresses to intercept. Ethernet-framed interfaces only. MAC
+and CIDR includes are alternatives (OR), not a combined requirement.
 
 ### shared.exclude_mac_address
 
-48-bit source MAC addresses to bypass. Ethernet-framed interfaces only;
-exclude policy takes precedence.
+48-bit source MAC addresses to bypass. Ethernet-framed interfaces only. A
+matching CIDR or MAC exclude always wins over every include selector.
 
 ### shared.bypass_port
 
@@ -243,8 +252,9 @@ Destination port ranges to bypass, in inclusive `start:end` form.
 
 Safety and service-traffic bypasses run first. FakeIP prefixes then force
 interception. DNS mode and local UID/shared source selection run before port,
-private-address, and rule-set bypasses. Exclude selectors take precedence over
-include selectors.
+private-address, and the path-specific rule-set bypass. Local and shared
+rule-set policies are independent. Shared CIDR and MAC includes are OR'ed;
+any matching exclude selector takes precedence.
 
 ## Diagnostics
 

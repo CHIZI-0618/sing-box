@@ -211,8 +211,9 @@ The local TC delivery veth requires writable per-interface IPv4 sysctls under
 
 ## Runtime policy updates
 
-`bypass_rule_set` updates are applied transactionally across active data
-planes. A failed update reverts already-updated backends and retries with
+`local.bypass_rule_set` and `shared.bypass_rule_set` are independent policies.
+Each is applied transactionally across the active backends for its own path. A
+failed update reverts already-updated backends and retries with
 bounded exponential backoff while their state remains usable. If an internal
 rollback fails and a backend disables itself as requiring rebuild, retries stop
 and runtime diagnostics report `needs_attention`; restart the inbound to build
