@@ -16,7 +16,7 @@ import (
 func (i *Inbound) startBypassRuleSets() error {
 	i.bypassRuleSetAccess.Lock()
 	defer i.bypassRuleSetAccess.Unlock()
-	if i.bypassRuleSetStarted {
+	if i.bypassRuleSetStarted || i.sharedBypassRuleSetStarted {
 		return nil
 	}
 	i.bypassRuleSetCallbacks = make([]*list.Element[adapter.RuleSetUpdateCallback], 0, len(i.bypassRuleSet))
@@ -24,8 +24,17 @@ func (i *Inbound) startBypassRuleSets() error {
 		ruleSet.IncRef()
 		i.bypassRuleSetCallbacks = append(i.bypassRuleSetCallbacks, ruleSet.RegisterCallback(i.updateBypassRuleSet))
 	}
+	i.sharedBypassRuleSetCallbacks = make([]*list.Element[adapter.RuleSetUpdateCallback], 0, len(i.sharedBypassRuleSet))
+	for _, ruleSet := range i.sharedBypassRuleSet {
+		ruleSet.IncRef()
+		i.sharedBypassRuleSetCallbacks = append(i.sharedBypassRuleSetCallbacks, ruleSet.RegisterCallback(i.updateSharedBypassRuleSet))
+	}
 	i.bypassRuleSetStarted = true
+	i.sharedBypassRuleSetStarted = true
 	err := i.refreshBypassRuleSetsLocked(true)
+	if err == nil {
+		err = i.refreshSharedBypassRuleSetsLocked(true)
+	}
 	if err != nil {
 		i.stopBypassRuleSetsLocked()
 		return err
@@ -40,7 +49,7 @@ func (i *Inbound) stopBypassRuleSets() {
 }
 
 func (i *Inbound) stopBypassRuleSetsLocked() {
-	if !i.bypassRuleSetStarted {
+	if !i.bypassRuleSetStarted && !i.sharedBypassRuleSetStarted {
 		return
 	}
 	for ruleSetIndex, ruleSet := range i.bypassRuleSet {
@@ -49,8 +58,16 @@ func (i *Inbound) stopBypassRuleSetsLocked() {
 		}
 		ruleSet.DecRef()
 	}
+	for ruleSetIndex, ruleSet := range i.sharedBypassRuleSet {
+		if ruleSetIndex < len(i.sharedBypassRuleSetCallbacks) {
+			ruleSet.UnregisterCallback(i.sharedBypassRuleSetCallbacks[ruleSetIndex])
+		}
+		ruleSet.DecRef()
+	}
 	i.bypassRuleSetCallbacks = nil
+	i.sharedBypassRuleSetCallbacks = nil
 	i.bypassRuleSetStarted = false
+	i.sharedBypassRuleSetStarted = false
 }
 
 func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
@@ -86,6 +103,21 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	i.bypassRuleSetNeedsRetry = false
 }
 
+func (i *Inbound) updateSharedBypassRuleSet(adapter.RuleSet) {
+	i.bypassRuleSetAccess.Lock()
+	defer i.bypassRuleSetAccess.Unlock()
+	if !i.sharedBypassRuleSetStarted {
+		return
+	}
+	if err := i.refreshSharedBypassRuleSetsLocked(false); err != nil {
+		i.policyWarnings.warn(i.logger, "refresh shared eBPF bypass_rule_set: ", err)
+		i.sharedBypassRuleSetNeedsRetry = true
+		i.notifyTCInterfaceUpdate()
+		return
+	}
+	i.sharedBypassRuleSetNeedsRetry = false
+}
+
 // retryBypassRuleSetIfNeededLocked is updateTCInterfaces' hook into the
 // bypass_rule_set half of this file: it does nothing (and reports settled)
 // unless a previous refreshBypassRuleSetsLocked call actually failed, so a
@@ -94,6 +126,15 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 func (i *Inbound) retryBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
 	i.bypassRuleSetAccess.Lock()
 	defer i.bypassRuleSetAccess.Unlock()
+	localOutcome := i.retryLocalBypassRuleSetIfNeededLocked()
+	sharedOutcome := i.retrySharedBypassRuleSetIfNeededLocked()
+	if sharedOutcome > localOutcome {
+		return sharedOutcome
+	}
+	return localOutcome
+}
+
+func (i *Inbound) retryLocalBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
 	if !i.bypassRuleSetStarted {
 		return tcSharedRewriteSettled
 	}
@@ -124,12 +165,49 @@ func (i *Inbound) retryBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
 	return tcSharedRewriteSettled
 }
 
-func (i *Inbound) bypassRuleSetBackendRequiresRebuildLocked() bool {
-	if backend := i.tcBackend(); backend != nil && backend.RequiresRebuild() {
-		return true
+func (i *Inbound) retrySharedBypassRuleSetIfNeededLocked() tcSharedRewriteOutcome {
+	if !i.sharedBypassRuleSetStarted {
+		return tcSharedRewriteSettled
 	}
-	if backend := i.cgroupBackendInstance(); backend != nil && backend.RequiresRebuild() {
-		return true
+	if i.sharedBypassRuleSetBackendRequiresRebuildLocked() {
+		i.sharedBypassRuleSetNeedsRetry = false
+		return tcSharedRewriteUnrecoverable
+	}
+	if !i.sharedBypassRuleSetNeedsRetry {
+		return tcSharedRewriteSettled
+	}
+	i.sharedBypassRuleSetRetryCount++
+	if err := i.refreshSharedBypassRuleSetsLocked(false); err != nil {
+		i.policyWarnings.warn(i.logger, "retry shared eBPF bypass_rule_set refresh: ", err)
+		if i.sharedBypassRuleSetBackendRequiresRebuildLocked() {
+			i.sharedBypassRuleSetNeedsRetry = false
+			return tcSharedRewriteUnrecoverable
+		}
+		return tcSharedRewriteRecoverable
+	}
+	i.sharedBypassRuleSetNeedsRetry = false
+	return tcSharedRewriteSettled
+}
+
+func (i *Inbound) bypassRuleSetBackendRequiresRebuildLocked() bool {
+	if i.localTCEnabled() {
+		if backend := i.tcBackend(); backend != nil && backend.RequiresRebuild() {
+			return true
+		}
+	}
+	if i.localCgroupEnabled() {
+		if backend := i.cgroupBackendInstance(); backend != nil && backend.RequiresRebuild() {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *Inbound) sharedBypassRuleSetBackendRequiresRebuildLocked() bool {
+	if i.sharedSocketAssignEnabled() {
+		if backend := i.tcBackend(); backend != nil && backend.RequiresRebuild() {
+			return true
+		}
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
 		if backend := shared.sharedBackendInstance(); backend != nil && backend.RequiresRebuild() {
@@ -235,6 +313,102 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 		return err
 	}
 	return i.applyBypassCIDRPolicyLocked(policy)
+}
+
+func (i *Inbound) refreshSharedBypassRuleSetsLocked(startup bool) error {
+	var prefixes []netip.Prefix
+	for _, ruleSet := range i.sharedBypassRuleSet {
+		ipSets := ruleSet.ExtractIPSet()
+		if startup && len(ipSets) == 0 {
+			i.logger.Warn("shared.bypass_rule_set: no destination IP CIDR rules found in rule-set: ", ruleSet.Name())
+		}
+		for _, ipSet := range ipSets {
+			prefixes = append(prefixes, ipSet.Prefixes()...)
+		}
+	}
+	policy, err := i.compileBypassCIDRPolicy(prefixes)
+	if err != nil {
+		return err
+	}
+	return i.applySharedBypassCIDRPolicyLocked(policy)
+}
+
+func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy) error {
+	previous := i.sharedBypassRuleSetPolicy
+	previousVersion := i.sharedBypassRuleSetPolicyVersion
+	previousExpected := i.sharedBypassRuleSetExpectedPolicy
+	previousExpectedVersion := i.sharedBypassRuleSetExpectedVersion
+	version := previousExpectedVersion
+	if !reflect.DeepEqual(previousExpected, policy) {
+		version++
+	}
+	i.sharedBypassRuleSetExpectedPolicy = policy
+	i.sharedBypassRuleSetExpectedVersion = version
+	var applied []bypassCIDRAppliedBackend
+	fail := func(cause error) error {
+		failed := revertBypassCIDRBackends(applied, func(name string, err error) {
+			i.policyWarnings.warn(i.logger, "shared.bypass_rule_set: revert ", name, ": ", err)
+		})
+		if len(failed) > 0 {
+			i.sharedBypassRuleSetInconsistent = true
+			return E.Cause(cause, "shared.bypass_rule_set left inconsistent on: "+strings.Join(failed, ", "))
+		}
+		return cause
+	}
+	if backend := i.tcBackend(); backend != nil {
+		changedBackend := struct {
+			name   string
+			revert func() error
+		}{}
+		_, err := backend.UpdateSharedCompiledBypassCIDR(policy)
+		if err != nil {
+			if backend.RequiresRebuild() {
+				i.sharedBypassRuleSetTC.known = false
+				i.sharedBypassRuleSetInconsistent = true
+			}
+			return fail(err)
+		}
+		i.sharedBypassRuleSetTC = bypassRuleSetBackendVersion{version: version, known: true}
+		changedBackend.name = "shared-TC"
+		changedBackend.revert = func() error {
+			_, revertErr := backend.UpdateSharedCompiledBypassCIDR(previous)
+			if revertErr == nil {
+				i.sharedBypassRuleSetTC = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+			} else {
+				i.sharedBypassRuleSetTC.known = false
+			}
+			return revertErr
+		}
+		applied = append(applied, bypassCIDRAppliedBackend{name: changedBackend.name, revert: changedBackend.revert})
+	}
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		if backend := shared.sharedBackendInstance(); backend != nil {
+			if _, err := backend.UpdateCompiledBypassCIDR(policy); err != nil {
+				if backend.RequiresRebuild() {
+					i.sharedBypassRuleSetShared.known = false
+					i.sharedBypassRuleSetInconsistent = true
+				}
+				return fail(err)
+			}
+			i.sharedBypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}
+			applied = append(applied, bypassCIDRAppliedBackend{
+				name: "shared-packet-rewrite",
+				revert: func() error {
+					_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
+					if revertErr == nil {
+						i.sharedBypassRuleSetShared = bypassRuleSetBackendVersion{version: previousVersion, known: true}
+					} else {
+						i.sharedBypassRuleSetShared.known = false
+					}
+					return revertErr
+				},
+			})
+		}
+	}
+	i.sharedBypassRuleSetPolicy = policy
+	i.sharedBypassRuleSetPolicyVersion = version
+	i.sharedBypassRuleSetInconsistent = false
+	return nil
 }
 
 // applyBypassCIDRPolicyLocked applies one compiled policy to every backend

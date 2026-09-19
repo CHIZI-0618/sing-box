@@ -58,6 +58,15 @@ type BypassRuleSetBackendState struct {
 	Known   bool   `json:"known"`
 }
 
+type scopedBypassRuleSetDiagnostics struct {
+	Consistent            bool
+	Pending               bool
+	PolicyVersion         uint64
+	ExpectedPolicyVersion uint64
+	RetryCount            uint64
+	BackendState          map[string]BypassRuleSetBackendState
+}
+
 // UDPNATDiagnostics reports event-driven userspace UDP NAT state. Cache
 // insertion and capacity-eviction totals come from sing/freelru's existing
 // metrics and therefore restart when the cache is purged (for example after a
@@ -185,6 +194,8 @@ type EBPFDiagnostics struct {
 	// the whole-inbound level. A backend missing from the map does not exist
 	// for this inbound.
 	BypassRuleSetBackendState map[string]BypassRuleSetBackendState `json:"bypass_rule_set_backend_state,omitempty"`
+	LocalBypassRuleSet        scopedBypassRuleSetDiagnostics       `json:"local_bypass_rule_set"`
+	SharedBypassRuleSet       scopedBypassRuleSetDiagnostics       `json:"shared_bypass_rule_set"`
 
 	// UDPSessionCount is the number of distinct UDP clients (by source
 	// address:port) this inbound is currently tracking state for, summed
@@ -349,7 +360,23 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		BypassRuleSetExpectedPolicyVersion: diagnostics.BypassRuleSetExpectedPolicyVersion,
 		BypassRuleSetRetryCount:            diagnostics.BypassRuleSetRetryCount,
 		BypassRuleSetBackendState:          backendState,
-		UDPSessionCount:                    diagnostics.UDPSessionCount,
+		LocalBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
+			Consistent:            diagnostics.LocalBypassRuleSet.Consistent,
+			Pending:               diagnostics.LocalBypassRuleSet.Pending,
+			PolicyVersion:         diagnostics.LocalBypassRuleSet.PolicyVersion,
+			ExpectedPolicyVersion: diagnostics.LocalBypassRuleSet.ExpectedPolicyVersion,
+			RetryCount:            diagnostics.LocalBypassRuleSet.RetryCount,
+			BackendState:          convertBypassRuleSetBackendState(diagnostics.LocalBypassRuleSet.BackendState),
+		},
+		SharedBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
+			Consistent:            diagnostics.SharedBypassRuleSet.Consistent,
+			Pending:               diagnostics.SharedBypassRuleSet.Pending,
+			PolicyVersion:         diagnostics.SharedBypassRuleSet.PolicyVersion,
+			ExpectedPolicyVersion: diagnostics.SharedBypassRuleSet.ExpectedPolicyVersion,
+			RetryCount:            diagnostics.SharedBypassRuleSet.RetryCount,
+			BackendState:          convertBypassRuleSetBackendState(diagnostics.SharedBypassRuleSet.BackendState),
+		},
+		UDPSessionCount: diagnostics.UDPSessionCount,
 		UDPNAT: adapter.EBPFUDPNATDiagnostics{
 			ActiveSessions:                 diagnostics.UDPNAT.ActiveSessions,
 			CreatedSessions:                diagnostics.UDPNAT.CreatedSessions,
@@ -388,6 +415,21 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 			FakeIPICMPRewriteFailureDrops: diagnostics.Counters.FakeIPICMPRewriteFailureDrops,
 		},
 	}
+}
+
+func convertBypassRuleSetBackendState(states map[string]BypassRuleSetBackendState) map[string]adapter.EBPFBypassRuleSetBackendState {
+	converted := make(map[string]adapter.EBPFBypassRuleSetBackendState, len(states))
+	for name, state := range states {
+		converted[name] = adapter.EBPFBypassRuleSetBackendState{Version: state.Version, Known: state.Known}
+	}
+	return converted
+}
+
+func maxUint64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (i *Inbound) EBPFKernelRuntime() adapter.EBPFKernelRuntimeDiagnostics {
@@ -538,20 +580,47 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	i.diagnostics.access.Unlock()
 
 	i.bypassRuleSetAccess.Lock()
-	diagnostics.BypassRuleSetConsistent = !i.bypassRuleSetInconsistent
-	diagnostics.BypassRuleSetPending = i.bypassRuleSetNeedsRetry
-	diagnostics.BypassRuleSetPolicyVersion = i.bypassRuleSetPolicyVersion
-	diagnostics.BypassRuleSetExpectedPolicyVersion = i.bypassRuleSetExpectedVersion
-	diagnostics.BypassRuleSetRetryCount = i.bypassRuleSetRetryCount
-	backendState := make(map[string]BypassRuleSetBackendState, 3)
-	if i.tcBackend() != nil {
-		backendState["TC"] = BypassRuleSetBackendState{Version: i.bypassRuleSetTC.version, Known: i.bypassRuleSetTC.known}
+	localState := scopedBypassRuleSetDiagnostics{
+		Consistent:            !i.bypassRuleSetInconsistent,
+		Pending:               i.bypassRuleSetNeedsRetry,
+		PolicyVersion:         i.bypassRuleSetPolicyVersion,
+		ExpectedPolicyVersion: i.bypassRuleSetExpectedVersion,
+		RetryCount:            i.bypassRuleSetRetryCount,
+		BackendState:          make(map[string]BypassRuleSetBackendState, 2),
+	}
+	if i.localTCEnabled() && i.tcBackend() != nil {
+		localState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.bypassRuleSetTC.version, Known: i.bypassRuleSetTC.known}
 	}
 	if i.cgroupBackendInstance() != nil {
-		backendState["cgroup"] = BypassRuleSetBackendState{Version: i.bypassRuleSetCgroup.version, Known: i.bypassRuleSetCgroup.known}
+		localState.BackendState["cgroup"] = BypassRuleSetBackendState{Version: i.bypassRuleSetCgroup.version, Known: i.bypassRuleSetCgroup.known}
+	}
+	sharedState := scopedBypassRuleSetDiagnostics{
+		Consistent:            !i.sharedBypassRuleSetInconsistent,
+		Pending:               i.sharedBypassRuleSetNeedsRetry,
+		PolicyVersion:         i.sharedBypassRuleSetPolicyVersion,
+		ExpectedPolicyVersion: i.sharedBypassRuleSetExpectedVersion,
+		RetryCount:            i.sharedBypassRuleSetRetryCount,
+		BackendState:          make(map[string]BypassRuleSetBackendState, 2),
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil && shared.sharedBackendInstance() != nil {
-		backendState["shared"] = BypassRuleSetBackendState{Version: i.bypassRuleSetShared.version, Known: i.bypassRuleSetShared.known}
+		sharedState.BackendState["packet_rewrite"] = BypassRuleSetBackendState{Version: i.bypassRuleSetShared.version, Known: i.bypassRuleSetShared.known}
+	}
+	if i.sharedSocketAssignEnabled() && i.tcBackend() != nil {
+		sharedState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.sharedBypassRuleSetTC.version, Known: i.sharedBypassRuleSetTC.known}
+	}
+	diagnostics.LocalBypassRuleSet = localState
+	diagnostics.SharedBypassRuleSet = sharedState
+	diagnostics.BypassRuleSetConsistent = localState.Consistent && sharedState.Consistent
+	diagnostics.BypassRuleSetPending = localState.Pending || sharedState.Pending
+	diagnostics.BypassRuleSetPolicyVersion = maxUint64(localState.PolicyVersion, sharedState.PolicyVersion)
+	diagnostics.BypassRuleSetExpectedPolicyVersion = maxUint64(localState.ExpectedPolicyVersion, sharedState.ExpectedPolicyVersion)
+	diagnostics.BypassRuleSetRetryCount = localState.RetryCount + sharedState.RetryCount
+	backendState := make(map[string]BypassRuleSetBackendState, len(localState.BackendState)+len(sharedState.BackendState))
+	for name, state := range localState.BackendState {
+		backendState["local/"+name] = state
+	}
+	for name, state := range sharedState.BackendState {
+		backendState["shared/"+name] = state
 	}
 	if len(backendState) > 0 {
 		diagnostics.BypassRuleSetBackendState = backendState
@@ -729,7 +798,8 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 	if d.LastError != "" {
 		lines = append(lines, fmt.Sprintf("Last error (%s): %s", d.LastErrorAt.Format(time.RFC3339), d.LastError))
 	}
-	lines = append(lines, fmt.Sprintf("bypass_rule_set: consistent=%t pending=%t", d.BypassRuleSetConsistent, d.BypassRuleSetPending))
+	lines = append(lines, fmt.Sprintf("local.bypass_rule_set: consistent=%t pending=%t version=%d", d.LocalBypassRuleSet.Consistent, d.LocalBypassRuleSet.Pending, d.LocalBypassRuleSet.PolicyVersion))
+	lines = append(lines, fmt.Sprintf("shared.bypass_rule_set: consistent=%t pending=%t version=%d", d.SharedBypassRuleSet.Consistent, d.SharedBypassRuleSet.Pending, d.SharedBypassRuleSet.PolicyVersion))
 	lines = append(lines, fmt.Sprintf("UDP sessions: %d", d.UDPSessionCount))
 	lines = append(lines, fmt.Sprintf(
 		"UDP NAT: active=%d created=%d capacity_evictions=%d queue_drops=%d socket_release_events=%d socket_release_matched=%d pending_release_capacity_rejected=%d release_notification_drops=%d",

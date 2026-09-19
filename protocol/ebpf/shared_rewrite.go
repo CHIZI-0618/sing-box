@@ -52,7 +52,7 @@ func newSharedRewrite(inbound *Inbound, options option.EBPFSharedOptions) *share
 	}
 	mapCapacity := effectiveSharedPacketRewriteMapCapacity(
 		defaultMapCapacity,
-		len(inbound.bypassRuleSet) > 0 ||
+		len(inbound.sharedBypassRuleSet) > 0 ||
 			len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 			len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0,
 	)
@@ -115,12 +115,7 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedPacketRewriteBackend, e
 		return nil, err
 	}
 	s.inbound.bypassRuleSetAccess.Lock()
-	if cgroupBackend != nil {
-		ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
-		err = backend.SetBypassCIDRState(ipv4Count, ipv6Count)
-	} else {
-		_, err = backend.UpdateCompiledBypassCIDR(s.inbound.bypassRuleSetPolicy)
-	}
+	_, err = backend.UpdateCompiledBypassCIDR(s.inbound.sharedBypassRuleSetPolicy)
 	s.inbound.bypassRuleSetAccess.Unlock()
 	if err != nil {
 		return nil, E.Errors(err, backend.Close())

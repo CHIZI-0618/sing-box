@@ -70,11 +70,24 @@ type EBPFRuntimeDiagnostics struct {
 	BypassRuleSetExpectedPolicyVersion uint64
 	BypassRuleSetRetryCount            uint64
 	BypassRuleSetBackendState          map[string]EBPFBypassRuleSetBackendState
+	LocalBypassRuleSet                 EBPFBypassRuleSetDiagnostics
+	SharedBypassRuleSet                EBPFBypassRuleSetDiagnostics
 
 	UDPSessionCount int
 	UDPNAT          EBPFUDPNATDiagnostics
 	UDPReplySockets EBPFUDPReplySocketDiagnostics
 	Counters        EBPFCounters
+}
+
+// EBPFBypassRuleSetDiagnostics reports one path-scoped destination-CIDR
+// policy. Local and shared policies are compiled and updated independently.
+type EBPFBypassRuleSetDiagnostics struct {
+	Consistent            bool
+	Pending               bool
+	PolicyVersion         uint64
+	ExpectedPolicyVersion uint64
+	RetryCount            uint64
+	BackendState          map[string]EBPFBypassRuleSetBackendState
 }
 
 type EBPFUDPNATDiagnostics struct {

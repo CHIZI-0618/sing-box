@@ -484,10 +484,12 @@ func (i *Inbound) needsLPMPolicy() bool {
 		(len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0) {
 		return true
 	}
-	for _, ruleSet := range i.bypassRuleSet {
-		for _, ipSet := range ruleSet.ExtractIPSet() {
-			if len(ipSet.Prefixes()) > 0 {
-				return true
+	for _, ruleSets := range [][]adapter.RuleSet{i.bypassRuleSet, i.sharedBypassRuleSet} {
+		for _, ruleSet := range ruleSets {
+			for _, ipSet := range ruleSet.ExtractIPSet() {
+				if len(ipSet.Prefixes()) > 0 {
+					return true
+				}
 			}
 		}
 	}

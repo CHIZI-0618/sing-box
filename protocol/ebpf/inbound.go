@@ -156,12 +156,24 @@ type Inbound struct {
 	// bypassRuleSetPolicyVersion, not bypassRuleSetExpectedVersion) -- see
 	// bypassRuleSetBackendVersion's doc comment for what "confirmed" means
 	// and does not mean once a compensating revert has failed.
-	bypassRuleSetPolicyVersion   uint64
-	bypassRuleSetExpectedVersion uint64
-	bypassRuleSetRetryCount      uint64
-	bypassRuleSetTC              bypassRuleSetBackendVersion
-	bypassRuleSetCgroup          bypassRuleSetBackendVersion
-	bypassRuleSetShared          bypassRuleSetBackendVersion
+	bypassRuleSetPolicyVersion         uint64
+	bypassRuleSetExpectedVersion       uint64
+	bypassRuleSetRetryCount            uint64
+	bypassRuleSetTC                    bypassRuleSetBackendVersion
+	bypassRuleSetCgroup                bypassRuleSetBackendVersion
+	bypassRuleSetShared                bypassRuleSetBackendVersion
+	sharedBypassRuleSet                []adapter.RuleSet
+	sharedBypassRuleSetCallbacks       []*list.Element[adapter.RuleSetUpdateCallback]
+	sharedBypassRuleSetStarted         bool
+	sharedBypassRuleSetPolicy          commonEBPF.BypassCIDRPolicy
+	sharedBypassRuleSetNeedsRetry      bool
+	sharedBypassRuleSetInconsistent    bool
+	sharedBypassRuleSetExpectedPolicy  commonEBPF.BypassCIDRPolicy
+	sharedBypassRuleSetPolicyVersion   uint64
+	sharedBypassRuleSetExpectedVersion uint64
+	sharedBypassRuleSetRetryCount      uint64
+	sharedBypassRuleSetTC              bypassRuleSetBackendVersion
+	sharedBypassRuleSetShared          bypassRuleSetBackendVersion
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool
@@ -345,12 +357,19 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort)
 	warnBypassPortConflicts(logger, "shared", sharedDNSMode, sharedBypassPort)
-	for _, ruleSetTag := range options.BypassRuleSet {
+	for _, ruleSetTag := range options.Local.BypassRuleSet {
 		ruleSet, loaded := router.RuleSet(ruleSetTag)
 		if !loaded {
-			return nil, E.New("parse bypass_rule_set: rule-set not found: ", ruleSetTag)
+			return nil, E.New("parse local.bypass_rule_set: rule-set not found: ", ruleSetTag)
 		}
 		inbound.bypassRuleSet = append(inbound.bypassRuleSet, ruleSet)
+	}
+	for _, ruleSetTag := range options.Shared.BypassRuleSet {
+		ruleSet, loaded := router.RuleSet(ruleSetTag)
+		if !loaded {
+			return nil, E.New("parse shared.bypass_rule_set: rule-set not found: ", ruleSetTag)
+		}
+		inbound.sharedBypassRuleSet = append(inbound.sharedBypassRuleSet, ruleSet)
 	}
 	udpTimeout := C.UDPTimeout
 	if options.UDPTimeout != 0 {

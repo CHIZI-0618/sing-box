@@ -8,12 +8,11 @@ import (
 )
 
 type EBPFInboundOptions struct {
-	Network       NetworkList                `json:"network,omitempty"`
-	UDPTimeout    UDPTimeoutCompat           `json:"udp_timeout,omitempty"`
-	TCPriority    EBPFTCPriority             `json:"tc_priority,omitempty"`
-	BypassRuleSet badoption.Listable[string] `json:"bypass_rule_set,omitempty" reference:"rule_set"`
-	Local         EBPFLocalOptions           `json:"local,omitempty"`
-	Shared        EBPFSharedOptions          `json:"shared,omitempty"`
+	Network    NetworkList       `json:"network,omitempty"`
+	UDPTimeout UDPTimeoutCompat  `json:"udp_timeout,omitempty"`
+	TCPriority EBPFTCPriority    `json:"tc_priority,omitempty"`
+	Local      EBPFLocalOptions  `json:"local,omitempty"`
+	Shared     EBPFSharedOptions `json:"shared,omitempty"`
 	// FakeIPICMP, when "reply", answers ICMP Echo Request packets addressed to
 	// a FakeIP so a client's ping sees that address as reachable, without the
 	// request ever leaving this box. It applies to whichever of local/shared
@@ -31,6 +30,7 @@ type EBPFLocalOptions struct {
 	CgroupPath           string                     `json:"cgroup_path,omitempty"`
 	IPv6                 *bool                      `json:"ipv6,omitempty"`
 	BypassPrivateAddress *bool                      `json:"bypass_private_address,omitempty"`
+	BypassRuleSet        badoption.Listable[string] `json:"bypass_rule_set,omitempty" reference:"rule_set"`
 	IncludeUID           badoption.Listable[uint32] `json:"include_uid,omitempty"`
 	IncludeUIDRange      badoption.Listable[string] `json:"include_uid_range,omitempty"`
 	ExcludeUID           badoption.Listable[uint32] `json:"exclude_uid,omitempty"`
@@ -49,6 +49,7 @@ type EBPFSharedOptions struct {
 	Interface            badoption.Listable[string]       `json:"interface,omitempty"`
 	IPv6                 *bool                            `json:"ipv6,omitempty"`
 	BypassPrivateAddress *bool                            `json:"bypass_private_address,omitempty"`
+	BypassRuleSet        badoption.Listable[string]       `json:"bypass_rule_set,omitempty" reference:"rule_set"`
 	IncludeSourceCIDR    badoption.Listable[netip.Prefix] `json:"include_source_cidr,omitempty"`
 	ExcludeSourceCIDR    badoption.Listable[netip.Prefix] `json:"exclude_source_cidr,omitempty"`
 	IncludeMACAddress    badoption.Listable[string]       `json:"include_mac_address,omitempty"`
