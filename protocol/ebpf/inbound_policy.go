@@ -306,7 +306,11 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 			prefixes = append(prefixes, ipSet.Prefixes()...)
 		}
 	}
-	policy, err := i.compileBypassCIDRDecisions(prefixes)
+	dynamic, err := i.compileBypassCIDRDecisions(prefixes)
+	if err != nil {
+		return err
+	}
+	policy, err := i.combineDestinationDecisions(i.localInitialDestinations, dynamic)
 	if err != nil {
 		return err
 	}
@@ -324,7 +328,11 @@ func (i *Inbound) refreshSharedBypassRuleSetsLocked(startup bool) error {
 			prefixes = append(prefixes, ipSet.Prefixes()...)
 		}
 	}
-	policy, err := i.compileBypassCIDRDecisions(prefixes)
+	dynamic, err := i.compileBypassCIDRDecisions(prefixes)
+	if err != nil {
+		return err
+	}
+	policy, err := i.combineDestinationDecisions(i.sharedInitialDestinations, dynamic)
 	if err != nil {
 		return err
 	}
@@ -508,4 +516,17 @@ func (i *Inbound) compileBypassCIDRDecisions(prefixes []netip.Prefix) ([]commonE
 		decisions = append(decisions, commonEBPF.CIDRDecision{Prefix: prefix, Action: commonEBPF.DecisionPass})
 	}
 	return decisions, nil
+}
+
+func (i *Inbound) combineDestinationDecisions(
+	static, dynamic []commonEBPF.CIDRDecision,
+) ([]commonEBPF.CIDRDecision, error) {
+	prefixes := make([]netip.Prefix, 0, len(static)+len(dynamic))
+	for _, decision := range append(append([]commonEBPF.CIDRDecision(nil), static...), dynamic...) {
+		if decision.Action != commonEBPF.DecisionPass || !decision.Prefix.IsValid() {
+			return nil, E.New("invalid eBPF destination pass decision")
+		}
+		prefixes = append(prefixes, decision.Prefix)
+	}
+	return i.compileBypassCIDRDecisions(prefixes)
 }

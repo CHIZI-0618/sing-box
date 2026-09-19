@@ -196,7 +196,19 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 		})
 	}
 	appendPortDecisions(&policy.Shared, i.sharedBypassPort, i.sharedDNSMode, i.enableTCP, i.enableUDP)
+	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
+	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
 	return commonEBPF.CompileActionPolicy(policy)
+}
+
+func destinationPassDecisions(decisions []commonEBPF.CIDRDecision) []commonEBPF.CIDRDecision {
+	result := make([]commonEBPF.CIDRDecision, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision.Action == commonEBPF.DecisionPass {
+			result = append(result, decision)
+		}
+	}
+	return result
 }
 
 func appendPortDecisions(scope *commonEBPF.ActionScope, bypass []commonEBPF.PortRange, dnsMode string, enableTCP, enableUDP bool) {

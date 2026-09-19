@@ -115,7 +115,15 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedPacketRewriteBackend, e
 		return nil, err
 	}
 	s.inbound.bypassRuleSetAccess.Lock()
-	_, err = backend.UpdateDestinationDecisions(s.inbound.sharedBypassRuleSetPolicy)
+	initialPolicy, policyErr := s.inbound.combineDestinationDecisions(
+		s.inbound.sharedInitialDestinations,
+		s.inbound.sharedBypassRuleSetPolicy,
+	)
+	if policyErr == nil {
+		_, err = backend.UpdateDestinationDecisions(initialPolicy)
+	} else {
+		err = policyErr
+	}
 	s.inbound.bypassRuleSetAccess.Unlock()
 	if err != nil {
 		return nil, E.Errors(err, backend.Close())

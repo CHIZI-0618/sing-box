@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"net/netip"
 	"testing"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
@@ -44,5 +45,23 @@ func TestCompileProcessUIDPolicyUsesExcludeActionsByDefault(t *testing.T) {
 	}
 	if len(decisions) != 1 || decisions[0].Action != commonEBPF.DecisionPass {
 		t.Fatalf("decisions = %+v, want one pass decision", decisions)
+	}
+}
+
+func TestCombineDestinationDecisionsRetainsStaticPasses(t *testing.T) {
+	inbound := &Inbound{}
+	combined, err := inbound.combineDestinationDecisions(
+		[]commonEBPF.CIDRDecision{{
+			Prefix: netip.MustParsePrefix("192.168.0.0/16"), Action: commonEBPF.DecisionPass,
+		}},
+		[]commonEBPF.CIDRDecision{{
+			Prefix: netip.MustParsePrefix("203.0.113.0/24"), Action: commonEBPF.DecisionPass,
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(combined) != 2 {
+		t.Fatalf("combined decisions = %+v, want static and dynamic pass entries", combined)
 	}
 }
