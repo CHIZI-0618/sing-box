@@ -93,7 +93,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 				Mechanism:      "tcx",
 			}},
 			BypassRuleSetBackendState: map[string]adapter.EBPFBypassRuleSetBackendState{
-				"TC": {Version: 3, Known: true},
+				"local/TC": {Version: 3, Known: true},
 			},
 			Counters: adapter.EBPFCounters{TCSharedFragmentPasses: 9},
 			UDPNAT: adapter.EBPFUDPNATDiagnostics{
@@ -139,7 +139,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 	if len(diagnostics.Attachments) != 1 || diagnostics.Attachments[0].InterfaceIndex != 7 {
 		t.Fatalf("attachments = %+v", diagnostics.Attachments)
 	}
-	if state := diagnostics.BypassRuleSetBackendState["TC"]; state == nil || !state.Known || state.Version != 3 {
+	if state := diagnostics.BypassRuleSetBackendState["local/TC"]; state == nil || !state.Known || state.Version != 3 {
 		t.Fatalf("backend state = %+v", state)
 	}
 	if diagnostics.Counters == nil || diagnostics.Counters.TcSharedFragmentPasses != 9 {

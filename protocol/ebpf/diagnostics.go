@@ -360,23 +360,7 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		BypassRuleSetExpectedPolicyVersion: diagnostics.BypassRuleSetExpectedPolicyVersion,
 		BypassRuleSetRetryCount:            diagnostics.BypassRuleSetRetryCount,
 		BypassRuleSetBackendState:          backendState,
-		LocalBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
-			Consistent:            diagnostics.LocalBypassRuleSet.Consistent,
-			Pending:               diagnostics.LocalBypassRuleSet.Pending,
-			PolicyVersion:         diagnostics.LocalBypassRuleSet.PolicyVersion,
-			ExpectedPolicyVersion: diagnostics.LocalBypassRuleSet.ExpectedPolicyVersion,
-			RetryCount:            diagnostics.LocalBypassRuleSet.RetryCount,
-			BackendState:          convertBypassRuleSetBackendState(diagnostics.LocalBypassRuleSet.BackendState),
-		},
-		SharedBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
-			Consistent:            diagnostics.SharedBypassRuleSet.Consistent,
-			Pending:               diagnostics.SharedBypassRuleSet.Pending,
-			PolicyVersion:         diagnostics.SharedBypassRuleSet.PolicyVersion,
-			ExpectedPolicyVersion: diagnostics.SharedBypassRuleSet.ExpectedPolicyVersion,
-			RetryCount:            diagnostics.SharedBypassRuleSet.RetryCount,
-			BackendState:          convertBypassRuleSetBackendState(diagnostics.SharedBypassRuleSet.BackendState),
-		},
-		UDPSessionCount: diagnostics.UDPSessionCount,
+		UDPSessionCount:                    diagnostics.UDPSessionCount,
 		UDPNAT: adapter.EBPFUDPNATDiagnostics{
 			ActiveSessions:                 diagnostics.UDPNAT.ActiveSessions,
 			CreatedSessions:                diagnostics.UDPNAT.CreatedSessions,
@@ -415,14 +399,6 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 			FakeIPICMPRewriteFailureDrops: diagnostics.Counters.FakeIPICMPRewriteFailureDrops,
 		},
 	}
-}
-
-func convertBypassRuleSetBackendState(states map[string]BypassRuleSetBackendState) map[string]adapter.EBPFBypassRuleSetBackendState {
-	converted := make(map[string]adapter.EBPFBypassRuleSetBackendState, len(states))
-	for name, state := range states {
-		converted[name] = adapter.EBPFBypassRuleSetBackendState{Version: state.Version, Known: state.Known}
-	}
-	return converted
 }
 
 func maxUint64(a, b uint64) uint64 {
