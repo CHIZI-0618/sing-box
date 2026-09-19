@@ -72,6 +72,12 @@ TC filter 优先级，范围 1 至 65535，默认 `1`。仅在需要与其他 fi
 修改。默认值允许在内核支持时使用 TCX；自定义优先级会使用 `clsact`，以保留数值
 排序语义。
 
+### bypass_rule_set
+
+兼容性简写：将同一组目标 IP 规则集应用到所有已启用的数据面。`local.bypass_rule_set`
+和 `shared.bypass_rule_set` 仍然分别独立，并会在各自路径上追加到这组公共规则集之后。
+重复的规则集标签会被忽略。
+
 ### fakeip_icmp
 
 | 值 | 行为 |
@@ -236,8 +242,9 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 ## 策略顺序
 
 安全与服务流量绕过最先执行；随后 FakeIP 前缀强制接管；DNS 模式及 local UID/shared
-来源筛选早于端口、私网地址和各自数据面的规则集绕过。local 与 shared 的规则集策略
-彼此独立。shared 的 CIDR 与 MAC include 为或关系，任一 exclude 命中都优先绕过。
+来源筛选早于端口、私网地址和各自数据面的规则集绕过。顶层兼容规则集会应用到所有
+已启用路径，路径级规则集策略仍彼此独立。shared 的 CIDR 与 MAC include 为或关系，
+任一 exclude 命中都优先绕过。
 
 ## 诊断
 
