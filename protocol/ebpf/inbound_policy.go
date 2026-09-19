@@ -242,22 +242,20 @@ type bypassRuleSetBackendVersion struct {
 	known   bool
 }
 
-type bypassCIDRPolicyBackend interface {
-	UpdateCompiledBypassCIDR(policy commonEBPF.BypassCIDRPolicy) (bool, error)
-	RequiresRebuild() bool
-}
+type destinationDecisionApply func([]commonEBPF.CIDRDecision) (bool, error)
 
-func (i *Inbound) applyBypassCIDRBackend(
+func (i *Inbound) applyDestinationDecisionBackend(
 	name string,
-	backend bypassCIDRPolicyBackend,
+	apply destinationDecisionApply,
+	requiresRebuild func() bool,
 	state *bypassRuleSetBackendVersion,
-	policy commonEBPF.BypassCIDRPolicy,
-	previous commonEBPF.BypassCIDRPolicy,
+	policy []commonEBPF.CIDRDecision,
+	previous []commonEBPF.CIDRDecision,
 	version uint64,
 	previousVersion uint64,
 ) (bypassCIDRAppliedBackend, error) {
-	if _, err := backend.UpdateCompiledBypassCIDR(policy); err != nil {
-		if backend.RequiresRebuild() {
+	if _, err := apply(policy); err != nil {
+		if requiresRebuild() {
 			state.known = false
 			i.bypassRuleSetInconsistent = true
 		}
@@ -267,8 +265,7 @@ func (i *Inbound) applyBypassCIDRBackend(
 	return bypassCIDRAppliedBackend{
 		name: name,
 		revert: func() error {
-			_, err := backend.UpdateCompiledBypassCIDR(previous)
-			if err != nil {
+			if _, err := apply(previous); err != nil {
 				state.known = false
 				return err
 			}
@@ -308,11 +305,7 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 			prefixes = append(prefixes, ipSet.Prefixes()...)
 		}
 	}
-	policy, err := i.compileBypassCIDRPolicy(prefixes)
-	if err != nil {
-		return err
-	}
-	return i.applyBypassCIDRPolicyLocked(policy)
+	return i.applyBypassCIDRPolicyLocked(i.compileBypassCIDRDecisions(prefixes))
 }
 
 func (i *Inbound) refreshSharedBypassRuleSetsLocked(startup bool) error {
@@ -326,14 +319,10 @@ func (i *Inbound) refreshSharedBypassRuleSetsLocked(startup bool) error {
 			prefixes = append(prefixes, ipSet.Prefixes()...)
 		}
 	}
-	policy, err := i.compileBypassCIDRPolicy(prefixes)
-	if err != nil {
-		return err
-	}
-	return i.applySharedBypassCIDRPolicyLocked(policy)
+	return i.applySharedBypassCIDRPolicyLocked(i.compileBypassCIDRDecisions(prefixes))
 }
 
-func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy) error {
+func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy []commonEBPF.CIDRDecision) error {
 	previous := i.sharedBypassRuleSetPolicy
 	previousVersion := i.sharedBypassRuleSetPolicyVersion
 	previousExpected := i.sharedBypassRuleSetExpectedPolicy
@@ -356,53 +345,25 @@ func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDR
 		return cause
 	}
 	if backend := i.tcBackend(); backend != nil {
-		changedBackend := struct {
-			name   string
-			revert func() error
-		}{}
-		_, err := backend.UpdateSharedCompiledBypassCIDR(policy)
+		appliedBackend, err := i.applyDestinationDecisionBackend(
+			"shared-TC", backend.UpdateSharedDestinationDecisions, backend.RequiresRebuild,
+			&i.sharedBypassRuleSetTC, policy, previous, version, previousVersion,
+		)
 		if err != nil {
-			if backend.RequiresRebuild() {
-				i.sharedBypassRuleSetTC.known = false
-				i.sharedBypassRuleSetInconsistent = true
-			}
 			return fail(err)
 		}
-		i.sharedBypassRuleSetTC = bypassRuleSetBackendVersion{version: version, known: true}
-		changedBackend.name = "shared-TC"
-		changedBackend.revert = func() error {
-			_, revertErr := backend.UpdateSharedCompiledBypassCIDR(previous)
-			if revertErr == nil {
-				i.sharedBypassRuleSetTC = bypassRuleSetBackendVersion{version: previousVersion, known: true}
-			} else {
-				i.sharedBypassRuleSetTC.known = false
-			}
-			return revertErr
-		}
-		applied = append(applied, bypassCIDRAppliedBackend{name: changedBackend.name, revert: changedBackend.revert})
+		applied = append(applied, appliedBackend)
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
 		if backend := shared.sharedBackendInstance(); backend != nil {
-			if _, err := backend.UpdateCompiledBypassCIDR(policy); err != nil {
-				if backend.RequiresRebuild() {
-					i.sharedBypassRuleSetShared.known = false
-					i.sharedBypassRuleSetInconsistent = true
-				}
+			appliedBackend, err := i.applyDestinationDecisionBackend(
+				"shared-packet-rewrite", backend.UpdateDestinationDecisions, backend.RequiresRebuild,
+				&i.sharedBypassRuleSetShared, policy, previous, version, previousVersion,
+			)
+			if err != nil {
 				return fail(err)
 			}
-			i.sharedBypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}
-			applied = append(applied, bypassCIDRAppliedBackend{
-				name: "shared-packet-rewrite",
-				revert: func() error {
-					_, revertErr := backend.UpdateCompiledBypassCIDR(previous)
-					if revertErr == nil {
-						i.sharedBypassRuleSetShared = bypassRuleSetBackendVersion{version: previousVersion, known: true}
-					} else {
-						i.sharedBypassRuleSetShared.known = false
-					}
-					return revertErr
-				},
-			})
+			applied = append(applied, appliedBackend)
 		}
 	}
 	i.sharedBypassRuleSetPolicy = policy
@@ -429,7 +390,7 @@ func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDR
 // which backend by name rather than claiming a global "kept previous policy"
 // that would no longer be true for it; bypassRuleSetInconsistent records the
 // anomaly for diagnostics until a later call applies cleanly everywhere.
-func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy) error {
+func (i *Inbound) applyBypassCIDRPolicyLocked(policy []commonEBPF.CIDRDecision) error {
 	previous := i.bypassRuleSetPolicy
 	previousVersion := i.bypassRuleSetPolicyVersion
 	// version identifies this call's own content, computed against the
@@ -440,10 +401,8 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	// neither had yet succeeded -- confirmed state only advances on
 	// success, so it can lag behind an arbitrary number of distinct failed
 	// attempts, each of which still needs its own, distinguishable version.
-	// BypassCIDRPolicy's fields are unexported outside sing-ebpf, but
-	// reflect.DeepEqual compares them by value regardless of visibility
-	// (the same pattern the tests in inbound_policy_test.go already rely
-	// on).
+	// The action decisions are exported values, so a deep comparison also
+	// serves as the content identity for retry generations.
 	previousExpected := i.bypassRuleSetExpectedPolicy
 	previousExpectedVersion := i.bypassRuleSetExpectedVersion
 	version := previousExpectedVersion
@@ -483,8 +442,9 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	var err error
 	if backend := i.tcBackend(); backend != nil {
 		var appliedBackend bypassCIDRAppliedBackend
-		appliedBackend, err = i.applyBypassCIDRBackend(
-			"TC", backend, &i.bypassRuleSetTC, policy, previous, version, previousVersion,
+		appliedBackend, err = i.applyDestinationDecisionBackend(
+			"TC", backend.UpdateLocalDestinationDecisions, backend.RequiresRebuild,
+			&i.bypassRuleSetTC, policy, previous, version, previousVersion,
 		)
 		if err != nil {
 			return fail(err)
@@ -493,8 +453,9 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	}
 	if backend := i.cgroupBackendInstance(); backend != nil {
 		var appliedBackend bypassCIDRAppliedBackend
-		appliedBackend, err = i.applyBypassCIDRBackend(
-			"cgroup", backend, &i.bypassRuleSetCgroup, policy, previous, version, previousVersion,
+		appliedBackend, err = i.applyDestinationDecisionBackend(
+			"cgroup", backend.UpdateDestinationDecisions, backend.RequiresRebuild,
+			&i.bypassRuleSetCgroup, policy, previous, version, previousVersion,
 		)
 		if err != nil {
 			return fail(err)
@@ -503,35 +464,15 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
 		if backend := shared.sharedBackendInstance(); backend != nil {
-			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
-				ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
-				if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
-					return fail(err)
-				}
-				i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: version, known: true}
-				previousIPv4Count, previousIPv6Count := previous.Counts()
-				applied = append(applied, bypassCIDRAppliedBackend{
-					name: "shared",
-					revert: func() error {
-						revertErr := backend.SetBypassCIDRState(previousIPv4Count, previousIPv6Count)
-						if revertErr == nil {
-							i.bypassRuleSetShared = bypassRuleSetBackendVersion{version: previousVersion, known: true}
-						} else {
-							i.bypassRuleSetShared.known = false
-						}
-						return revertErr
-					},
-				})
-			} else {
-				var appliedBackend bypassCIDRAppliedBackend
-				appliedBackend, err = i.applyBypassCIDRBackend(
-					"shared", backend, &i.bypassRuleSetShared, policy, previous, version, previousVersion,
-				)
-				if err != nil {
-					return fail(err)
-				}
-				applied = append(applied, appliedBackend)
+			var appliedBackend bypassCIDRAppliedBackend
+			appliedBackend, err = i.applyDestinationDecisionBackend(
+				"shared", backend.UpdateDestinationDecisions, backend.RequiresRebuild,
+				&i.bypassRuleSetShared, policy, previous, version, previousVersion,
+			)
+			if err != nil {
+				return fail(err)
 			}
+			applied = append(applied, appliedBackend)
 		}
 	}
 	i.bypassRuleSetPolicy = policy
@@ -540,10 +481,19 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy commonEBPF.BypassCIDRPolicy
 	return nil
 }
 
-func (i *Inbound) compileBypassCIDRPolicy(prefixes []netip.Prefix) (commonEBPF.BypassCIDRPolicy, error) {
-	policy, err := commonEBPF.CompileBypassCIDRPolicy(prefixes)
-	if err != nil {
-		return policy, E.Cause(err, "compile TC eBPF bypass CIDR policy")
+func (i *Inbound) compileBypassCIDRDecisions(prefixes []netip.Prefix) []commonEBPF.CIDRDecision {
+	decisions := make([]commonEBPF.CIDRDecision, 0, len(prefixes))
+	seen := make(map[netip.Prefix]struct{}, len(prefixes))
+	for _, prefix := range prefixes {
+		if !prefix.IsValid() {
+			continue
+		}
+		prefix = prefix.Masked()
+		if _, exists := seen[prefix]; exists {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		decisions = append(decisions, commonEBPF.CIDRDecision{Prefix: prefix, Action: commonEBPF.DecisionPass})
 	}
-	return policy, nil
+	return decisions
 }

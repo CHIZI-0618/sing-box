@@ -88,11 +88,14 @@ func newLoopbackTestTCBackend(t *testing.T) *commonEBPF.TCBackend {
 	return backend
 }
 
-func bypassPolicyFor(t *testing.T, prefixes ...netip.Prefix) commonEBPF.BypassCIDRPolicy {
+func bypassPolicyFor(t *testing.T, prefixes ...netip.Prefix) []commonEBPF.CIDRDecision {
 	t.Helper()
-	policy, err := commonEBPF.CompileBypassCIDRPolicy(prefixes)
-	if err != nil {
-		t.Fatalf("compile bypass CIDR policy: %v", err)
+	policy := make([]commonEBPF.CIDRDecision, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if !prefix.IsValid() {
+			t.Fatalf("invalid bypass CIDR prefix: %s", prefix)
+		}
+		policy = append(policy, commonEBPF.CIDRDecision{Prefix: prefix.Masked(), Action: commonEBPF.DecisionPass})
 	}
 	return policy
 }
@@ -140,7 +143,7 @@ func TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails(t *testi
 	if !reflect.DeepEqual(inbound.bypassRuleSetPolicy, previous) {
 		t.Fatalf("bypassRuleSetPolicy = %+v, want it left at the previous policy on failure", inbound.bypassRuleSetPolicy)
 	}
-	changed, revertCheckErr := tc.UpdateCompiledBypassCIDR(previous)
+	changed, revertCheckErr := tc.UpdateLocalDestinationDecisions(previous)
 	if revertCheckErr != nil {
 		t.Fatalf("re-apply the previous policy to check TC's state: %v", revertCheckErr)
 	}
@@ -309,7 +312,7 @@ func TestBypassRuleSetRetryCountOnlyCountsSchedulerRetries(t *testing.T) {
 // to collapse into fewer, in-cap prefixes: each address is spaced four
 // apart, so no two are adjacent and compileBypassCIDRPolicy's IPSetBuilder
 // cannot merge any of them into a larger CIDR block.
-func oversizedBypassPolicy(t *testing.T) commonEBPF.BypassCIDRPolicy {
+func oversizedBypassPolicy(t *testing.T) []commonEBPF.CIDRDecision {
 	t.Helper()
 	const entries = 65537
 	prefixes := make([]netip.Prefix, 0, entries)

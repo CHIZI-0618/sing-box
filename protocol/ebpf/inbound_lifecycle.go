@@ -327,12 +327,14 @@ func (i *Inbound) startProcessTracker() error {
 		i.processTracker != nil || i.processTrackerRollback != nil {
 		return nil
 	}
+	uidDecisions, defaultAction := i.compileProcessUIDPolicy()
 	tracker, err := commonEBPF.AttachProcessTracker(commonEBPF.ProcessTrackerConfig{
-		EnableTCP:   i.enableTCP,
-		EnableUDP:   i.enableUDP,
-		EnableIPv6:  i.localIPv6,
-		LocalPolicy: i.localPolicy,
-		SelfBypass:  i.selfBypass,
+		EnableTCP:    i.enableTCP,
+		EnableUDP:    i.enableUDP,
+		EnableIPv6:   i.localIPv6,
+		UIDDecisions: uidDecisions,
+		Default:      defaultAction,
+		SelfBypass:   i.selfBypass,
 	})
 	if err != nil {
 		if tracker != nil {

@@ -4,9 +4,97 @@ package ebpf
 
 import (
 	"net/netip"
+	"sort"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 )
+
+// compileProcessUIDPolicy converts sing-box's include/exclude/package result
+// into final UID actions for sing-ebpf. The library receives no selector
+// semantics: unmatched sockets use the returned default action, while each
+// decision is the exceptional action to apply to its UID range.
+func (i *Inbound) compileProcessUIDPolicy() ([]commonEBPF.UIDDecision, commonEBPF.Decision) {
+	if i.localPolicy.IncludeUIDConfigured {
+		include := subtractUIDRanges(i.localPolicy.IncludeUID, i.localPolicy.ExcludeUID)
+		decisions := make([]commonEBPF.UIDDecision, 0, len(include))
+		for _, uid := range include {
+			decisions = append(decisions, commonEBPF.UIDDecision{
+				Start: uid.Start, End: uid.End, Action: commonEBPF.DecisionIntercept,
+			})
+		}
+		return decisions, commonEBPF.DecisionPass
+	}
+	decisions := make([]commonEBPF.UIDDecision, 0, len(i.localPolicy.ExcludeUID))
+	for _, uid := range i.localPolicy.ExcludeUID {
+		decisions = append(decisions, commonEBPF.UIDDecision{
+			Start: uid.Start, End: uid.End, Action: commonEBPF.DecisionPass,
+		})
+	}
+	return decisions, commonEBPF.DecisionIntercept
+}
+
+func subtractUIDRanges(include, exclude []commonEBPF.UIDRange) []commonEBPF.UIDRange {
+	if len(include) == 0 {
+		return nil
+	}
+	include = normalizeUIDRanges(include)
+	exclude = normalizeUIDRanges(exclude)
+	result := make([]commonEBPF.UIDRange, 0, len(include))
+	excludeIndex := 0
+	for _, current := range include {
+		start, end := uint64(current.Start), uint64(current.End)
+		for excludeIndex < len(exclude) && uint64(exclude[excludeIndex].End) < start {
+			excludeIndex++
+		}
+		for index := excludeIndex; index < len(exclude); index++ {
+			blocked := exclude[index]
+			if uint64(blocked.Start) > end {
+				break
+			}
+			if uint64(blocked.Start) > start {
+				result = append(result, commonEBPF.UIDRange{Start: uint32(start), End: blocked.Start - 1})
+			}
+			if uint64(blocked.End) >= end {
+				start = end + 1
+				break
+			}
+			start = uint64(blocked.End) + 1
+		}
+		if start <= end {
+			result = append(result, commonEBPF.UIDRange{Start: uint32(start), End: uint32(end)})
+		}
+	}
+	return result
+}
+
+func normalizeUIDRanges(ranges []commonEBPF.UIDRange) []commonEBPF.UIDRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+	normalized := append([]commonEBPF.UIDRange(nil), ranges...)
+	sort.Slice(normalized, func(i, j int) bool {
+		if normalized[i].Start != normalized[j].Start {
+			return normalized[i].Start < normalized[j].Start
+		}
+		return normalized[i].End < normalized[j].End
+	})
+	merged := normalized[:0]
+	for _, current := range normalized {
+		if len(merged) == 0 {
+			merged = append(merged, current)
+			continue
+		}
+		last := &merged[len(merged)-1]
+		if current.Start <= last.End || (last.End != ^uint32(0) && current.Start == last.End+1) {
+			if current.End > last.End {
+				last.End = current.End
+			}
+			continue
+		}
+		merged = append(merged, current)
+	}
+	return merged
+}
 
 // eBPFPrivateDestinationPrefixes mirrors the data-plane safety/private ranges
 // as final pass decisions. The eBPF library receives only these decisions; it

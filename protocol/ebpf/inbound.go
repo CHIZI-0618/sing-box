@@ -113,7 +113,7 @@ type Inbound struct {
 	bypassRuleSet             []adapter.RuleSet
 	bypassRuleSetCallbacks    []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted      bool
-	bypassRuleSetPolicy       commonEBPF.BypassCIDRPolicy
+	bypassRuleSetPolicy       []commonEBPF.CIDRDecision
 	bypassRuleSetNeedsRetry   bool
 	bypassRuleSetInconsistent bool
 	// bypassRuleSetExpectedPolicy is the content applyBypassCIDRPolicyLocked
@@ -121,7 +121,7 @@ type Inbound struct {
 	// bypassRuleSetExpectedVersion's doc comment below for why a version
 	// number needs its own content to compare each new attempt against,
 	// distinct from bypassRuleSetPolicy (the last CONFIRMED content).
-	bypassRuleSetExpectedPolicy commonEBPF.BypassCIDRPolicy
+	bypassRuleSetExpectedPolicy []commonEBPF.CIDRDecision
 	// bypassRuleSetPolicyVersion is the compiled bypass_rule_set policy's own
 	// content-based version: it advances only when a newly compiled policy
 	// actually differs (by value, via reflect.DeepEqual) from the one
@@ -165,10 +165,10 @@ type Inbound struct {
 	sharedBypassRuleSet                []adapter.RuleSet
 	sharedBypassRuleSetCallbacks       []*list.Element[adapter.RuleSetUpdateCallback]
 	sharedBypassRuleSetStarted         bool
-	sharedBypassRuleSetPolicy          commonEBPF.BypassCIDRPolicy
+	sharedBypassRuleSetPolicy          []commonEBPF.CIDRDecision
 	sharedBypassRuleSetNeedsRetry      bool
 	sharedBypassRuleSetInconsistent    bool
-	sharedBypassRuleSetExpectedPolicy  commonEBPF.BypassCIDRPolicy
+	sharedBypassRuleSetExpectedPolicy  []commonEBPF.CIDRDecision
 	sharedBypassRuleSetPolicyVersion   uint64
 	sharedBypassRuleSetExpectedVersion uint64
 	sharedBypassRuleSetRetryCount      uint64

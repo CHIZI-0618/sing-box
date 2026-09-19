@@ -115,7 +115,7 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedPacketRewriteBackend, e
 		return nil, err
 	}
 	s.inbound.bypassRuleSetAccess.Lock()
-	_, err = backend.UpdateCompiledBypassCIDR(s.inbound.sharedBypassRuleSetPolicy)
+	_, err = backend.UpdateDestinationDecisions(s.inbound.sharedBypassRuleSetPolicy)
 	s.inbound.bypassRuleSetAccess.Unlock()
 	if err != nil {
 		return nil, E.Errors(err, backend.Close())
