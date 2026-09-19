@@ -54,8 +54,8 @@ func (l *captureLogger) PanicContext(context.Context, ...any) {}
 func TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet(t *testing.T) {
 	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
 	diagnostics := inbound.Diagnostics()
-	if diagnostics.SchemaVersion != 2 || diagnostics.ObservedAt.IsZero() {
-		t.Fatalf("diagnostics metadata = version %d at %v, want schema version 2 and timestamp", diagnostics.SchemaVersion, diagnostics.ObservedAt)
+	if diagnostics.SchemaVersion != 3 || diagnostics.ObservedAt.IsZero() {
+		t.Fatalf("diagnostics metadata = version %d at %v, want schema version 3 and timestamp", diagnostics.SchemaVersion, diagnostics.ObservedAt)
 	}
 	if diagnostics.State != EBPFDiagnosticsStateWaitingForInterface {
 		t.Fatalf("state = %s, want %s", diagnostics.State, EBPFDiagnosticsStateWaitingForInterface)
@@ -298,8 +298,8 @@ func TestDiagnosticsReportsNeedsAttentionWhenBypassRuleSetIsInconsistent(t *test
 	inbound := &Inbound{}
 	inbound.bypassRuleSetInconsistent = true
 	diagnostics := inbound.Diagnostics()
-	if diagnostics.BypassRuleSetConsistent {
-		t.Fatal("BypassRuleSetConsistent = true, want false")
+	if diagnostics.LocalBypassRuleSet.Consistent {
+		t.Fatal("LocalBypassRuleSet.Consistent = true, want false")
 	}
 	if diagnostics.State != EBPFDiagnosticsStateNeedsAttention {
 		t.Fatalf("state = %s, want %s", diagnostics.State, EBPFDiagnosticsStateNeedsAttention)

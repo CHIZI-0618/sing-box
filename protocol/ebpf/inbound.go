@@ -357,19 +357,28 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort)
 	warnBypassPortConflicts(logger, "shared", sharedDNSMode, sharedBypassPort)
-	for _, ruleSetTag := range options.Local.BypassRuleSet {
-		ruleSet, loaded := router.RuleSet(ruleSetTag)
-		if !loaded {
-			return nil, E.New("parse local.bypass_rule_set: rule-set not found: ", ruleSetTag)
+	loadRuleSets := func(scope string, target *[]adapter.RuleSet, tags ...[]string) error {
+		seen := make(map[string]struct{})
+		for _, tagList := range tags {
+			for _, ruleSetTag := range tagList {
+				if _, ok := seen[ruleSetTag]; ok {
+					continue
+				}
+				seen[ruleSetTag] = struct{}{}
+				ruleSet, loaded := router.RuleSet(ruleSetTag)
+				if !loaded {
+					return E.New("parse ", scope, ".bypass_rule_set: rule-set not found: ", ruleSetTag)
+				}
+				*target = append(*target, ruleSet)
+			}
 		}
-		inbound.bypassRuleSet = append(inbound.bypassRuleSet, ruleSet)
+		return nil
 	}
-	for _, ruleSetTag := range options.Shared.BypassRuleSet {
-		ruleSet, loaded := router.RuleSet(ruleSetTag)
-		if !loaded {
-			return nil, E.New("parse shared.bypass_rule_set: rule-set not found: ", ruleSetTag)
-		}
-		inbound.sharedBypassRuleSet = append(inbound.sharedBypassRuleSet, ruleSet)
+	if err = loadRuleSets("local", &inbound.bypassRuleSet, options.BypassRuleSet, options.Local.BypassRuleSet); err != nil {
+		return nil, err
+	}
+	if err = loadRuleSets("shared", &inbound.sharedBypassRuleSet, options.BypassRuleSet, options.Shared.BypassRuleSet); err != nil {
+		return nil, err
 	}
 	udpTimeout := C.UDPTimeout
 	if options.UDPTimeout != 0 {

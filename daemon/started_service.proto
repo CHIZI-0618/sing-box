@@ -864,16 +864,12 @@ message EBPFInboundDiagnostics {
   bool recoveryPending = 14;
   bool recoveryUnrecoverable = 15;
   optional int64 nextRetryAt = 16;
-  bool bypassRuleSetConsistent = 17;
-  bool bypassRuleSetPending = 18;
-  uint64 bypassRuleSetPolicyVersion = 19;
-  uint64 bypassRuleSetExpectedPolicyVersion = 20;
-  uint64 bypassRuleSetRetryCount = 21;
-  map<string, EBPFBypassRuleSetBackendState> bypassRuleSetBackendState = 22;
   int64 udpSessionCount = 23;
   EBPFUDPReplySocketDiagnostics udpReplySockets = 24;
   EBPFCounters counters = 25;
   EBPFUDPNATDiagnostics udpNAT = 26;
+  EBPFBypassRuleSetDiagnostics localBypassRuleSet = 27;
+  EBPFBypassRuleSetDiagnostics sharedBypassRuleSet = 28;
 }
 
 message EBPFAttachmentDiagnostics {
@@ -888,6 +884,15 @@ message EBPFAttachmentDiagnostics {
 message EBPFBypassRuleSetBackendState {
   uint64 version = 1;
   bool known = 2;
+}
+
+message EBPFBypassRuleSetDiagnostics {
+  bool consistent = 1;
+  bool pending = 2;
+  uint64 policyVersion = 3;
+  uint64 expectedPolicyVersion = 4;
+  uint64 retryCount = 5;
+  map<string, EBPFBypassRuleSetBackendState> backendState = 6;
 }
 
 message EBPFUDPReplySocketDiagnostics {

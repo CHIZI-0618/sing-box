@@ -55,9 +55,10 @@ func TestEBPFInboundPolicyOptions(t *testing.T) {
 	var inboundOptions option.Inbound
 	if err := json.UnmarshalContext(ctx, []byte(`{
 		"type": "ebpf",
+		"bypass_rule_set": ["geoip-cn"],
 		"local": {
 			"dns_mode": "respect_policy",
-			"bypass_rule_set": ["geoip-cn"]
+			"bypass_rule_set": ["geoip-private"]
 		}
 	}`), &inboundOptions); err != nil {
 		t.Fatal(err)
@@ -69,7 +70,10 @@ func TestEBPFInboundPolicyOptions(t *testing.T) {
 	if ebpfOptions.Local.DNSMode != "respect_policy" {
 		t.Fatalf("unexpected policy options: %+v", ebpfOptions)
 	}
-	if len(ebpfOptions.Local.BypassRuleSet) != 1 || ebpfOptions.Local.BypassRuleSet[0] != "geoip-cn" {
+	if len(ebpfOptions.BypassRuleSet) != 1 || ebpfOptions.BypassRuleSet[0] != "geoip-cn" {
+		t.Fatalf("unexpected common bypass rule-set: %v", ebpfOptions.BypassRuleSet)
+	}
+	if len(ebpfOptions.Local.BypassRuleSet) != 1 || ebpfOptions.Local.BypassRuleSet[0] != "geoip-private" {
 		t.Fatalf("unexpected local bypass rule-set: %v", ebpfOptions.Local.BypassRuleSet)
 	}
 }

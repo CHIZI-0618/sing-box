@@ -161,7 +161,7 @@ func TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails(t *testi
 
 // TestApplyBypassCIDRPolicyLeavesBackendVersionOnFailedRevert is the
 // companion to the test above for the case EBPFDiagnostics'
-// BypassRuleSetConsistent=false is meant to flag: a backend's own
+// A scoped rule-set consistency=false is meant to flag: a backend's own
 // compensating revert fails too, so its true state relative to
 // bypassRuleSetPolicy is unknown. Its recorded version is left at the value
 // it reached during this attempt's forward apply (the last point it was
@@ -355,7 +355,7 @@ func TestApplyBypassCIDRPolicySucceedsAcrossRealBackends(t *testing.T) {
 }
 
 // TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure proves
-// the distinction EBPFDiagnostics' BypassRuleSetExpectedPolicyVersion exists
+// the distinction between confirmed and expected policy versions exists
 // for: bypassRuleSetPolicyVersion only ever names the last successfully
 // applied content, but a diagnostics reader watching while a retry is
 // outstanding needs to see what this inbound is currently trying to

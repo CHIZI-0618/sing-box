@@ -26,7 +26,7 @@ type EBPFAttachmentDiagnostics = commonEBPF.AttachmentInfo
 // below into the one value most operators actually want at a glance; the
 // individual fields remain available for anything more specific.
 const (
-	ebpfDiagnosticsSchemaVersion = 2
+	ebpfDiagnosticsSchemaVersion = 3
 	ebpfDiagnosticsAPICacheTTL   = 500 * time.Millisecond
 
 	// EBPFDiagnosticsStateNormal is every configured data plane attached and
@@ -50,9 +50,8 @@ const (
 	EBPFDiagnosticsStateNeedsAttention = "needs_attention"
 )
 
-// BypassRuleSetBackendState is one backend's own confirmed position in the
-// bypass_rule_set policy version sequence -- see EBPFDiagnostics'
-// BypassRuleSetBackendState field doc comment for what Known=false means.
+// BypassRuleSetBackendState is one backend's own confirmed position in a
+// path-scoped bypass_rule_set policy version sequence.
 type BypassRuleSetBackendState struct {
 	Version uint64 `json:"version"`
 	Known   bool   `json:"known"`
@@ -139,63 +138,14 @@ type EBPFDiagnostics struct {
 	// NextRetryAt is when interface_monitor.go's single retry timer is next
 	// armed to fire, across all three of its components (shared
 	// packet-rewrite, general TC, bypass_rule_set) -- nil when nothing is
-	// currently outstanding, matching RecoveryPending/BypassRuleSetPending
+	// currently outstanding, matching RecoveryPending and the scoped
+	// local/shared bypass-rule-set pending fields
 	// both being false. Whichever component's own backoff is soonest is
 	// what actually wakes the loop; this does not say which one.
 	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 
-	// BypassRuleSetConsistent is false only when a compensating rollback
-	// itself failed (see Inbound.bypassRuleSetInconsistent in
-	// inbound_policy.go): backends are now known to disagree about the
-	// bypass_rule_set policy, not just temporarily out of date.
-	BypassRuleSetConsistent bool `json:"bypass_rule_set_consistent"`
-	// BypassRuleSetPending is whether a previously-failed bypass_rule_set
-	// refresh is still awaiting retry.
-	BypassRuleSetPending bool `json:"bypass_rule_set_pending"`
-	// BypassRuleSetPolicyVersion is the compiled bypass_rule_set policy's own
-	// content-based version, naming the policy this inbound has last
-	// CONFIRMED applying: it advances only when a fully successful apply's
-	// content actually differs from what was in effect before it, so it
-	// names which policy generation is current, not how many times an apply
-	// has been attempted.
-	//
-	// BypassRuleSetExpectedPolicyVersion is the different thing a reader
-	// needs while BypassRuleSetPending is true: the version of the most
-	// recently ATTEMPTED policy, updated on every apply attempt regardless
-	// of whether it succeeded -- "what this inbound is currently trying to
-	// converge to". The two fields coincide exactly when nothing is
-	// outstanding (BypassRuleSetPending=false and BypassRuleSetConsistent=true);
-	// while a retry is pending, BypassRuleSetExpectedPolicyVersion names the
-	// target a later retry is chasing, and BypassRuleSetPolicyVersion still
-	// names whatever was last actually confirmed, lagging behind it by
-	// construction -- neither value is wrong, they answer different
-	// questions ("what do we want" vs. "what do we know we have").
-	//
-	// BypassRuleSetRetryCount counts a third, unrelated thing: how many
-	// times the TC recovery scheduler has actually retried a
-	// previously-failed apply. It does not include the original attempt for
-	// a policy version, and it does not include a fresh apply triggered by
-	// rule-set content actually changing -- both of those go through the
-	// same apply function but are not retries of anything.
-	BypassRuleSetPolicyVersion         uint64 `json:"bypass_rule_set_policy_version"`
-	BypassRuleSetExpectedPolicyVersion uint64 `json:"bypass_rule_set_expected_policy_version"`
-	BypassRuleSetRetryCount            uint64 `json:"bypass_rule_set_retry_count"`
-	// BypassRuleSetBackendState records, per backend, the highest
-	// BypassRuleSetPolicyVersion that backend's own forward apply or
-	// compensating revert last actually completed successfully (Version), and
-	// whether that is still trustworthy (Known). Known=false means the most
-	// recent operation attempted on that backend -- always a compensating
-	// revert, since a backend whose forward apply itself failed is never
-	// considered "applied" in the first place -- did not complete
-	// successfully: Version then names the last point that backend was
-	// confirmed at, not a claim about what it is actually running now. Treat
-	// Known=false as genuinely unknown, not as "probably still at Version";
-	// this is exactly the condition BypassRuleSetConsistent=false reports at
-	// the whole-inbound level. A backend missing from the map does not exist
-	// for this inbound.
-	BypassRuleSetBackendState map[string]BypassRuleSetBackendState `json:"bypass_rule_set_backend_state,omitempty"`
-	LocalBypassRuleSet        scopedBypassRuleSetDiagnostics       `json:"local_bypass_rule_set"`
-	SharedBypassRuleSet       scopedBypassRuleSetDiagnostics       `json:"shared_bypass_rule_set"`
+	LocalBypassRuleSet  scopedBypassRuleSetDiagnostics `json:"local_bypass_rule_set"`
+	SharedBypassRuleSet scopedBypassRuleSetDiagnostics `json:"shared_bypass_rule_set"`
 
 	// UDPSessionCount is the number of distinct UDP clients (by source
 	// address:port) this inbound is currently tracking state for, summed
@@ -333,34 +283,40 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 			ICMPEchoReply:  attachment.ICMPEchoReply,
 		})
 	}
-	backendState := make(map[string]adapter.EBPFBypassRuleSetBackendState, len(diagnostics.BypassRuleSetBackendState))
-	for name, state := range diagnostics.BypassRuleSetBackendState {
-		backendState[name] = adapter.EBPFBypassRuleSetBackendState{Version: state.Version, Known: state.Known}
-	}
 	return adapter.EBPFRuntimeDiagnostics{
-		SchemaVersion:                      diagnostics.SchemaVersion,
-		ObservedAt:                         diagnostics.ObservedAt,
-		Tag:                                diagnostics.Tag,
-		State:                              diagnostics.State,
-		LocalEnabled:                       diagnostics.LocalEnabled,
-		LocalDataPlane:                     diagnostics.LocalDataPlane,
-		SharedEnabled:                      diagnostics.SharedEnabled,
-		SharedDataPlane:                    diagnostics.SharedDataPlane,
-		FakeIPICMPReply:                    diagnostics.FakeIPICMPReply,
-		Attachments:                        attachments,
-		LastError:                          diagnostics.LastError,
-		LastErrorAt:                        diagnostics.LastErrorAt,
-		LastRecoveryAt:                     diagnostics.LastRecoveryAt,
-		RecoveryPending:                    diagnostics.RecoveryPending,
-		RecoveryUnrecoverable:              diagnostics.RecoveryUnrecoverable,
-		NextRetryAt:                        diagnostics.NextRetryAt,
-		BypassRuleSetConsistent:            diagnostics.BypassRuleSetConsistent,
-		BypassRuleSetPending:               diagnostics.BypassRuleSetPending,
-		BypassRuleSetPolicyVersion:         diagnostics.BypassRuleSetPolicyVersion,
-		BypassRuleSetExpectedPolicyVersion: diagnostics.BypassRuleSetExpectedPolicyVersion,
-		BypassRuleSetRetryCount:            diagnostics.BypassRuleSetRetryCount,
-		BypassRuleSetBackendState:          backendState,
-		UDPSessionCount:                    diagnostics.UDPSessionCount,
+		SchemaVersion:         diagnostics.SchemaVersion,
+		ObservedAt:            diagnostics.ObservedAt,
+		Tag:                   diagnostics.Tag,
+		State:                 diagnostics.State,
+		LocalEnabled:          diagnostics.LocalEnabled,
+		LocalDataPlane:        diagnostics.LocalDataPlane,
+		SharedEnabled:         diagnostics.SharedEnabled,
+		SharedDataPlane:       diagnostics.SharedDataPlane,
+		FakeIPICMPReply:       diagnostics.FakeIPICMPReply,
+		Attachments:           attachments,
+		LastError:             diagnostics.LastError,
+		LastErrorAt:           diagnostics.LastErrorAt,
+		LastRecoveryAt:        diagnostics.LastRecoveryAt,
+		RecoveryPending:       diagnostics.RecoveryPending,
+		RecoveryUnrecoverable: diagnostics.RecoveryUnrecoverable,
+		NextRetryAt:           diagnostics.NextRetryAt,
+		LocalBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
+			Consistent:            diagnostics.LocalBypassRuleSet.Consistent,
+			Pending:               diagnostics.LocalBypassRuleSet.Pending,
+			PolicyVersion:         diagnostics.LocalBypassRuleSet.PolicyVersion,
+			ExpectedPolicyVersion: diagnostics.LocalBypassRuleSet.ExpectedPolicyVersion,
+			RetryCount:            diagnostics.LocalBypassRuleSet.RetryCount,
+			BackendState:          convertBypassRuleSetBackendState(diagnostics.LocalBypassRuleSet.BackendState),
+		},
+		SharedBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
+			Consistent:            diagnostics.SharedBypassRuleSet.Consistent,
+			Pending:               diagnostics.SharedBypassRuleSet.Pending,
+			PolicyVersion:         diagnostics.SharedBypassRuleSet.PolicyVersion,
+			ExpectedPolicyVersion: diagnostics.SharedBypassRuleSet.ExpectedPolicyVersion,
+			RetryCount:            diagnostics.SharedBypassRuleSet.RetryCount,
+			BackendState:          convertBypassRuleSetBackendState(diagnostics.SharedBypassRuleSet.BackendState),
+		},
+		UDPSessionCount: diagnostics.UDPSessionCount,
 		UDPNAT: adapter.EBPFUDPNATDiagnostics{
 			ActiveSessions:                 diagnostics.UDPNAT.ActiveSessions,
 			CreatedSessions:                diagnostics.UDPNAT.CreatedSessions,
@@ -401,11 +357,12 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 	}
 }
 
-func maxUint64(a, b uint64) uint64 {
-	if a > b {
-		return a
+func convertBypassRuleSetBackendState(states map[string]BypassRuleSetBackendState) map[string]adapter.EBPFBypassRuleSetBackendState {
+	converted := make(map[string]adapter.EBPFBypassRuleSetBackendState, len(states))
+	for name, state := range states {
+		converted[name] = adapter.EBPFBypassRuleSetBackendState{Version: state.Version, Known: state.Known}
 	}
-	return b
+	return converted
 }
 
 func (i *Inbound) EBPFKernelRuntime() adapter.EBPFKernelRuntimeDiagnostics {
@@ -586,21 +543,6 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	}
 	diagnostics.LocalBypassRuleSet = localState
 	diagnostics.SharedBypassRuleSet = sharedState
-	diagnostics.BypassRuleSetConsistent = localState.Consistent && sharedState.Consistent
-	diagnostics.BypassRuleSetPending = localState.Pending || sharedState.Pending
-	diagnostics.BypassRuleSetPolicyVersion = maxUint64(localState.PolicyVersion, sharedState.PolicyVersion)
-	diagnostics.BypassRuleSetExpectedPolicyVersion = maxUint64(localState.ExpectedPolicyVersion, sharedState.ExpectedPolicyVersion)
-	diagnostics.BypassRuleSetRetryCount = localState.RetryCount + sharedState.RetryCount
-	backendState := make(map[string]BypassRuleSetBackendState, len(localState.BackendState)+len(sharedState.BackendState))
-	for name, state := range localState.BackendState {
-		backendState["local/"+name] = state
-	}
-	for name, state := range sharedState.BackendState {
-		backendState["shared/"+name] = state
-	}
-	if len(backendState) > 0 {
-		diagnostics.BypassRuleSetBackendState = backendState
-	}
 	i.bypassRuleSetAccess.Unlock()
 
 	diagnostics.UDPSessionCount = i.udpClientTable.count()
@@ -704,7 +646,7 @@ func deriveDiagnosticsState(d EBPFDiagnostics) string {
 	// EBPFDiagnostics.Attachments from before the backend gave up on it
 	// would otherwise let through) would suggest the fix is "wait", when it
 	// is not.
-	if d.RecoveryUnrecoverable || !d.BypassRuleSetConsistent {
+	if d.RecoveryUnrecoverable || !d.LocalBypassRuleSet.Consistent || !d.SharedBypassRuleSet.Consistent {
 		return EBPFDiagnosticsStateNeedsAttention
 	}
 	if d.LocalEnabled && !attachmentHasRole(d.Attachments, "local") {
@@ -713,7 +655,7 @@ func deriveDiagnosticsState(d EBPFDiagnostics) string {
 	if d.SharedEnabled && !attachmentHasRole(d.Attachments, "shared") {
 		return EBPFDiagnosticsStateWaitingForInterface
 	}
-	if d.RecoveryPending || d.BypassRuleSetPending {
+	if d.RecoveryPending || d.LocalBypassRuleSet.Pending || d.SharedBypassRuleSet.Pending {
 		return EBPFDiagnosticsStateRecovering
 	}
 	return EBPFDiagnosticsStateNormal

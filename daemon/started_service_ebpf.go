@@ -70,28 +70,24 @@ func marshalEBPFKernelRuntime(source adapter.EBPFKernelRuntimeDiagnostics) *EBPF
 
 func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundDiagnostics {
 	destination := &EBPFInboundDiagnostics{
-		SchemaVersion:                      int32(source.SchemaVersion),
-		ObservedAt:                         source.ObservedAt.UnixMilli(),
-		Tag:                                source.Tag,
-		State:                              source.State,
-		LocalEnabled:                       source.LocalEnabled,
-		LocalDataPlane:                     source.LocalDataPlane,
-		SharedEnabled:                      source.SharedEnabled,
-		SharedDataPlane:                    source.SharedDataPlane,
-		FakeIPICMPReply:                    source.FakeIPICMPReply,
-		LastError:                          source.LastError,
-		LastErrorAt:                        optionalUnixMillis(source.LastErrorAt),
-		LastRecoveryAt:                     optionalUnixMillis(source.LastRecoveryAt),
-		RecoveryPending:                    source.RecoveryPending,
-		RecoveryUnrecoverable:              source.RecoveryUnrecoverable,
-		NextRetryAt:                        optionalUnixMillis(source.NextRetryAt),
-		BypassRuleSetConsistent:            source.BypassRuleSetConsistent,
-		BypassRuleSetPending:               source.BypassRuleSetPending,
-		BypassRuleSetPolicyVersion:         source.BypassRuleSetPolicyVersion,
-		BypassRuleSetExpectedPolicyVersion: source.BypassRuleSetExpectedPolicyVersion,
-		BypassRuleSetRetryCount:            source.BypassRuleSetRetryCount,
-		BypassRuleSetBackendState:          make(map[string]*EBPFBypassRuleSetBackendState, len(source.BypassRuleSetBackendState)),
-		UdpSessionCount:                    int64(source.UDPSessionCount),
+		SchemaVersion:         int32(source.SchemaVersion),
+		ObservedAt:            source.ObservedAt.UnixMilli(),
+		Tag:                   source.Tag,
+		State:                 source.State,
+		LocalEnabled:          source.LocalEnabled,
+		LocalDataPlane:        source.LocalDataPlane,
+		SharedEnabled:         source.SharedEnabled,
+		SharedDataPlane:       source.SharedDataPlane,
+		FakeIPICMPReply:       source.FakeIPICMPReply,
+		LastError:             source.LastError,
+		LastErrorAt:           optionalUnixMillis(source.LastErrorAt),
+		LastRecoveryAt:        optionalUnixMillis(source.LastRecoveryAt),
+		RecoveryPending:       source.RecoveryPending,
+		RecoveryUnrecoverable: source.RecoveryUnrecoverable,
+		NextRetryAt:           optionalUnixMillis(source.NextRetryAt),
+		LocalBypassRuleSet:    marshalEBPFBypassRuleSetDiagnostics(source.LocalBypassRuleSet),
+		SharedBypassRuleSet:   marshalEBPFBypassRuleSetDiagnostics(source.SharedBypassRuleSet),
+		UdpSessionCount:       int64(source.UDPSessionCount),
 		UdpNAT: &EBPFUDPNATDiagnostics{
 			ActiveSessions:                 int64(source.UDPNAT.ActiveSessions),
 			CreatedSessions:                source.UDPNAT.CreatedSessions,
@@ -140,11 +136,20 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 			IcmpEchoReply:  attachment.ICMPEchoReply,
 		})
 	}
-	for name, state := range source.BypassRuleSetBackendState {
-		destination.BypassRuleSetBackendState[name] = &EBPFBypassRuleSetBackendState{
-			Version: state.Version,
-			Known:   state.Known,
-		}
+	return destination
+}
+
+func marshalEBPFBypassRuleSetDiagnostics(source adapter.EBPFBypassRuleSetDiagnostics) *EBPFBypassRuleSetDiagnostics {
+	destination := &EBPFBypassRuleSetDiagnostics{
+		Consistent:            source.Consistent,
+		Pending:               source.Pending,
+		PolicyVersion:         source.PolicyVersion,
+		ExpectedPolicyVersion: source.ExpectedPolicyVersion,
+		RetryCount:            source.RetryCount,
+		BackendState:          make(map[string]*EBPFBypassRuleSetBackendState, len(source.BackendState)),
+	}
+	for name, state := range source.BackendState {
+		destination.BackendState[name] = &EBPFBypassRuleSetBackendState{Version: state.Version, Known: state.Known}
 	}
 	return destination
 }
