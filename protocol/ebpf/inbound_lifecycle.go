@@ -48,23 +48,7 @@ func (i *Inbound) startInbound() error {
 			return E.Cause(err, "resolve Android UID policy")
 		}
 	}
-	policy := i.localPolicy
-	policy.EnableBypassCIDR = i.localCgroupEnabled()
-	compiledPolicy, err := commonEBPF.CompilePolicy(commonEBPF.PolicyConfig{
-		EnableTCP:           i.enableTCP,
-		EnableUDP:           i.enableUDP,
-		Local:               policy,
-		SharedDNSMode:       toCommonDNSMode(i.sharedDNSMode),
-		SharedBypassPrivate: i.sharedBypassPrivate,
-		ForceInterceptIPv4:  i.fakeIPIPv4Prefix,
-		ForceInterceptIPv6:  i.fakeIPIPv6Prefix,
-		IncludeSourceCIDR:   i.sharedOptions.IncludeSourceCIDR,
-		ExcludeSourceCIDR:   i.sharedOptions.ExcludeSourceCIDR,
-		IncludeSourceMAC:    i.sharedIncludeMAC,
-		ExcludeSourceMAC:    i.sharedExcludeMAC,
-		LocalBypassPort:     i.localBypassPort,
-		SharedBypassPort:    i.sharedBypassPort,
-	})
+	compiledPolicy, err := i.compileActionPolicy()
 	if err != nil {
 		return E.Cause(err, "compile eBPF policy")
 	}
