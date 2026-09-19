@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/x/list"
+	"go4.org/netipx"
 )
 
 func (i *Inbound) startBypassRuleSets() error {
@@ -305,7 +306,11 @@ func (i *Inbound) refreshBypassRuleSetsLocked(startup bool) error {
 			prefixes = append(prefixes, ipSet.Prefixes()...)
 		}
 	}
-	return i.applyBypassCIDRPolicyLocked(i.compileBypassCIDRDecisions(prefixes))
+	policy, err := i.compileBypassCIDRDecisions(prefixes)
+	if err != nil {
+		return err
+	}
+	return i.applyBypassCIDRPolicyLocked(policy)
 }
 
 func (i *Inbound) refreshSharedBypassRuleSetsLocked(startup bool) error {
@@ -319,7 +324,11 @@ func (i *Inbound) refreshSharedBypassRuleSetsLocked(startup bool) error {
 			prefixes = append(prefixes, ipSet.Prefixes()...)
 		}
 	}
-	return i.applySharedBypassCIDRPolicyLocked(i.compileBypassCIDRDecisions(prefixes))
+	policy, err := i.compileBypassCIDRDecisions(prefixes)
+	if err != nil {
+		return err
+	}
+	return i.applySharedBypassCIDRPolicyLocked(policy)
 }
 
 func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy []commonEBPF.CIDRDecision) error {
@@ -481,19 +490,22 @@ func (i *Inbound) applyBypassCIDRPolicyLocked(policy []commonEBPF.CIDRDecision) 
 	return nil
 }
 
-func (i *Inbound) compileBypassCIDRDecisions(prefixes []netip.Prefix) []commonEBPF.CIDRDecision {
-	decisions := make([]commonEBPF.CIDRDecision, 0, len(prefixes))
-	seen := make(map[netip.Prefix]struct{}, len(prefixes))
+func (i *Inbound) compileBypassCIDRDecisions(prefixes []netip.Prefix) ([]commonEBPF.CIDRDecision, error) {
+	var builder netipx.IPSetBuilder
 	for _, prefix := range prefixes {
 		if !prefix.IsValid() {
 			continue
 		}
-		prefix = prefix.Masked()
-		if _, exists := seen[prefix]; exists {
-			continue
-		}
-		seen[prefix] = struct{}{}
+		builder.AddPrefix(prefix.Masked())
+	}
+	set, err := builder.IPSet()
+	if err != nil {
+		return nil, E.Cause(err, "compile eBPF bypass CIDR decisions")
+	}
+	canonical := set.Prefixes()
+	decisions := make([]commonEBPF.CIDRDecision, 0, len(canonical))
+	for _, prefix := range canonical {
 		decisions = append(decisions, commonEBPF.CIDRDecision{Prefix: prefix, Action: commonEBPF.DecisionPass})
 	}
-	return decisions
+	return decisions, nil
 }
