@@ -791,20 +791,29 @@ func (t *TLSOptions) Build() *option.OutboundTLSOptions {
 	if t == nil || !t.TLS {
 		return nil
 	}
-	return &option.OutboundTLSOptions{
-		Enabled:              t.TLS,
-		ServerName:           t.SNI,
-		Insecure:             t.SkipCertVerify,
-		CertificatePinSHA256: t.Fingerprint,
-		ALPN:                 t.ALPN,
-		UTLS:                 clashClientFingerprint(t.ClientFingerprint),
-		Certificate:          trimStringArray(strings.Split(t.CustomCAString, "\n")),
-		CertificatePath:      t.CustomCA,
-		ECH:                  t.ECHOpts.Build(),
-		Reality:              t.RealityOpts.Build(),
-		KernelTx:             t.KernelTx,
-		KernelRx:             t.KernelRx,
+	options := &option.OutboundTLSOptions{
+		Enabled:         t.TLS,
+		ServerName:      t.SNI,
+		Insecure:        t.SkipCertVerify,
+		ALPN:            t.ALPN,
+		UTLS:            clashClientFingerprint(t.ClientFingerprint),
+		Certificate:     trimStringArray(strings.Split(t.CustomCAString, "\n")),
+		CertificatePath: t.CustomCA,
+		ECH:             t.ECHOpts.Build(),
+		Reality:         t.RealityOpts.Build(),
+		KernelTx:        t.KernelTx,
+		KernelRx:        t.KernelRx,
 	}
+	if t.Fingerprint != "" {
+		certificateHash, err := parseCertificateSHA256(t.Fingerprint)
+		if err != nil {
+			// Keep an invalid pin fail-closed; Build cannot return a parse error.
+			options.CertificateSHA256 = badoption.Listable[[]byte]{[]byte(t.Fingerprint)}
+		} else {
+			options.CertificateSHA256 = badoption.Listable[[]byte]{certificateHash}
+		}
+	}
+	return options
 }
 
 type DialerOptions struct {

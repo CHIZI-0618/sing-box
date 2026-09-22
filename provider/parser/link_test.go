@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/sagernet/sing-box/option"
@@ -134,11 +135,12 @@ func TestParseV2RayLinkHostServerNameFallbackRequiresTLS(t *testing.T) {
 }
 
 func TestParseHysteria2LinkOptions(t *testing.T) {
-	outbound, err := ParseSubscriptionLink("hysteria2://password@192.0.2.1:443?sni=example.com&pinSHA256=AA:BB&mport=40000-50000")
+	certificateHash := strings.Repeat("00", 32)
+	outbound, err := ParseSubscriptionLink("hysteria2://password@192.0.2.1:443?sni=example.com&pinSHA256=" + certificateHash + "&mport=40000-50000")
 	require.NoError(t, err)
 
 	options := outbound.Options.(*option.Hysteria2OutboundOptions)
 	require.Equal(t, []string{"40000:50000"}, []string(options.ServerPorts))
 	require.Equal(t, "example.com", options.TLS.ServerName)
-	require.Equal(t, "AA:BB", options.TLS.CertificatePinSHA256)
+	require.Equal(t, []byte(strings.Repeat("\x00", 32)), options.TLS.CertificateSHA256[0])
 }

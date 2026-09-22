@@ -221,10 +221,23 @@ func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 }
 
 func RealTag(detour adapter.Outbound, network string) string {
+	return RealTagWithManager(nil, detour, network)
+}
+
+func RealTagWithManager(outboundManager adapter.OutboundManager, detour adapter.Outbound, network string) string {
 	for {
 		group, isGroup := detour.(adapter.OutboundGroup)
 		if !isGroup {
 			return detour.Tag()
+		}
+		if outboundManager != nil {
+			if nowGroup, hasNow := detour.(interface{ Now() string }); hasNow {
+				tag := nowGroup.Now()
+				if next, loaded := outboundManager.Outbound(tag); loaded {
+					detour = next
+					continue
+				}
+			}
 		}
 		detour = group.Selected(network)
 		if detour == nil {

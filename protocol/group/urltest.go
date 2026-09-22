@@ -41,6 +41,7 @@ type URLTest struct {
 	outbound.Adapter
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
+	connection                   adapter.ConnectionManager
 	logger                       log.ContextLogger
 	tags                         []string
 	link                         string
@@ -68,6 +69,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:                          ctx,
 		outbound:                     service.FromContext[adapter.OutboundManager](ctx),
+		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger,
 		tags:                         options.Outbounds,
 		link:                         options.URL,
@@ -342,6 +344,7 @@ func (s *URLTest) onProviderUpdated(tag string) error {
 	}
 	return nil
 }
+
 type URLTestGroup struct {
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
@@ -448,7 +451,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 	case N.NetworkTCP:
 		selectedOutbound := g.selectedOutboundTCP.Load()
 		if selectedOutbound != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, selectedOutbound)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTagWithManager(g.outbound, selectedOutbound, N.NetworkTCP)); history != nil {
 				minOutbound = selectedOutbound
 				minDelay = history.Delay
 			}
@@ -456,7 +459,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 	case N.NetworkUDP:
 		selectedOutbound := g.selectedOutboundUDP.Load()
 		if selectedOutbound != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, selectedOutbound)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTagWithManager(g.outbound, selectedOutbound, N.NetworkUDP)); history != nil {
 				minOutbound = selectedOutbound
 				minDelay = history.Delay
 			}
@@ -467,7 +470,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(RealTag(detour, network))
+		history := g.history.LoadURLTestHistory(RealTagWithManager(g.outbound, detour, network))
 		if history == nil {
 			continue
 		}
@@ -577,7 +580,7 @@ func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManag
 	testBatch.test(outbounds, link, interval, force)
 	b.Wait()
 	for _, outboundGroup := range testBatch.groups {
-		groupHistory := history.LoadURLTestHistory(RealTag(outboundGroup, N.NetworkTCP))
+		groupHistory := history.LoadURLTestHistory(RealTagWithManager(outboundManager, outboundGroup, N.NetworkTCP))
 		if groupHistory != nil {
 			testBatch.result[outboundGroup.Tag()] = groupHistory.Delay
 		}

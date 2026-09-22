@@ -15669,8 +15669,42 @@
         "client_key_path": {
           "type": "string"
         },
-        "certificate_pin_sha256": {
-          "type": "string"
+        "certificate_sha256": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  }
+                }
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    }
+                  }
+                ]
+              }
+            }
+          ]
         },
         "fragment": {
           "type": "boolean"
