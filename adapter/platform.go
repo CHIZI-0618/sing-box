@@ -100,6 +100,8 @@ type ConnectionOwner struct {
 	UserName            string
 	ProcessPath         string
 	AndroidPackageNames []string
+	ProcessPaths        []string
+	PackageNames        []string
 }
 
 type Notification struct {

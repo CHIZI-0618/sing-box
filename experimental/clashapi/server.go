@@ -126,7 +126,6 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 		r.Mount("/profile", profileRouter())
 		r.Mount("/cache", cacheRouter(ctx))
 		r.Mount("/dns", dnsRouter(s.dnsRouter))
-
 		s.setupMetaAPI(r)
 	})
 	if options.ExternalUI != "" {
