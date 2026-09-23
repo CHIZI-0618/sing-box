@@ -95,14 +95,6 @@ func overrideOutbounds(outbounds []option.Outbound, overrideDialerOptions *optio
 			options := outbound.Options.(*option.AnyTLSOutboundOptions)
 			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions, tags, providerTag)
 			options.OutboundTLSOptionsContainer.TLS = overrideTLSOption(options.OutboundTLSOptionsContainer.TLS, overrideTLSOptions)
-			if overrideAnyTLSOptions != nil {
-				if overrideAnyTLSOptions.ClientMetadata != nil {
-					options.ClientMetadata = overrideAnyTLSOptions.ClientMetadata
-				}
-				if overrideAnyTLSOptions.DisableReuse != nil {
-					options.DisableReuse = *overrideAnyTLSOptions.DisableReuse
-				}
-			}
 			outbound.Options = options
 		case C.TypeShadowsocks:
 			options := outbound.Options.(*option.ShadowsocksOutboundOptions)
@@ -228,9 +220,6 @@ func overrideTLSOption(options *option.OutboundTLSOptions, overrideTLSOptions *o
 	}
 	if overrideTLSOptions.ServerName != nil {
 		options.ServerName = *overrideTLSOptions.ServerName
-	}
-	if overrideTLSOptions.CertificateServerName != nil {
-		options.CertificateServerName = *overrideTLSOptions.CertificateServerName
 	}
 	if overrideTLSOptions.Insecure != nil {
 		options.Insecure = *overrideTLSOptions.Insecure

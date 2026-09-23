@@ -732,7 +732,7 @@ func parseHysteria2Link(link string) (option.Outbound, error) {
 		case "sni":
 			TLSOptions.ServerName = value
 		case "pinSHA256":
-			TLSOptions.CertificatePinSHA256 = value
+			TLSOptions.CertificateSHA256 = parseCertificateSHA256(value)
 		case "insecure", "skip-cert-verify":
 			if value == "1" || value == "true" {
 				TLSOptions.Insecure = true
