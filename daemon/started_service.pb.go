@@ -8459,8 +8459,6 @@ type EBPFCounters struct {
 	TcSharedFragmentPasses        uint64                 `protobuf:"varint,6,opt,name=tcSharedFragmentPasses,proto3" json:"tcSharedFragmentPasses,omitempty"`
 	TokenReservationFailures      uint64                 `protobuf:"varint,7,opt,name=tokenReservationFailures,proto3" json:"tokenReservationFailures,omitempty"`
 	RewriteFailures               uint64                 `protobuf:"varint,8,opt,name=rewriteFailures,proto3" json:"rewriteFailures,omitempty"`
-	SharedIngressPasses           uint64                 `protobuf:"varint,9,opt,name=sharedIngressPasses,proto3" json:"sharedIngressPasses,omitempty"`
-	SharedEgressPasses            uint64                 `protobuf:"varint,10,opt,name=sharedEgressPasses,proto3" json:"sharedEgressPasses,omitempty"`
 	SharedIngressFragmentPasses   uint64                 `protobuf:"varint,11,opt,name=sharedIngressFragmentPasses,proto3" json:"sharedIngressFragmentPasses,omitempty"`
 	SharedEgressFragmentPasses    uint64                 `protobuf:"varint,12,opt,name=sharedEgressFragmentPasses,proto3" json:"sharedEgressFragmentPasses,omitempty"`
 	SharedReconcileFailures       uint64                 `protobuf:"varint,13,opt,name=sharedReconcileFailures,proto3" json:"sharedReconcileFailures,omitempty"`
@@ -8556,20 +8554,6 @@ func (x *EBPFCounters) GetTokenReservationFailures() uint64 {
 func (x *EBPFCounters) GetRewriteFailures() uint64 {
 	if x != nil {
 		return x.RewriteFailures
-	}
-	return 0
-}
-
-func (x *EBPFCounters) GetSharedIngressPasses() uint64 {
-	if x != nil {
-		return x.SharedIngressPasses
-	}
-	return 0
-}
-
-func (x *EBPFCounters) GetSharedEgressPasses() uint64 {
-	if x != nil {
-		return x.SharedEgressPasses
 	}
 	return 0
 }
@@ -9473,7 +9457,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x05count\x18\x01 \x01(\x03R\x05count\x12\x12\n" +
 	"\x04peak\x18\x02 \x01(\x03R\x04peak\x12\x18\n" +
 	"\aevicted\x18\x03 \x01(\x03R\aevicted\x12*\n" +
-	"\x10capacityRejected\x18\x04 \x01(\x03R\x10capacityRejected\"\x94\b\n" +
+	"\x10capacityRejected\x18\x04 \x01(\x03R\x10capacityRejected\"\xbe\a\n" +
 	"\fEBPFCounters\x12:\n" +
 	"\x18assignmentLookupFailures\x18\x01 \x01(\x04R\x18assignmentLookupFailures\x126\n" +
 	"\x16tcSocketLookupFailures\x18\x02 \x01(\x04R\x16tcSocketLookupFailures\x12.\n" +
@@ -9482,10 +9466,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x15tcLocalFragmentPasses\x18\x05 \x01(\x04R\x15tcLocalFragmentPasses\x126\n" +
 	"\x16tcSharedFragmentPasses\x18\x06 \x01(\x04R\x16tcSharedFragmentPasses\x12:\n" +
 	"\x18tokenReservationFailures\x18\a \x01(\x04R\x18tokenReservationFailures\x12(\n" +
-	"\x0frewriteFailures\x18\b \x01(\x04R\x0frewriteFailures\x120\n" +
-	"\x13sharedIngressPasses\x18\t \x01(\x04R\x13sharedIngressPasses\x12.\n" +
-	"\x12sharedEgressPasses\x18\n" +
-	" \x01(\x04R\x12sharedEgressPasses\x12@\n" +
+	"\x0frewriteFailures\x18\b \x01(\x04R\x0frewriteFailures\x12@\n" +
 	"\x1bsharedIngressFragmentPasses\x18\v \x01(\x04R\x1bsharedIngressFragmentPasses\x12>\n" +
 	"\x1asharedEgressFragmentPasses\x18\f \x01(\x04R\x1asharedEgressFragmentPasses\x128\n" +
 	"\x17sharedReconcileFailures\x18\r \x01(\x04R\x17sharedReconcileFailures\x12*\n" +
@@ -9494,7 +9475,9 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x10recoveryFailures\x18\x10 \x01(\x04R\x10recoveryFailures\x12,\n" +
 	"\x11fakeIPICMPReplies\x18\x11 \x01(\x04R\x11fakeIPICMPReplies\x124\n" +
 	"\x15fakeIPICMPPassThrough\x18\x12 \x01(\x04R\x15fakeIPICMPPassThrough\x12D\n" +
-	"\x1dfakeIPICMPRewriteFailureDrops\x18\x13 \x01(\x04R\x1dfakeIPICMPRewriteFailureDrops\"\xa1\x03\n" +
+	"\x1dfakeIPICMPRewriteFailureDrops\x18\x13 \x01(\x04R\x1dfakeIPICMPRewriteFailureDropsJ\x04\b\t\x10\n" +
+	"J\x04\b\n" +
+	"\x10\v\"\xa1\x03\n" +
 	"\x15EBPFUDPNATDiagnostics\x12&\n" +
 	"\x0eactiveSessions\x18\x01 \x01(\x03R\x0eactiveSessions\x12(\n" +
 	"\x0fcreatedSessions\x18\x02 \x01(\x04R\x0fcreatedSessions\x12,\n" +
