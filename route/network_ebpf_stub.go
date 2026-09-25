@@ -2,4 +2,5 @@
 
 package route
 
+//nolint:unused // storage type for the build-tagged NetworkManager field
 type ebpfSelfBypassState struct{}
