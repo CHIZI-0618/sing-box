@@ -15,13 +15,25 @@ type warningLimiter struct {
 	access      sync.Mutex
 	next        time.Time
 	suppressed  uint64
-	lastMessage string
+	lastMessage []any
 	lastAt      time.Time
 }
 
 func (l *warningLimiter) allow(now time.Time) (bool, uint64) {
 	l.access.Lock()
 	defer l.access.Unlock()
+	return l.allowLocked(now)
+}
+
+func (l *warningLimiter) observe(now time.Time, message []any) (bool, uint64) {
+	l.access.Lock()
+	defer l.access.Unlock()
+	l.lastMessage = message
+	l.lastAt = now
+	return l.allowLocked(now)
+}
+
+func (l *warningLimiter) allowLocked(now time.Time) (bool, uint64) {
 	if now.Before(l.next) {
 		l.suppressed++
 		return false, 0
@@ -46,7 +58,7 @@ type contextErrorLogger interface {
 // seconds ago even if the log line itself was suppressed as a repeat.
 func (l *warningLimiter) record(now time.Time, message ...any) {
 	l.access.Lock()
-	l.lastMessage = fmt.Sprint(message...)
+	l.lastMessage = message
 	l.lastAt = now
 	l.access.Unlock()
 }
@@ -55,14 +67,16 @@ func (l *warningLimiter) record(now time.Time, message ...any) {
 // The zero time means nothing has ever been recorded.
 func (l *warningLimiter) last() (string, time.Time) {
 	l.access.Lock()
-	defer l.access.Unlock()
-	return l.lastMessage, l.lastAt
+	message, at := l.lastMessage, l.lastAt
+	l.access.Unlock()
+	if at.IsZero() {
+		return "", at
+	}
+	return fmt.Sprint(message...), at
 }
 
 func (l *warningLimiter) warn(logger warningLogger, message ...any) {
-	now := time.Now()
-	l.record(now, message...)
-	allowed, suppressed := l.allow(now)
+	allowed, suppressed := l.observe(time.Now(), message)
 	if !allowed {
 		return
 	}
@@ -73,9 +87,7 @@ func (l *warningLimiter) warn(logger warningLogger, message ...any) {
 }
 
 func (l *warningLimiter) errorContext(logger contextErrorLogger, ctx context.Context, message ...any) {
-	now := time.Now()
-	l.record(now, message...)
-	allowed, suppressed := l.allow(now)
+	allowed, suppressed := l.observe(time.Now(), message)
 	if !allowed {
 		return
 	}

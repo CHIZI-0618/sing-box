@@ -552,7 +552,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	})
 
 	var lastErrorAt time.Time
-	for _, limiter := range []*warningLimiter{
+	limiters := []*warningLimiter{
 		&i.interfaceWarnings.inventory,
 		&i.interfaceWarnings.defaultInterface,
 		&i.interfaceWarnings.topology,
@@ -566,7 +566,18 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		&i.udpWarnings.originalDestination,
 		&i.udpWarnings.cleanup,
 		&i.udpWarnings.replySocketCapacity,
-	} {
+	}
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		limiters = append(limiters,
+			&shared.tcpWarnings,
+			&shared.janitorWarnings,
+			&shared.udpWarnings.packetInfo,
+			&shared.udpWarnings.originalDestination,
+			&shared.udpWarnings.cleanup,
+			&shared.udpWarnings.replySocketCapacity,
+		)
+	}
+	for _, limiter := range limiters {
 		message, at := limiter.last()
 		if at.After(lastErrorAt) {
 			lastErrorAt = at

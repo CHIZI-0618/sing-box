@@ -379,6 +379,18 @@ func TestDiagnosticsLastErrorPicksTheMostRecentAcrossCategories(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsLastErrorIncludesSharedRewriteWarnings(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.policyWarnings.record(time.Now().Add(-time.Minute), "older: policy issue")
+	shared := &sharedRewrite{}
+	shared.udpWarnings.originalDestination.record(time.Now(), "newer: shared UDP issue")
+	inbound.setSharedRewrite(shared)
+	diagnostics := inbound.Diagnostics()
+	if diagnostics.LastError != "newer: shared UDP issue" {
+		t.Fatalf("LastError = %q, want the shared packet-rewrite warning", diagnostics.LastError)
+	}
+}
+
 // TestDiagnosticsWriteJSONRoundTrips proves the JSON writer actually
 // produces valid, complete JSON matching the struct's fields -- not just
 // that it doesn't panic.
