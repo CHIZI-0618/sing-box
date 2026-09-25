@@ -61,3 +61,32 @@ func TestWarningLimitersAreIndependent(t *testing.T) {
 		t.Fatalf("second limiter inherited state: allowed=%v suppressed=%d", allowed, suppressed)
 	}
 }
+
+type countingWarningLogger struct {
+	count int
+}
+
+func (l *countingWarningLogger) Warn(...any) {
+	l.count++
+}
+
+func TestWarningLimiterRecordsSuppressedWarnings(t *testing.T) {
+	var limiter warningLimiter
+	var logger countingWarningLogger
+	limiter.warn(&logger, "first: ", 1)
+	limiter.warn(&logger, "second: ", 2)
+	if logger.count != 1 {
+		t.Fatalf("logged %d warnings, want 1", logger.count)
+	}
+	message, at := limiter.last()
+	if message != "second: 2" || at.IsZero() {
+		t.Fatalf("last() = %q at %v, want the suppressed warning", message, at)
+	}
+}
+
+func TestWarningLimiterLastIsEmptyBeforeAnyWarning(t *testing.T) {
+	var limiter warningLimiter
+	if message, at := limiter.last(); message != "" || !at.IsZero() {
+		t.Fatalf("last() = %q at %v, want empty", message, at)
+	}
+}

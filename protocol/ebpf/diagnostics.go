@@ -399,8 +399,6 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 			TCSharedFragmentPasses:        diagnostics.Counters.TCSharedFragmentPasses,
 			TokenReservationFailures:      diagnostics.Counters.TokenReservationFailures,
 			RewriteFailures:               diagnostics.Counters.RewriteFailures,
-			SharedIngressPasses:           diagnostics.Counters.SharedIngressPasses,
-			SharedEgressPasses:            diagnostics.Counters.SharedEgressPasses,
 			SharedIngressFragmentPasses:   diagnostics.Counters.SharedIngressFragmentPasses,
 			SharedEgressFragmentPasses:    diagnostics.Counters.SharedEgressFragmentPasses,
 			SharedReconcileFailures:       diagnostics.Counters.SharedReconcileFailures,
@@ -552,7 +550,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	})
 
 	var lastErrorAt time.Time
-	for _, limiter := range []*warningLimiter{
+	limiters := []*warningLimiter{
 		&i.interfaceWarnings.inventory,
 		&i.interfaceWarnings.defaultInterface,
 		&i.interfaceWarnings.topology,
@@ -566,7 +564,18 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		&i.udpWarnings.originalDestination,
 		&i.udpWarnings.cleanup,
 		&i.udpWarnings.replySocketCapacity,
-	} {
+	}
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		limiters = append(limiters,
+			&shared.tcpWarnings,
+			&shared.janitorWarnings,
+			&shared.udpWarnings.packetInfo,
+			&shared.udpWarnings.originalDestination,
+			&shared.udpWarnings.cleanup,
+			&shared.udpWarnings.replySocketCapacity,
+		)
+	}
+	for _, limiter := range limiters {
 		message, at := limiter.last()
 		if at.After(lastErrorAt) {
 			lastErrorAt = at
@@ -676,13 +685,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		// These counters were added after the original alpha.9 library API.
 		// Use an optional capability interface so a sing-box binary built with
 		// the older library remains loadable during the dependency update window.
-		if stats, ok := any(sharedRewriteBackend).(sharedNetworkPassStats); ok {
-			if passes, err := stats.IngressPasses(); err == nil {
-				diagnostics.Counters.SharedIngressPasses = passes
-			}
-			if passes, err := stats.EgressPasses(); err == nil {
-				diagnostics.Counters.SharedEgressPasses = passes
-			}
+		if stats, ok := any(sharedRewriteBackend).(sharedNetworkFragmentPassStats); ok {
 			if passes, err := stats.IngressFragmentPasses(); err == nil {
 				diagnostics.Counters.SharedIngressFragmentPasses = passes
 			}
@@ -710,9 +713,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	return diagnostics
 }
 
-type sharedNetworkPassStats interface {
-	IngressPasses() (uint64, error)
-	EgressPasses() (uint64, error)
+type sharedNetworkFragmentPassStats interface {
 	IngressFragmentPasses() (uint64, error)
 	EgressFragmentPasses() (uint64, error)
 }
@@ -844,12 +845,11 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 	))
 	lines = append(lines, fmt.Sprintf(
 		"Counters: assignment_lookup_failures=%d tc_socket_lookup_failures=%d tc_sk_assign_failures=%d tc_assignment_update_failures=%d tc_local_fragment_passes=%d tc_shared_fragment_passes=%d token_reservation_failures=%d rewrite_failures=%d "+
-			"shared_ingress_passes=%d shared_egress_passes=%d shared_ingress_fragment_passes=%d shared_egress_fragment_passes=%d "+
+			"shared_ingress_fragment_passes=%d shared_egress_fragment_passes=%d "+
 			"shared_reconcile_failures=%d recovery_attempts=%d recovery_successes=%d recovery_failures=%d",
 		d.Counters.AssignmentLookupFailures, d.Counters.TCSocketLookupFailures, d.Counters.TCSKAssignFailures, d.Counters.TCAssignmentUpdateFailures,
 		d.Counters.TCLocalFragmentPasses, d.Counters.TCSharedFragmentPasses,
 		d.Counters.TokenReservationFailures, d.Counters.RewriteFailures,
-		d.Counters.SharedIngressPasses, d.Counters.SharedEgressPasses,
 		d.Counters.SharedIngressFragmentPasses, d.Counters.SharedEgressFragmentPasses,
 		d.Counters.SharedReconcileFailures, d.Counters.RecoveryAttempts, d.Counters.RecoverySuccesses, d.Counters.RecoveryFailures,
 	))

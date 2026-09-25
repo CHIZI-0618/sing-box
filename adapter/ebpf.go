@@ -148,8 +148,6 @@ type EBPFCounters struct {
 	TCSharedFragmentPasses        uint64
 	TokenReservationFailures      uint64
 	RewriteFailures               uint64
-	SharedIngressPasses           uint64
-	SharedEgressPasses            uint64
 	SharedIngressFragmentPasses   uint64
 	SharedEgressFragmentPasses    uint64
 	SharedReconcileFailures       uint64
