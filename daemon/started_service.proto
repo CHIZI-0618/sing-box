@@ -933,8 +933,7 @@ message EBPFCounters {
   uint64 tcSharedFragmentPasses = 6;
   uint64 tokenReservationFailures = 7;
   uint64 rewriteFailures = 8;
-  uint64 sharedIngressPasses = 9;
-  uint64 sharedEgressPasses = 10;
+  reserved 9, 10;
   uint64 sharedIngressFragmentPasses = 11;
   uint64 sharedEgressFragmentPasses = 12;
   uint64 sharedReconcileFailures = 13;
