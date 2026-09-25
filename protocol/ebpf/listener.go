@@ -51,7 +51,7 @@ func (i *Inbound) newInternalListener(
 		DisablePacketOutput: true,
 		DisableLog:          true,
 		SocketControl: control.Append(
-			control.UDPSocketBuffer(listener.UDPSocketBufferSize()),
+			listener.UDPSocketBufferControl(),
 			i.socketControl(ipv6Listener),
 		),
 	})

@@ -299,7 +299,7 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, erro
 	if source.Addr().Is4() {
 		network = "udp4"
 	}
-	listenConfig := net.ListenConfig{Control: control.UDPSocketBuffer(listener.UDPSocketBufferSize())}
+	listenConfig := net.ListenConfig{Control: listener.UDPSocketBufferControl()}
 	listenConfig.Control = control.Append(listenConfig.Control, func(_ string, _ string, rawConn syscall.RawConn) error {
 		err := control.Raw(rawConn, func(fd uintptr) error {
 			if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
