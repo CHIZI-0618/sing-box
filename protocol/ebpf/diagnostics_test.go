@@ -379,6 +379,18 @@ func TestDiagnosticsLastErrorPicksTheMostRecentAcrossCategories(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsLastErrorIncludesSharedRewriteWarnings(t *testing.T) {
+	inbound := &Inbound{}
+	inbound.policyWarnings.record(time.Now().Add(-time.Minute), "older: policy issue")
+	shared := &sharedRewrite{}
+	shared.udpWarnings.originalDestination.record(time.Now(), "newer: shared UDP issue")
+	inbound.setSharedRewrite(shared)
+	diagnostics := inbound.Diagnostics()
+	if diagnostics.LastError != "newer: shared UDP issue" {
+		t.Fatalf("LastError = %q, want the shared packet-rewrite warning", diagnostics.LastError)
+	}
+}
+
 // TestDiagnosticsWriteJSONRoundTrips proves the JSON writer actually
 // produces valid, complete JSON matching the struct's fields -- not just
 // that it doesn't panic.
@@ -411,10 +423,15 @@ func TestDiagnosticsWriteTextIncludesTheKeyFields(t *testing.T) {
 		"Tag:", "State:", "Attachments:", "Recovery pending:", "UDP sessions:", "UDP NAT:", "UDP reply sockets:",
 		"tc_socket_lookup_failures=", "tc_sk_assign_failures=", "tc_assignment_update_failures=",
 		"tc_local_fragment_passes=", "tc_shared_fragment_passes=",
-		"shared_ingress_passes=", "shared_egress_passes=", "shared_ingress_fragment_passes=", "shared_egress_fragment_passes=",
+		"shared_ingress_fragment_passes=", "shared_egress_fragment_passes=",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text output missing %q; got:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"shared_ingress_passes=", "shared_egress_passes="} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("text output still reports removed counter %q; got:\n%s", unwanted, text)
 		}
 	}
 }

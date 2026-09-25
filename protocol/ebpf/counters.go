@@ -31,8 +31,6 @@ type EBPFCounters struct {
 	// Native packet-rewrite counters are zero when that backend is disabled.
 	TokenReservationFailures    uint64 `json:"token_reservation_failures"`
 	RewriteFailures             uint64 `json:"rewrite_failures"`
-	SharedIngressPasses         uint64 `json:"shared_ingress_passes"`
-	SharedEgressPasses          uint64 `json:"shared_egress_passes"`
 	SharedIngressFragmentPasses uint64 `json:"shared_ingress_fragment_passes"`
 	SharedEgressFragmentPasses  uint64 `json:"shared_egress_fragment_passes"`
 	SharedReconcileFailures     uint64 `json:"shared_reconcile_failures"`

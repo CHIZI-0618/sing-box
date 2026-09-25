@@ -138,8 +138,6 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 			TcSharedFragmentPasses:        source.Counters.TCSharedFragmentPasses,
 			TokenReservationFailures:      source.Counters.TokenReservationFailures,
 			RewriteFailures:               source.Counters.RewriteFailures,
-			SharedIngressPasses:           source.Counters.SharedIngressPasses,
-			SharedEgressPasses:            source.Counters.SharedEgressPasses,
 			SharedIngressFragmentPasses:   source.Counters.SharedIngressFragmentPasses,
 			SharedEgressFragmentPasses:    source.Counters.SharedEgressFragmentPasses,
 			SharedReconcileFailures:       source.Counters.SharedReconcileFailures,
