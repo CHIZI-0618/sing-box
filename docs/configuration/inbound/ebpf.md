@@ -75,13 +75,6 @@ TC filter priority from 1 through 65535. Default is `1`. Change it only when
 coordinating with other filters. The default permits TCX when supported; a
 custom priority uses `clsact` so numeric ordering remains meaningful.
 
-### bypass_rule_set
-
-Compatibility shorthand for applying the same destination IP rule sets to both
-enabled paths. `local.bypass_rule_set` and `shared.bypass_rule_set` are still
-independent and are added to this common list for their respective path.
-Duplicate rule-set tags are ignored.
-
 ### fakeip_icmp
 
 | Value | Behavior |
@@ -259,9 +252,8 @@ Destination port ranges to bypass, in inclusive `start:end` form.
 
 Safety and service-traffic bypasses run first. FakeIP prefixes then force
 interception. DNS mode and local UID/shared source selection run before port,
-private-address, and the path-specific rule-set bypass. The compatibility
-top-level rule set is applied to both enabled paths, while path-specific
-rule-set policies remain independent. Shared CIDR and MAC includes are OR'ed;
+private-address, and the path-specific rule-set bypass. Path-specific rule-set
+policies remain independent. Shared CIDR and MAC includes are OR'ed;
 any matching exclude selector takes precedence.
 
 ## Diagnostics
@@ -282,7 +274,7 @@ and a network generation that increments at managed handover boundaries.
 
 The diagnostics response carries a response-level `schemaVersion`, including
 when no eBPF inbound is running. Clients should use that value to version the
-whole response; the per-inbound copy is retained for older clients.
+whole response.
 
 See [eBPF troubleshooting](/manual/misc/ebpf-troubleshooting/) for commands and
 counter interpretation.

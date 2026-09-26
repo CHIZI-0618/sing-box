@@ -7783,7 +7783,6 @@ func (x *EBPFMapDiagnostics) GetError() string {
 
 type EBPFInboundDiagnostics struct {
 	state                        protoimpl.MessageState         `protogen:"open.v1"`
-	SchemaVersion                int32                          `protobuf:"varint,1,opt,name=schemaVersion,proto3" json:"schemaVersion,omitempty"`
 	ObservedAt                   int64                          `protobuf:"varint,2,opt,name=observedAt,proto3" json:"observedAt,omitempty"`
 	Tag                          string                         `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
 	State                        string                         `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
@@ -7858,13 +7857,6 @@ func (x *EBPFInboundDiagnostics) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EBPFInboundDiagnostics.ProtoReflect.Descriptor instead.
 func (*EBPFInboundDiagnostics) Descriptor() ([]byte, []int) {
 	return file_daemon_started_service_proto_rawDescGZIP(), []int{107}
-}
-
-func (x *EBPFInboundDiagnostics) GetSchemaVersion() int32 {
-	if x != nil {
-		return x.SchemaVersion
-	}
-	return 0
 }
 
 func (x *EBPFInboundDiagnostics) GetObservedAt() int64 {
@@ -9376,9 +9368,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\aentries\x18\b \x01(\rR\aentries\x12\x1c\n" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
-	" \x01(\tR\x05error\"\x8b\x11\n" +
-	"\x16EBPFInboundDiagnostics\x12$\n" +
-	"\rschemaVersion\x18\x01 \x01(\x05R\rschemaVersion\x12\x1e\n" +
+	" \x01(\tR\x05error\"\xeb\x10\n" +
+	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
 	"observedAt\x12\x10\n" +
@@ -9428,7 +9419,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
 	"\x14_tcLastHealthCheckAtB\x14\n" +
-	"\x12_tcLastReconcileAt\"\xdb\x01\n" +
+	"\x12_tcLastReconcileAtJ\x04\b\x01\x10\x02\"\xdb\x01\n" +
 	"\x19EBPFAttachmentDiagnostics\x12$\n" +
 	"\rinterfaceName\x18\x01 \x01(\tR\rinterfaceName\x12&\n" +
 	"\x0einterfaceIndex\x18\x02 \x01(\x05R\x0einterfaceIndex\x12\x12\n" +
