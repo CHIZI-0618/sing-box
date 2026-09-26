@@ -18,8 +18,7 @@ func (s *StartedService) GetEBPFDiagnostics(_ context.Context, _ *emptypb.Empty)
 	}
 	// Keep the response-level schema version available even when no eBPF
 	// inbound is running. It versions the complete response, including the
-	// process-wide kernel runtime section; each inbound retains a compatibility
-	// copy for clients that predate this response-level field.
+	// process-wide kernel runtime section.
 	response := &EBPFDiagnosticsResponse{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion}
 	if s.instance.inboundManager == nil {
 		return response, nil
@@ -74,7 +73,6 @@ func marshalEBPFKernelRuntime(source adapter.EBPFKernelRuntimeDiagnostics) *EBPF
 
 func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundDiagnostics {
 	destination := &EBPFInboundDiagnostics{
-		SchemaVersion:                int32(source.SchemaVersion),
 		ObservedAt:                   source.ObservedAt.UnixMilli(),
 		Tag:                          source.Tag,
 		State:                        source.State,

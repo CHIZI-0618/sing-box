@@ -849,7 +849,7 @@ message EBPFMapDiagnostics {
 }
 
 message EBPFInboundDiagnostics {
-  int32 schemaVersion = 1;
+  reserved 1;
   int64 observedAt = 2;
   string tag = 3;
   string state = 4;

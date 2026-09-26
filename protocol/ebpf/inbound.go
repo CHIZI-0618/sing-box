@@ -376,10 +376,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 		return nil
 	}
-	if err = loadRuleSets("local", &inbound.bypassRuleSet, options.BypassRuleSet, options.Local.BypassRuleSet); err != nil {
+	if err = loadRuleSets("local", &inbound.bypassRuleSet, options.Local.BypassRuleSet); err != nil {
 		return nil, err
 	}
-	if err = loadRuleSets("shared", &inbound.sharedBypassRuleSet, options.BypassRuleSet, options.Shared.BypassRuleSet); err != nil {
+	if err = loadRuleSets("shared", &inbound.sharedBypassRuleSet, options.Shared.BypassRuleSet); err != nil {
 		return nil, err
 	}
 	udpTimeout := C.UDPTimeout

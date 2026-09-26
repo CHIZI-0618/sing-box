@@ -8,15 +8,11 @@ import (
 )
 
 type EBPFInboundOptions struct {
-	Network    NetworkList      `json:"network,omitempty"`
-	UDPTimeout UDPTimeoutCompat `json:"udp_timeout,omitempty"`
-	TCPriority EBPFTCPriority   `json:"tc_priority,omitempty"`
-	// BypassRuleSet is the compatibility shorthand for applying the same
-	// destination rule sets to every enabled data plane. Path-specific fields
-	// take effect in addition to this list.
-	BypassRuleSet badoption.Listable[string] `json:"bypass_rule_set,omitempty" reference:"rule_set"`
-	Local         EBPFLocalOptions           `json:"local,omitempty"`
-	Shared        EBPFSharedOptions          `json:"shared,omitempty"`
+	Network    NetworkList       `json:"network,omitempty"`
+	UDPTimeout UDPTimeoutCompat  `json:"udp_timeout,omitempty"`
+	TCPriority EBPFTCPriority    `json:"tc_priority,omitempty"`
+	Local      EBPFLocalOptions  `json:"local,omitempty"`
+	Shared     EBPFSharedOptions `json:"shared,omitempty"`
 	// FakeIPICMP, when "reply", answers ICMP Echo Request packets addressed to
 	// a FakeIP so a client's ping sees that address as reachable, without the
 	// request ever leaving this box. It applies to whichever of local/shared
