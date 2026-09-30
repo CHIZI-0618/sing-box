@@ -7677,6 +7677,7 @@ type EBPFMapDiagnostics struct {
 	Entries       uint32                 `protobuf:"varint,8,opt,name=entries,proto3" json:"entries,omitempty"`
 	Supported     bool                   `protobuf:"varint,9,opt,name=supported,proto3" json:"supported,omitempty"`
 	Error         string                 `protobuf:"bytes,10,opt,name=error,proto3" json:"error,omitempty"`
+	Pressure      string                 `protobuf:"bytes,11,opt,name=pressure,proto3" json:"pressure,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7781,6 +7782,13 @@ func (x *EBPFMapDiagnostics) GetError() string {
 	return ""
 }
 
+func (x *EBPFMapDiagnostics) GetPressure() string {
+	if x != nil {
+		return x.Pressure
+	}
+	return ""
+}
+
 type EBPFInboundDiagnostics struct {
 	state                        protoimpl.MessageState         `protogen:"open.v1"`
 	ObservedAt                   int64                          `protobuf:"varint,2,opt,name=observedAt,proto3" json:"observedAt,omitempty"`
@@ -7825,6 +7833,10 @@ type EBPFInboundDiagnostics struct {
 	TcLastHealthCheckAt          *int64                         `protobuf:"varint,47,opt,name=tcLastHealthCheckAt,proto3,oneof" json:"tcLastHealthCheckAt,omitempty"`
 	TcLastReconcileAt            *int64                         `protobuf:"varint,48,opt,name=tcLastReconcileAt,proto3,oneof" json:"tcLastReconcileAt,omitempty"`
 	TcNetworkGeneration          uint64                         `protobuf:"varint,49,opt,name=tcNetworkGeneration,proto3" json:"tcNetworkGeneration,omitempty"`
+	LocalUdpState                string                         `protobuf:"bytes,50,opt,name=localUdpState,proto3" json:"localUdpState,omitempty"`
+	LocalUdpRecoveryMode         string                         `protobuf:"bytes,51,opt,name=localUdpRecoveryMode,proto3" json:"localUdpRecoveryMode,omitempty"`
+	LocalUdpMapPressure          string                         `protobuf:"bytes,52,opt,name=localUdpMapPressure,proto3" json:"localUdpMapPressure,omitempty"`
+	LocalUdpNetworkGeneration    uint32                         `protobuf:"varint,53,opt,name=localUdpNetworkGeneration,proto3" json:"localUdpNetworkGeneration,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -8149,6 +8161,34 @@ func (x *EBPFInboundDiagnostics) GetTcLastReconcileAt() int64 {
 func (x *EBPFInboundDiagnostics) GetTcNetworkGeneration() uint64 {
 	if x != nil {
 		return x.TcNetworkGeneration
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpState() string {
+	if x != nil {
+		return x.LocalUdpState
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpRecoveryMode() string {
+	if x != nil {
+		return x.LocalUdpRecoveryMode
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpMapPressure() string {
+	if x != nil {
+		return x.LocalUdpMapPressure
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpNetworkGeneration() uint32 {
+	if x != nil {
+		return x.LocalUdpNetworkGeneration
 	}
 	return 0
 }
@@ -9354,7 +9394,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x1bEBPFMapOccupancyDiagnostics\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12.\n" +
 	"\x04maps\x18\x02 \x03(\v2\x1a.daemon.EBPFMapDiagnosticsR\x04maps\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x88\x02\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xa4\x02\n" +
 	"\x12EBPFMapDiagnostics\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -9368,7 +9408,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\aentries\x18\b \x01(\rR\aentries\x12\x1c\n" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
-	" \x01(\tR\x05error\"\xeb\x10\n" +
+	" \x01(\tR\x05error\x12\x1a\n" +
+	"\bpressure\x18\v \x01(\tR\bpressure\"\xb5\x12\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9414,7 +9455,11 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x0etcHealthStatus\x18. \x01(\tR\x0etcHealthStatus\x125\n" +
 	"\x13tcLastHealthCheckAt\x18/ \x01(\x03H\x03R\x13tcLastHealthCheckAt\x88\x01\x01\x121\n" +
 	"\x11tcLastReconcileAt\x180 \x01(\x03H\x04R\x11tcLastReconcileAt\x88\x01\x01\x120\n" +
-	"\x13tcNetworkGeneration\x181 \x01(\x04R\x13tcNetworkGenerationB\x0e\n" +
+	"\x13tcNetworkGeneration\x181 \x01(\x04R\x13tcNetworkGeneration\x12$\n" +
+	"\rlocalUdpState\x182 \x01(\tR\rlocalUdpState\x122\n" +
+	"\x14localUdpRecoveryMode\x183 \x01(\tR\x14localUdpRecoveryMode\x120\n" +
+	"\x13localUdpMapPressure\x184 \x01(\tR\x13localUdpMapPressure\x12<\n" +
+	"\x19localUdpNetworkGeneration\x185 \x01(\rR\x19localUdpNetworkGenerationB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
