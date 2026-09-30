@@ -122,6 +122,10 @@ type EBPFDiagnostics struct {
 	LocalUDPUserspaceCleanupMode string     `json:"local_udp_userspace_cleanup_mode,omitempty"`
 	LocalUDPStorageMode          string     `json:"local_udp_storage_mode,omitempty"`
 	LocalUDPTimeMode             string     `json:"local_udp_time_mode,omitempty"`
+	LocalUDPState                string     `json:"local_udp_state,omitempty"`
+	LocalUDPRecoveryMode         string     `json:"local_udp_recovery_mode,omitempty"`
+	LocalUDPMapPressure          string     `json:"local_udp_map_pressure,omitempty"`
+	LocalUDPNetworkGeneration    uint32     `json:"local_udp_network_generation,omitempty"`
 	SharedEnabled                bool       `json:"shared_enabled"`
 	SharedDataPlane              string     `json:"shared_data_plane,omitempty"`
 	FakeIPICMPReply              bool       `json:"fakeip_icmp_reply"`
@@ -343,6 +347,10 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		LocalUDPUserspaceCleanupMode: diagnostics.LocalUDPUserspaceCleanupMode,
 		LocalUDPStorageMode:          diagnostics.LocalUDPStorageMode,
 		LocalUDPTimeMode:             diagnostics.LocalUDPTimeMode,
+		LocalUDPState:                diagnostics.LocalUDPState,
+		LocalUDPRecoveryMode:         diagnostics.LocalUDPRecoveryMode,
+		LocalUDPMapPressure:          diagnostics.LocalUDPMapPressure,
+		LocalUDPNetworkGeneration:    diagnostics.LocalUDPNetworkGeneration,
 		SharedEnabled:                diagnostics.SharedEnabled,
 		SharedDataPlane:              diagnostics.SharedDataPlane,
 		FakeIPICMPReply:              diagnostics.FakeIPICMPReply,
@@ -480,6 +488,7 @@ func kernelRuntimeForAPI(observedAt time.Time, runtimeState commonEBPF.RuntimeSt
 			Entries:    item.Entries,
 			Supported:  item.Supported,
 			Error:      item.Error,
+			Pressure:   item.Pressure,
 		})
 	}
 	diagnostics := adapter.EBPFKernelRuntimeDiagnostics{
@@ -519,6 +528,11 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		diagnostics.LocalUDPUserspaceCleanupMode = backend.UDPUserspaceCleanupMode()
 		diagnostics.LocalUDPStorageMode = backend.UDPStorageMode()
 		diagnostics.LocalUDPTimeMode = backend.UDPTimeMode()
+		udpState := backend.UDPStateDiagnostics()
+		diagnostics.LocalUDPState = udpState.State
+		diagnostics.LocalUDPRecoveryMode = udpState.RecoveryMode
+		diagnostics.LocalUDPMapPressure = udpState.MapPressure
+		diagnostics.LocalUDPNetworkGeneration = udpState.NetworkGeneration
 	}
 	if i.sharedEnabled {
 		diagnostics.SharedDataPlane = i.sharedDataPlane
