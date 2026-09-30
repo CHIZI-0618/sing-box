@@ -67,7 +67,10 @@ Enabled transport protocols: `tcp`, `udp`, or both. Both are enabled by default.
 
 ### udp_timeout
 
-UDP session timeout. Default is `5m`.
+UDP session timeout. Default is `5m`. A JSON number is interpreted as seconds
+for compatibility; duration strings such as `30s` and `5m` are also accepted.
+The value must be at least `5s` and is rounded up to whole seconds for the
+kernel data plane.
 
 ### tc_priority
 
@@ -117,7 +120,23 @@ the root cgroup hook.
 | `respect_policy` | Apply UID/package selection first, then intercept. Default. |
 | `off` | Bypass. |
 
-This option applies only to enabled TCP/UDP traffic; it does not detect DoH or DoT.
+With `hijack`, port 53 is a global DNS control-plane rule: it remains intercepted
+even when `include_uid`, `include_package`, or another selector would otherwise
+pass the socket. Those selectors still apply to ordinary non-DNS traffic, so
+`hijack` does not disable package filtering or turn it into a global intercept.
+For example, this is valid and intercepts DNS from every socket while selecting
+only the listed package for other ports:
+
+```json
+{
+  "dns_mode": "hijack",
+  "include_package": ["org.example.browser"]
+}
+```
+
+`respect_policy` applies the UID/package selection before the port-53 rule.
+This option applies only to enabled TCP/UDP traffic; it does not detect DoH or
+DoT.
 
 ### local.ipv6
 
