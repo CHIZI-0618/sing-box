@@ -387,6 +387,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
 	}
+	if udpTimeout < 5*time.Second {
+		return nil, E.New("eBPF UDP timeout must be at least 5s: ", udpTimeout)
+	}
 	inbound.udpTimeout = udpTimeout
 	inbound.udpFragment = options.UDPFragment != nil && *options.UDPFragment
 	inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
