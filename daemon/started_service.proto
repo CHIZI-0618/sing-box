@@ -846,6 +846,7 @@ message EBPFMapDiagnostics {
   uint32 entries = 8;
   bool supported = 9;
   string error = 10;
+  string pressure = 11;
 }
 
 message EBPFInboundDiagnostics {
@@ -892,6 +893,10 @@ message EBPFInboundDiagnostics {
   optional int64 tcLastHealthCheckAt = 47;
   optional int64 tcLastReconcileAt = 48;
   uint64 tcNetworkGeneration = 49;
+  string localUdpState = 50;
+  string localUdpRecoveryMode = 51;
+  string localUdpMapPressure = 52;
+  uint32 localUdpNetworkGeneration = 53;
 }
 
 message EBPFAttachmentDiagnostics {
