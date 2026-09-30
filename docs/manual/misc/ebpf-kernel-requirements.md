@@ -85,6 +85,10 @@ When UDP socket-release attachment is unavailable, sing-box loads a bounded
 LRU cleanup variant that does not reference that hook. The selected object is
 loaded before interception is attached, so a missing helper or program type
 fails startup without relying on the kernel release.
+The optional socket-release capability probe is multi-only and never falls back
+to an unflagged attach that could replace an existing Android/netd owner. This
+probe denial therefore selects the LRU cleanup variant; it does not make the
+required cgroup data plane unavailable.
 
 TCP listener SOCKMAP support is optional. When `BPF_MAP_TYPE_SOCKMAP` can be
 created and the modern TC sections load successfully, it is used for wildcard
@@ -131,6 +135,8 @@ Capability checks select complete object variants before any path is enabled:
   failures can fall back to legacy exclusive attachment. Exclusive attachment
   can replace an existing single program and can still conflict with a later
   exclusive netd attach, so this fallback is observable in startup diagnostics.
+  The separate socket-release capability probe is multi-only and never uses
+  that exclusive fallback.
 
 Preflight object loading proves verifier acceptance and map ABI only. It does
 not prove that the service can attach to a specific cgroup or interface, acquire

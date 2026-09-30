@@ -71,6 +71,9 @@ connect4/connect6 和 UDP sendmsg/recvmsg 程序，并使用 `bpf_get_socket_coo
 map lookup/update/delete 与 current-UID helper。若 UDP socket-release hook 不可用，
 sing-box 会加载不引用该 hook 的有界 LRU 清理变体。所选对象会在开始接管前实际加载，
 因此缺少 helper 或程序类型会直接导致启动失败，而不依赖内核版本字符串。
+可选的 socket-release 能力探测只使用多程序挂载，不会回退到可能替换 Android/netd
+现有 owner 的无标志挂载。因此该探测被拒绝时只选择 LRU 清理变体，不会让必需的
+cgroup 数据面不可用。
 
 TCP listener 的 SOCKMAP 是可选能力。内核能够创建 `BPF_MAP_TYPE_SOCKMAP`
 且现代 TC section 能通过 verifier 时，优先使用它处理 wildcard listener；
@@ -106,7 +109,8 @@ hook 以及 `bpf_get_socket_cookie`、`bpf_get_current_uid_gid`。它们将 sock
   显式配置自定义优先级时直接选择 `clsact`。
 - cgroup 程序先请求多程序挂载；厂商内核返回兼容错误时可回退旧式独占挂载。独占
   挂载可能替换已有单程序，也可能与 netd 后续的独占挂载冲突，因此启动诊断会明确
-  报告实际采用的方式。
+  报告实际采用的方式。独立的 socket-release 能力探测只使用多程序挂载，不使用该
+  独占回退。
 
 预检对象加载只证明 verifier 接受对象且 map ABI 可用，并不能证明服务有权挂载到特定
 cgroup/接口、取得接口锁、安装路由、修改 sysctl 或与 Android netd 共存。这些操作只在

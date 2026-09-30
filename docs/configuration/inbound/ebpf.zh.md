@@ -64,7 +64,9 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
 
 ### udp_timeout
 
-UDP 会话超时，默认 `5m`。
+UDP 会话超时，默认 `5m`。为兼容旧格式，JSON 数字按秒解释；也可以使用
+`30s`、`5m` 等 duration 字符串。该值不能小于 `5s`，写入内核数据面时会向上
+取整到整秒。
 
 ### tc_priority
 
@@ -110,7 +112,21 @@ Android 厂商的 netd hook 可能造成挂载冲突。sing-box 优先尝试多�
 | `respect_policy` | 先应用 UID/包名筛选，再接管。默认值。 |
 | `off` | 绕过。 |
 
-此选项只处理已启用的 TCP/UDP 流量，不识别 DoH 或 DoT。
+`hijack` 下 53 端口属于全局 DNS 控制面规则：即使 `include_uid`、
+`include_package` 或其他筛选器对该 socket 的普通结果是放行，也仍会接管
+DNS。上述筛选仍然作用于普通的非 DNS 流量，因此 `hijack` 不会禁用包名筛选，
+也不会退化成全局接管。下面的组合是合法的：所有 socket 的 DNS 都会被接管，
+其他端口只接管列出的包：
+
+```json
+{
+  "dns_mode": "hijack",
+  "include_package": ["org.example.browser"]
+}
+```
+
+`respect_policy` 会先应用 UID/包名筛选，再处理 53 端口规则。该选项只处理已
+启用的 TCP/UDP 流量，不识别 DoH 或 DoT。
 
 ### local.ipv6
 
