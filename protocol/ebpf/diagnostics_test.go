@@ -119,7 +119,7 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 		TCLastReconcileAt:        &observedReconcile,
 		TCNetworkGeneration:      3,
 	})
-	if diagnostics.SchemaVersion != 10 || diagnostics.TCBackendMode != "socket_assign" ||
+	if diagnostics.SchemaVersion != adapter.EBPFDiagnosticsSchemaVersion || diagnostics.TCBackendMode != "socket_assign" ||
 		diagnostics.TCListenerLookupMode != "sockmap" || diagnostics.TCAttachmentMode != "tcx" ||
 		diagnostics.TCDeliveryInterfaceIndex != 42 || diagnostics.TCAttachmentCount != 2 ||
 		diagnostics.TCNetworkGeneration != 3 || diagnostics.TCLastHealthCheckAt == nil ||
@@ -130,12 +130,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 10 {
-		t.Fatalf("schema version = %d, want 10 after adding UDP runtime diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 11 {
+		t.Fatalf("schema version = %d, want 11 after adding policy epoch diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 10 {
-		t.Fatalf("diagnostics schema version = %d, want 10", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 11 {
+		t.Fatalf("diagnostics schema version = %d, want 11", diagnostics.SchemaVersion)
 	}
 }
 
