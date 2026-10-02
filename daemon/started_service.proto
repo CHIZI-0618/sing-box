@@ -897,6 +897,7 @@ message EBPFInboundDiagnostics {
   string localUdpRecoveryMode = 51;
   string localUdpMapPressure = 52;
   uint32 localUdpNetworkGeneration = 53;
+  EBPFPolicyEpochDiagnostics policyEpoch = 54;
 }
 
 message EBPFAttachmentDiagnostics {
@@ -959,4 +960,12 @@ message EBPFUDPNATDiagnostics {
   uint64 socketReleaseMatched = 6;
   uint64 pendingReleaseCapacityRejected = 7;
   uint64 releaseNotificationDrops = 8;
+}
+
+message EBPFPolicyEpochDiagnostics {
+  uint64 localConfirmed = 1;
+  uint64 localExpected = 2;
+  uint64 sharedConfirmed = 3;
+  uint64 sharedExpected = 4;
+  bool converged = 5;
 }
