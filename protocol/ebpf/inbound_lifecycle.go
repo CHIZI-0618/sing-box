@@ -15,9 +15,18 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-func (i *Inbound) Start(stage adapter.StartStage) error {
+func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
+		if scope == nil {
+			return E.New("missing eBPF inbound lifecycle scope")
+		}
+		// The adapter lifecycle owns cleanup through the child scope. Keep the
+		// explicit startup rollback below as well: it gives direct callers and
+		// failed starts an immediate retryable cleanup, while the scope remains
+		// the final owner when Box.Start aborts or the box is closed.
+		i.ctx = scope.Context()
+		scope.Add(i.Close)
 		if i.localCgroupEnabled() || i.sharedRewriteEnabled() {
 			if err := i.selectRedirectPrefixes(); err != nil {
 				return err
