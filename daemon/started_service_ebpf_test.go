@@ -24,10 +24,10 @@ type testEBPFInbound struct {
 	runtime     adapter.EBPFKernelRuntimeDiagnostics
 }
 
-func (i *testEBPFInbound) Start(adapter.StartStage) error { return nil }
-func (i *testEBPFInbound) Close() error                   { return nil }
-func (i *testEBPFInbound) Type() string                   { return "ebpf" }
-func (i *testEBPFInbound) Tag() string                    { return i.tag }
+func (i *testEBPFInbound) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (i *testEBPFInbound) Close() error                                   { return nil }
+func (i *testEBPFInbound) Type() string                                   { return "ebpf" }
+func (i *testEBPFInbound) Tag() string                                    { return i.tag }
 func (i *testEBPFInbound) EBPFDiagnostics() adapter.EBPFRuntimeDiagnostics {
 	return i.diagnostics
 }
@@ -38,18 +38,18 @@ func (i *testEBPFInbound) EBPFKernelRuntime() adapter.EBPFKernelRuntimeDiagnosti
 
 type testPlainInbound struct{ tag string }
 
-func (i *testPlainInbound) Start(adapter.StartStage) error { return nil }
-func (i *testPlainInbound) Close() error                   { return nil }
-func (i *testPlainInbound) Type() string                   { return "direct" }
-func (i *testPlainInbound) Tag() string                    { return i.tag }
+func (i *testPlainInbound) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (i *testPlainInbound) Close() error                                   { return nil }
+func (i *testPlainInbound) Type() string                                   { return "direct" }
+func (i *testPlainInbound) Tag() string                                    { return i.tag }
 
 type testInboundManager struct {
 	inbounds []adapter.Inbound
 }
 
-func (m *testInboundManager) Start(adapter.StartStage) error { return nil }
-func (m *testInboundManager) Close() error                   { return nil }
-func (m *testInboundManager) Inbounds() []adapter.Inbound    { return m.inbounds }
+func (m *testInboundManager) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (m *testInboundManager) Close() error                                   { return nil }
+func (m *testInboundManager) Inbounds() []adapter.Inbound                    { return m.inbounds }
 func (m *testInboundManager) Get(tag string) (adapter.Inbound, bool) {
 	for _, inbound := range m.inbounds {
 		if inbound.Tag() == tag {
