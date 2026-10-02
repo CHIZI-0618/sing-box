@@ -98,6 +98,17 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 					"TC": {Version: 3, Known: true},
 				},
 			},
+			LocalUDPState:             "release_notification",
+			LocalUDPRecoveryMode:      "reverse_index",
+			LocalUDPMapPressure:       "healthy",
+			LocalUDPNetworkGeneration: 17,
+			PolicyEpoch: adapter.EBPFPolicyEpochDiagnostics{
+				LocalConfirmed:  11,
+				LocalExpected:   12,
+				SharedConfirmed: 21,
+				SharedExpected:  21,
+				Converged:       false,
+			},
 			Counters: adapter.EBPFCounters{TCSharedFragmentPasses: 9},
 			UDPNAT: adapter.EBPFUDPNATDiagnostics{
 				ActiveSessions:           3,
@@ -116,7 +127,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 			MapOccupancy: adapter.EBPFMapOccupancyDiagnostics{
 				Status: "pass",
 				Maps: []adapter.EBPFMapDiagnostics{{
-					ID: 7, Name: "sb_tcp_redirect", Type: "LRUHash", MaxEntries: 4096, Entries: 3, Supported: true,
+					ID: 7, Name: "sb_tcp_redirect", Type: "LRUHash", MaxEntries: 4096, Entries: 3, Pressure: "healthy", Supported: true,
 				}},
 			},
 		}},
@@ -155,9 +166,19 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 		diagnostics.UdpNAT.CreatedSessions != 7 || diagnostics.UdpNAT.ReleaseNotificationDrops != 1 {
 		t.Fatalf("UDP NAT diagnostics = %+v", diagnostics.UdpNAT)
 	}
+	if diagnostics.LocalUdpState != "release_notification" || diagnostics.LocalUdpRecoveryMode != "reverse_index" ||
+		diagnostics.LocalUdpMapPressure != "healthy" || diagnostics.LocalUdpNetworkGeneration != 17 {
+		t.Fatalf("local UDP diagnostics = %+v", diagnostics)
+	}
+	if diagnostics.PolicyEpoch == nil || diagnostics.PolicyEpoch.LocalConfirmed != 11 ||
+		diagnostics.PolicyEpoch.LocalExpected != 12 || diagnostics.PolicyEpoch.SharedConfirmed != 21 ||
+		diagnostics.PolicyEpoch.SharedExpected != 21 || diagnostics.PolicyEpoch.Converged {
+		t.Fatalf("policy epoch diagnostics = %+v", diagnostics.PolicyEpoch)
+	}
 	if response.KernelRuntime == nil || len(response.KernelRuntime.Programs) != 1 ||
 		response.KernelRuntime.Programs[0].Id != 42 || response.KernelRuntime.MapOccupancy == nil ||
-		len(response.KernelRuntime.MapOccupancy.Maps) != 1 || response.KernelRuntime.MapOccupancy.Maps[0].Entries != 3 {
+		len(response.KernelRuntime.MapOccupancy.Maps) != 1 || response.KernelRuntime.MapOccupancy.Maps[0].Entries != 3 ||
+		response.KernelRuntime.MapOccupancy.Maps[0].Pressure != "healthy" {
 		t.Fatalf("kernel runtime = %+v", response.KernelRuntime)
 	}
 }
