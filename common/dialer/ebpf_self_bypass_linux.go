@@ -48,7 +48,7 @@ func bindEBPFSelfBypassConnLifecycle(networkManager adapter.NetworkManager, conn
 	if err != nil {
 		return conn
 	}
-	return &selfBypassConn{Conn: conn, tracker: tracker, rawConn: rawConn}
+	return &selfBypassConn{Conn: conn, cleanup: EBPFSelfBypassCleanup(networkManager, rawConn), rawConn: rawConn}
 }
 
 func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager, conn net.PacketConn) net.PacketConn {
@@ -70,18 +70,19 @@ func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager
 	if err != nil {
 		return conn
 	}
-	return &selfBypassPacketConn{PacketConn: conn, tracker: tracker, rawConn: rawConn}
+	return &selfBypassPacketConn{PacketConn: conn, cleanup: EBPFSelfBypassCleanup(networkManager, rawConn), rawConn: rawConn}
 }
 
 type selfBypassConn struct {
 	net.Conn
-	tracker *commonEBPF.SelfBypass
+	cleanup func()
 	rawConn syscall.RawConn
-	once    sync.Once
 }
 
 func (c *selfBypassConn) Close() error {
-	c.once.Do(func() { _ = c.tracker.UnregisterSocket(c.rawConn) })
+	if c.cleanup != nil {
+		c.cleanup()
+	}
 	return c.Conn.Close()
 }
 
@@ -89,17 +90,39 @@ func (c *selfBypassConn) SyscallConn() (syscall.RawConn, error) { return c.rawCo
 
 type selfBypassPacketConn struct {
 	net.PacketConn
-	tracker *commonEBPF.SelfBypass
+	cleanup func()
 	rawConn syscall.RawConn
-	once    sync.Once
 }
 
 func (c *selfBypassPacketConn) Close() error {
-	c.once.Do(func() { _ = c.tracker.UnregisterSocket(c.rawConn) })
+	if c.cleanup != nil {
+		c.cleanup()
+	}
 	return c.PacketConn.Close()
 }
 
 func (c *selfBypassPacketConn) SyscallConn() (syscall.RawConn, error) { return c.rawConn, nil }
+
+// EBPFSelfBypassCleanup returns an idempotent cleanup callback for a socket
+// registered by AppendEBPFSelfBypass. External socket owners should invoke it
+// immediately before closing the socket when the runtime has no kernel release
+// hook, such as Tailscale's custom packet listener path.
+func EBPFSelfBypassCleanup(networkManager adapter.NetworkManager, rawConn syscall.RawConn) func() {
+	provider, loaded := networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if !loaded {
+		return nil
+	}
+	tracker := provider.EBPFSelfBypass()
+	if tracker == nil || tracker.CleanupMode() != "lru_fallback" {
+		return nil
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() { _ = tracker.UnregisterSocket(rawConn) })
+	}
+}
 
 func PrepareEBPFSelfBypass(networkManager adapter.NetworkManager, inbounds []option.Inbound) error {
 	localInstances := 0

@@ -4,6 +4,7 @@ package dialer
 
 import (
 	"net"
+	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
@@ -16,6 +17,10 @@ func bindEBPFSelfBypassConnLifecycle(_ adapter.NetworkManager, conn net.Conn) ne
 
 func bindEBPFSelfBypassPacketConnLifecycle(_ adapter.NetworkManager, conn net.PacketConn) net.PacketConn {
 	return conn
+}
+
+func EBPFSelfBypassCleanup(adapter.NetworkManager, syscall.RawConn) func() {
+	return nil
 }
 
 func PrepareEBPFSelfBypass(adapter.NetworkManager, []option.Inbound) error {
