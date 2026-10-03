@@ -31,6 +31,15 @@ func bindEBPFSelfBypassConnLifecycle(networkManager adapter.NetworkManager, conn
 	if tracker.CleanupMode() != "lru_fallback" {
 		return conn
 	}
+	if lazyConn, loaded := conn.(*slowOpenConn); loaded {
+		lazyConn.setCloseHandler(func(tcpConn *net.TCPConn) {
+			rawConn, err := tcpConn.SyscallConn()
+			if err == nil {
+				_ = tracker.UnregisterSocket(rawConn)
+			}
+		})
+		return conn
+	}
 	syscallConn, loaded := conn.(syscall.Conn)
 	if !loaded {
 		return conn
