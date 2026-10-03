@@ -109,9 +109,10 @@ func TestUDPReplySocketLifecycle(t *testing.T) {
 	var pool udpReplySocketPool
 	destination := netip.MustParseAddrPort("1.1.1.1:53")
 	created := 0
-	create := func(netip.AddrPort) (*net.UDPConn, error) {
+	create := func(netip.AddrPort) (*net.UDPConn, func(), error) {
 		created++
-		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		return socket, nil, err
 	}
 	first, release1, err := pool.get(destination, create)
 	if err != nil {
@@ -141,9 +142,10 @@ func TestUDPReplySocketPoolSharesAcrossClients(t *testing.T) {
 	var pool udpReplySocketPool
 	destination := netip.MustParseAddrPort("1.1.1.1:53")
 	created := 0
-	create := func(netip.AddrPort) (*net.UDPConn, error) {
+	create := func(netip.AddrPort) (*net.UDPConn, func(), error) {
 		created++
-		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		return socket, nil, err
 	}
 	first, release1, err := pool.get(destination, create)
 	if err != nil {
@@ -165,9 +167,10 @@ func TestUDPReplySocketPoolResetsForNetworkChange(t *testing.T) {
 	var pool udpReplySocketPool
 	destination := netip.MustParseAddrPort("1.1.1.1:53")
 	created := 0
-	create := func(netip.AddrPort) (*net.UDPConn, error) {
+	create := func(netip.AddrPort) (*net.UDPConn, func(), error) {
 		created++
-		return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		return socket, nil, err
 	}
 	first, release1, err := pool.get(destination, create)
 	if err != nil {

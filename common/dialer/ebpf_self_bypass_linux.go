@@ -3,7 +3,9 @@
 package dialer
 
 import (
+	"net"
 	"runtime"
+	"sync"
 	"syscall"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
@@ -13,6 +15,82 @@ import (
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 )
+
+// bindEBPFSelfBypassConnLifecycle pairs userspace socket registration with the
+// returned connection's Close method. Kernel sock_release cleanup remains the
+// fast path when available; this closes the gap on kernels where only the
+// userspace registration fallback can be used.
+func bindEBPFSelfBypassConnLifecycle(networkManager adapter.NetworkManager, conn net.Conn) net.Conn {
+	provider, loaded := networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if !loaded || provider.EBPFSelfBypass() == nil {
+		return conn
+	}
+	tracker := provider.EBPFSelfBypass()
+	if tracker.CleanupMode() != "lru_fallback" {
+		return conn
+	}
+	syscallConn, loaded := conn.(syscall.Conn)
+	if !loaded {
+		return conn
+	}
+	rawConn, err := syscallConn.SyscallConn()
+	if err != nil {
+		return conn
+	}
+	return &selfBypassConn{Conn: conn, tracker: tracker, rawConn: rawConn}
+}
+
+func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager, conn net.PacketConn) net.PacketConn {
+	provider, loaded := networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if !loaded || provider.EBPFSelfBypass() == nil {
+		return conn
+	}
+	tracker := provider.EBPFSelfBypass()
+	if tracker.CleanupMode() != "lru_fallback" {
+		return conn
+	}
+	syscallConn, loaded := conn.(syscall.Conn)
+	if !loaded {
+		return conn
+	}
+	rawConn, err := syscallConn.SyscallConn()
+	if err != nil {
+		return conn
+	}
+	return &selfBypassPacketConn{PacketConn: conn, tracker: tracker, rawConn: rawConn}
+}
+
+type selfBypassConn struct {
+	net.Conn
+	tracker *commonEBPF.SelfBypass
+	rawConn syscall.RawConn
+	once    sync.Once
+}
+
+func (c *selfBypassConn) Close() error {
+	c.once.Do(func() { _ = c.tracker.UnregisterSocket(c.rawConn) })
+	return c.Conn.Close()
+}
+
+func (c *selfBypassConn) SyscallConn() (syscall.RawConn, error) { return c.rawConn, nil }
+
+type selfBypassPacketConn struct {
+	net.PacketConn
+	tracker *commonEBPF.SelfBypass
+	rawConn syscall.RawConn
+	once    sync.Once
+}
+
+func (c *selfBypassPacketConn) Close() error {
+	c.once.Do(func() { _ = c.tracker.UnregisterSocket(c.rawConn) })
+	return c.PacketConn.Close()
+}
+
+func (c *selfBypassPacketConn) SyscallConn() (syscall.RawConn, error) { return c.rawConn, nil }
 
 func PrepareEBPFSelfBypass(networkManager adapter.NetworkManager, inbounds []option.Inbound) error {
 	localInstances := 0

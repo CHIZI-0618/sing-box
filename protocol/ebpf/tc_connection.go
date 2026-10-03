@@ -140,7 +140,7 @@ type tcPacketWriter struct {
 	inbound        *Inbound
 	key            udpSessionKey
 	clientState    *udpClientState
-	newReplySocket func(netip.AddrPort) (*net.UDPConn, error)
+	newReplySocket func(netip.AddrPort) (*net.UDPConn, func(), error)
 }
 
 func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
@@ -272,7 +272,7 @@ func (w *tcPacketWriter) logReplySocketError(err error) {
 	}
 }
 
-func (w *tcPacketWriter) replySocketFactory() func(netip.AddrPort) (*net.UDPConn, error) {
+func (w *tcPacketWriter) replySocketFactory() func(netip.AddrPort) (*net.UDPConn, func(), error) {
 	if w.newReplySocket != nil {
 		return w.newReplySocket
 	}
@@ -294,7 +294,7 @@ func (i *Inbound) deleteCgroupUDPRedirects(addresses []netip.Addr) {
 	}
 }
 
-func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, error) {
+func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, func(), error) {
 	network := "udp6"
 	if source.Addr().Is4() {
 		network = "udp4"
@@ -309,6 +309,12 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, erro
 		// must mirror ebpf.udp_fragment explicitly.
 		fragmentControl,
 	)}
+	var selfBypass *commonEBPF.SelfBypass
+	if provider, loaded := i.networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	}); loaded {
+		selfBypass = provider.EBPFSelfBypass()
+	}
 	listenConfig.Control = control.Append(listenConfig.Control, func(_ string, _ string, rawConn syscall.RawConn) error {
 		err := control.Raw(rawConn, func(fd uintptr) error {
 			if err := unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
@@ -325,23 +331,28 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, erro
 		if err != nil {
 			return err
 		}
-		if provider, loaded := i.networkManager.(interface {
-			EBPFSelfBypass() *commonEBPF.SelfBypass
-		}); loaded {
-			if tracker := provider.EBPFSelfBypass(); tracker != nil {
-				return tracker.RegisterSocket(rawConn)
-			}
+		if selfBypass != nil {
+			return selfBypass.RegisterSocket(rawConn)
 		}
 		return nil
 	})
 	packetConnection, err := listenConfig.ListenPacket(i.ctx, network, source.String())
 	if err != nil {
-		return nil, E.Cause(err, "bind TC eBPF UDP reply socket to ", source)
+		return nil, nil, E.Cause(err, "bind TC eBPF UDP reply socket to ", source)
 	}
 	udpConnection, loaded := packetConnection.(*net.UDPConn)
 	if !loaded {
 		_ = packetConnection.Close()
-		return nil, E.New("TC eBPF UDP reply socket has unexpected type")
+		return nil, nil, E.New("TC eBPF UDP reply socket has unexpected type")
 	}
-	return udpConnection, nil
+	var cleanup func()
+	if selfBypass != nil {
+		cleanup = func() {
+			rawConn, err := udpConnection.SyscallConn()
+			if err == nil {
+				_ = selfBypass.UnregisterSocket(rawConn)
+			}
+		}
+	}
+	return udpConnection, cleanup, nil
 }
