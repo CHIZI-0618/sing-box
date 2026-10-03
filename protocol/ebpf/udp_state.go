@@ -376,6 +376,7 @@ type udpReplySocketShard struct {
 type udpReplySocketEntry struct {
 	conn     *net.UDPConn
 	writer   N.PacketBatchWriter
+	cleanup  func()
 	lastUsed atomic.Int64 // UnixNano, updated on every get()
 	inUse    atomic.Int32 // active senders; eviction skips entries > 0
 }
@@ -409,7 +410,7 @@ func (p *udpReplySocketPool) snapshot() udpReplySocketPoolSnapshot {
 
 func (p *udpReplySocketPool) get(
 	source netip.AddrPort,
-	create func(netip.AddrPort) (*net.UDPConn, error),
+	create func(netip.AddrPort) (*net.UDPConn, func(), error),
 ) (*udpReplySocketEntry, func(), error) {
 	if p.closed.Load() {
 		return nil, nil, net.ErrClosed
@@ -448,17 +449,21 @@ func (p *udpReplySocketPool) get(
 		p.stats.capacityRejected.Add(1)
 		return nil, nil, errUDPReplySocketCapacity
 	}
-	socket, err := create(source)
+	socket, cleanup, err := create(source)
 	if err != nil {
 		return nil, nil, err
 	}
 	entry := &udpReplySocketEntry{
-		conn:   socket,
-		writer: bufio.NewPacketBatchWriter(bufio.NewPacketConn(socket)),
+		conn:    socket,
+		writer:  bufio.NewPacketBatchWriter(bufio.NewPacketConn(socket)),
+		cleanup: cleanup,
 	}
 	entry.lastUsed.Store(time.Now().UnixNano())
 	entry.inUse.Store(1)
 	if p.closed.Load() {
+		if cleanup != nil {
+			cleanup()
+		}
 		_ = socket.Close()
 		return nil, nil, net.ErrClosed
 	}
@@ -525,6 +530,9 @@ func (p *udpReplySocketPool) evictOldestIdle() bool {
 		if shard.sockets[selectedSource] != selectedEntry || selectedEntry.inUse.Load() != 0 || selectedEntry.lastUsed.Load() != selectedLastUsed {
 			shard.access.Unlock()
 			continue
+		}
+		if selectedEntry.cleanup != nil {
+			selectedEntry.cleanup()
 		}
 		_ = selectedEntry.conn.Close()
 		delete(shard.sockets, selectedSource)
@@ -671,6 +679,9 @@ func (p *udpReplySocketPool) sweepIdleAt(now time.Time, idleTimeout time.Duratio
 				}
 				continue
 			}
+			if entry.cleanup != nil {
+				entry.cleanup()
+			}
 			_ = entry.conn.Close()
 			delete(shard.sockets, source)
 			p.stats.count.Add(-1)
@@ -705,6 +716,9 @@ func (p *udpReplySocketPool) closeSockets() error {
 		shard := &p.shards[index]
 		shard.access.Lock()
 		for source, entry := range shard.sockets {
+			if entry.cleanup != nil {
+				entry.cleanup()
+			}
 			closeErr = errors.Join(closeErr, entry.conn.Close())
 			delete(shard.sockets, source)
 			p.stats.count.Add(-1)

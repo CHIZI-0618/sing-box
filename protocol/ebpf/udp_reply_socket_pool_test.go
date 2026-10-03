@@ -9,12 +9,46 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func newLoopbackUDPSocket(netip.AddrPort) (*net.UDPConn, error) {
-	return net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+func newLoopbackUDPSocket(netip.AddrPort) (*net.UDPConn, func(), error) {
+	socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	return socket, nil, err
+}
+
+func TestUDPReplySocketPoolRunsSocketCleanup(t *testing.T) {
+	var pool udpReplySocketPool
+	var cleaned atomic.Int32
+	create := func(netip.AddrPort) (*net.UDPConn, func(), error) {
+		socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		return socket, func() { cleaned.Add(1) }, err
+	}
+	destination := netip.MustParseAddrPort("203.0.113.1:53")
+	_, release, err := pool.get(destination, create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if err = pool.reset(); err != nil {
+		t.Fatal(err)
+	}
+	if actual := cleaned.Load(); actual != 1 {
+		t.Fatalf("cleanup count after reset = %d, want 1", actual)
+	}
+	_, release, err = pool.get(destination, create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if err = pool.close(); err != nil {
+		t.Fatal(err)
+	}
+	if actual := cleaned.Load(); actual != 2 {
+		t.Fatalf("cleanup count after close = %d, want 2", actual)
+	}
 }
 
 // destinationOnShard builds a distinct destination address:port whose

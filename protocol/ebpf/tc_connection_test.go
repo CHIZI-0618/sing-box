@@ -41,9 +41,10 @@ func TestTCPacketWriterBatchesByReplySource(t *testing.T) {
 		inbound:     inbound,
 		key:         key,
 		clientState: state,
-		newReplySocket: func(source netip.AddrPort) (*net.UDPConn, error) {
+		newReplySocket: func(source netip.AddrPort) (*net.UDPConn, func(), error) {
 			created[source]++
-			return net.ListenUDP("udp4", net.UDPAddrFromAddrPort(source))
+			socket, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(source))
+			return socket, nil, err
 		},
 	}
 	if _, loaded = any(writer).(N.PacketBatchWriter); !loaded {
