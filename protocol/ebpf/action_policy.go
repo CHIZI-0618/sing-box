@@ -24,6 +24,40 @@ func validateActionPolicyScope(policy commonEBPF.ActionPolicy) error {
 	return nil
 }
 
+// validateBypassExcludeConflicts rejects bypass_exclude prefixes that would
+// collide with the fake-ip force-intercept slot. The backend force-intercept
+// is a single prefix per address family; fake-ip occupies the same slot, so a
+// bypass_exclude prefix for the same family would make the compiled policy
+// ambiguous (multiple intercept prefixes) or be silently ignored.
+func (i *Inbound) validateBypassExcludeConflicts() error {
+	conflict := func(name, family string, bypassExclude, fakeIP netip.Prefix) error {
+		if fakeIP.IsValid() && bypassExclude.IsValid() {
+			return E.New(name, " bypass_exclude ", bypassExclude, " conflicts with the ", family,
+				" fake-ip force-intercept prefix ", fakeIP, "; use redir-host DNS mode or drop one of them")
+		}
+		return nil
+	}
+	for _, prefix := range i.localBypassExclude {
+		if prefix.Addr().Is4() {
+			if err := conflict("local", "IPv4", prefix, i.fakeIPIPv4Prefix); err != nil {
+				return err
+			}
+		} else if err := conflict("local", "IPv6", prefix, i.fakeIPIPv6Prefix); err != nil {
+			return err
+		}
+	}
+	for _, prefix := range i.sharedBypassExclude {
+		if prefix.Addr().Is4() {
+			if err := conflict("shared", "IPv4", prefix, i.fakeIPIPv4Prefix); err != nil {
+				return err
+			}
+		} else if err := conflict("shared", "IPv6", prefix, i.fakeIPIPv6Prefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // compileProcessUIDPolicy converts sing-box's include/exclude/package result
 // into final UID actions for sing-ebpf. The library receives no selector
 // semantics: unmatched sockets use the returned default action, while each
@@ -131,6 +165,9 @@ var eBPFPrivateDestinationPrefixes = []netip.Prefix{
 }
 
 func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
+	if err := i.validateBypassExcludeConflicts(); err != nil {
+		return commonEBPF.CompiledPolicy{}, err
+	}
 	policy := commonEBPF.ActionPolicy{
 		EnableTCP: i.enableTCP,
 		EnableUDP: i.enableUDP,
@@ -155,7 +192,7 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 		})
 	}
 	appendDestinationPolicy(&policy.Local, i.localPolicy.BypassPrivateAddress, i.localBypassPort, i.localDNSMode,
-		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.enableTCP, i.enableUDP)
+		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.localBypassExclude, i.enableTCP, i.enableUDP)
 
 	for _, prefix := range i.sharedOptions.IncludeSourceCIDR {
 		policy.Shared.SourceCIDR = append(policy.Shared.SourceCIDR, commonEBPF.CIDRDecision{
@@ -178,7 +215,7 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 		})
 	}
 	appendDestinationPolicy(&policy.Shared, i.sharedBypassPrivate, i.sharedBypassPort, i.sharedDNSMode,
-		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.enableTCP, i.enableUDP)
+		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.sharedBypassExclude, i.enableTCP, i.enableUDP)
 	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
 	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
 	if err := validateActionPolicyScope(policy); err != nil {
@@ -198,15 +235,16 @@ func destinationPassDecisions(decisions []commonEBPF.CIDRDecision) []commonEBPF.
 }
 
 // appendDestinationPolicy is deliberately shared by local and shared data
-// planes. Their steering selectors differ, but private-address, FakeIP and
-// destination-port semantics must remain identical when the corresponding
-// options are the same.
+// planes. Their steering selectors differ, but private-address, FakeIP,
+// bypass_exclude, and destination-port semantics must remain identical when
+// the corresponding options are the same.
 func appendDestinationPolicy(
 	scope *commonEBPF.ActionScope,
 	bypassPrivate bool,
 	bypassPorts []portRange,
 	dnsMode string,
 	fakeIPv4, fakeIPv6 netip.Prefix,
+	bypassExclude []netip.Prefix,
 	enableTCP, enableUDP bool,
 ) {
 	if bypassPrivate {
@@ -215,6 +253,11 @@ func appendDestinationPolicy(
 				Prefix: prefix, Action: commonEBPF.DecisionPass,
 			})
 		}
+	}
+	for _, prefix := range bypassExclude {
+		scope.DestinationCIDR = append(scope.DestinationCIDR, commonEBPF.CIDRDecision{
+			Prefix: prefix, Action: commonEBPF.DecisionIntercept,
+		})
 	}
 	if fakeIPv4.IsValid() {
 		scope.DestinationCIDR = append(scope.DestinationCIDR, commonEBPF.CIDRDecision{

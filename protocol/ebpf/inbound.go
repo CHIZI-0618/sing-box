@@ -98,6 +98,8 @@ type Inbound struct {
 	sharedBypassPrivate       bool
 	localBypassPort           []portRange
 	sharedBypassPort          []portRange
+	localBypassExclude        []netip.Prefix
+	sharedBypassExclude       []netip.Prefix
 	tcPriority                uint16
 	networkGeneration         uint64
 	fakeIPIPv4Prefix          netip.Prefix
@@ -266,6 +268,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
+	localBypassExclude, err := normalizeBypassExclude("local.bypass_exclude", options.Local.BypassExclude)
+	if err != nil {
+		return nil, err
+	}
+	sharedBypassExclude, err := normalizeBypassExclude("shared.bypass_exclude", options.Shared.BypassExclude)
+	if err != nil {
+		return nil, err
+	}
 	sharedIncludeMAC, err := parseSharedMACAddresses(
 		"include_mac_address",
 		sharedOptions.IncludeMACAddress,
@@ -326,6 +336,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		sharedBypassPrivate: options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
 		localBypassPort:     localBypassPort,
 		sharedBypassPort:    sharedBypassPort,
+		localBypassExclude:  localBypassExclude,
+		sharedBypassExclude: sharedBypassExclude,
 		tcPriority:          uint16(options.TCPriority),
 		sharedIncludeMAC:    sharedIncludeMAC,
 		sharedExcludeMAC:    sharedExcludeMAC,
