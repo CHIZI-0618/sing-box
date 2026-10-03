@@ -130,12 +130,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 11 {
-		t.Fatalf("schema version = %d, want 11 after adding policy epoch diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 12 {
+		t.Fatalf("schema version = %d, want 12 after adding self-bypass diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 11 {
-		t.Fatalf("diagnostics schema version = %d, want 11", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 12 {
+		t.Fatalf("diagnostics schema version = %d, want 12", diagnostics.SchemaVersion)
 	}
 }
 

@@ -118,6 +118,8 @@ type EBPFDiagnostics struct {
 	LocalEnabled                 bool       `json:"local_enabled"`
 	LocalDataPlane               string     `json:"local_data_plane,omitempty"`
 	LocalCgroupAttachMode        string     `json:"local_cgroup_attach_mode,omitempty"`
+	LocalSelfBypassMode          string     `json:"local_self_bypass_mode,omitempty"`
+	LocalSelfBypassCleanupMode   string     `json:"local_self_bypass_cleanup_mode,omitempty"`
 	LocalUDPCleanupMode          string     `json:"local_udp_cleanup_mode,omitempty"`
 	LocalUDPUserspaceCleanupMode string     `json:"local_udp_userspace_cleanup_mode,omitempty"`
 	LocalUDPStorageMode          string     `json:"local_udp_storage_mode,omitempty"`
@@ -343,6 +345,8 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		LocalEnabled:                 diagnostics.LocalEnabled,
 		LocalDataPlane:               diagnostics.LocalDataPlane,
 		LocalCgroupAttachMode:        diagnostics.LocalCgroupAttachMode,
+		LocalSelfBypassMode:          diagnostics.LocalSelfBypassMode,
+		LocalSelfBypassCleanupMode:   diagnostics.LocalSelfBypassCleanupMode,
 		LocalUDPCleanupMode:          diagnostics.LocalUDPCleanupMode,
 		LocalUDPUserspaceCleanupMode: diagnostics.LocalUDPUserspaceCleanupMode,
 		LocalUDPStorageMode:          diagnostics.LocalUDPStorageMode,
@@ -521,6 +525,10 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	}
 	if i.localEnabled {
 		diagnostics.LocalDataPlane = i.localDataPlane
+		if i.selfBypass != nil {
+			diagnostics.LocalSelfBypassMode = i.selfBypass.Mode().String()
+			diagnostics.LocalSelfBypassCleanupMode = i.selfBypass.CleanupMode()
+		}
 	}
 	if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {
 		diagnostics.LocalCgroupAttachMode = backend.AttachMode()

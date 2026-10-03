@@ -80,6 +80,8 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 		LocalEnabled:                 source.LocalEnabled,
 		LocalDataPlane:               source.LocalDataPlane,
 		LocalCgroupAttachMode:        source.LocalCgroupAttachMode,
+		LocalSelfBypassMode:          source.LocalSelfBypassMode,
+		LocalSelfBypassCleanupMode:   source.LocalSelfBypassCleanupMode,
 		LocalUdpCleanupMode:          source.LocalUDPCleanupMode,
 		LocalUdpUserspaceCleanupMode: source.LocalUDPUserspaceCleanupMode,
 		LocalUdpStorageMode:          source.LocalUDPStorageMode,
