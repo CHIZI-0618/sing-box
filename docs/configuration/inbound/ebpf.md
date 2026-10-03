@@ -26,7 +26,8 @@ Local interception with the default cgroup data plane:
     "enabled": true,
     "data_plane": "cgroup",
     "dns_mode": "respect_policy",
-    "bypass_private_address": true
+    "bypass_private_address": true,
+    "bypass_exclude": ["100.64.0.0/10"]
   }
 }
 ```
@@ -41,7 +42,8 @@ interface name:
     "data_plane": "packet_rewrite",
     "interface": ["wlan1"],
     "dns_mode": "respect_policy",
-    "bypass_private_address": true
+    "bypass_private_address": true,
+    "bypass_exclude": ["fd7a:115c:a1e0::/48"]
   }
 }
 ```
@@ -146,6 +148,22 @@ Enables local IPv6 interception. Default is `true`.
 
 Bypasses private and special-use destinations. Default is `true`.
 
+### local.bypass_exclude
+
+CIDR prefixes that are force-intercepted ahead of every bypass decision,
+even when `local.bypass_private_address`, `local.bypass_port`, or another
+bypass rule would otherwise pass them in kernel. The kernel checks the
+force-intercept prefix before all bypass checks.
+
+At most one IPv4 and one IPv6 prefix is accepted (the backend keeps a single
+force-intercept prefix per address family). A prefix that overlaps the DNS
+fake-ip range is rejected at startup because fake-ip already occupies that
+slot; use `redir-host` DNS mode when you need bypass_exclude.
+
+Typical use: keep a VPN/CGNAT range such as Tailscale's `100.64.0.0/10` (and
+IPv6 `fd7a:115c:a1e0::/48`) intercepted so tailnet traffic can reach a
+`tailscale` outbound node instead of being passed straight to the kernel.
+
 ### local.bypass_rule_set
 
 Rule sets whose destination IP CIDRs bypass the local data plane. Non-IP rules
@@ -226,6 +244,13 @@ client addresses, router advertisements, forwarding or upstream IPv6 routing.
 ### shared.bypass_private_address
 
 Bypasses private and special-use destinations. Default is `true`.
+
+### shared.bypass_exclude
+
+Like `local.bypass_exclude`, but for the shared data plane: CIDR prefixes
+that are force-intercepted ahead of every shared bypass decision. At most one
+IPv4 and one IPv6 prefix is accepted, and a prefix that overlaps the DNS
+fake-ip range is rejected at startup.
 
 ### shared.bypass_rule_set
 

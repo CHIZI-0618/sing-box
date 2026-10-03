@@ -25,7 +25,8 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
     "enabled": true,
     "data_plane": "cgroup",
     "dns_mode": "respect_policy",
-    "bypass_private_address": true
+    "bypass_private_address": true,
+    "bypass_exclude": ["100.64.0.0/10"]
   }
 }
 ```
@@ -39,7 +40,8 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
     "data_plane": "packet_rewrite",
     "interface": ["wlan1"],
     "dns_mode": "respect_policy",
-    "bypass_private_address": true
+    "bypass_private_address": true,
+    "bypass_exclude": ["fd7a:115c:a1e0::/48"]
   }
 }
 ```
@@ -136,6 +138,20 @@ DNS。上述筛选仍然作用于普通的非 DNS 流量，因此 `hijack` 不�
 
 绕过私有和特殊用途目标地址，默认 `true`。
 
+### local.bypass_exclude
+
+这些 CIDR 前缀会在所有 bypass 决策之前被强制接管，即使
+`local.bypass_private_address`、`local.bypass_port` 或其他 bypass 规则本会让
+它们在内核直连。内核在检查所有 bypass 之前先检查强制接管前缀。
+
+每个地址族最多接受一个前缀（后端每地址族只保留一个强制接管前缀）。与 DNS
+fake-ip 范围重叠的前缀会在启动时报错，因为 fake-ip 已占用该槽位；需要使用
+`redir-host` DNS 模式才能配置 bypass_exclude。
+
+典型用途：让 VPN/CGNAT 网段（如 Tailscale 的 `100.64.0.0/10` 及 IPv6
+`fd7a:115c:a1e0::/48`）保持被接管，使 tailnet 流量能够到达 `tailscale`
+出站节点，而不是被内核直连放行。
+
 ### local.bypass_rule_set
 
 目标 IP CIDR 命中这些规则集时绕过 local 数据面，非 IP 规则会被忽略。该策略与
@@ -211,6 +227,12 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 ### shared.bypass_private_address
 
 绕过私有和特殊用途目标地址，默认 `true`。
+
+### shared.bypass_exclude
+
+与 `local.bypass_exclude` 相同，但作用于 shared 数据面：这些 CIDR 前缀会在
+所有 shared bypass 决策之前被强制接管。每个地址族最多接受一个前缀，与 DNS
+fake-ip 范围重叠的前缀会在启动时报错。
 
 ### shared.bypass_rule_set
 

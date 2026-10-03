@@ -107,6 +107,9 @@ func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 	if options.BypassPrivateAddress != nil {
 		return E.New("local.bypass_private_address requires local interception")
 	}
+	if len(options.BypassExclude) > 0 {
+		return E.New("local.bypass_exclude requires local interception")
+	}
 	if len(options.IncludeUID) > 0 || len(options.IncludeUIDRange) > 0 ||
 		len(options.ExcludeUID) > 0 || len(options.ExcludeUIDRange) > 0 ||
 		len(options.IncludeAndroidUser) > 0 || len(options.IncludePackage) > 0 ||
@@ -252,6 +255,7 @@ func validateSharedOptions(enabled bool, options option.EBPFSharedOptions) error
 		return nil
 	}
 	if options.DataPlane != "" || options.DNSMode != "" || len(options.Interface) > 0 || options.IPv6 != nil || options.BypassPrivateAddress != nil ||
+		len(options.BypassExclude) > 0 ||
 		len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 		len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0 ||
 		len(options.BypassPort) > 0 || len(options.BypassPortRange) > 0 {
@@ -353,6 +357,46 @@ func normalizeSourceCIDR(name string, prefixes []netip.Prefix) (badoption.Listab
 		normalized = append(normalized, prefix)
 	}
 	return normalized, nil
+}
+
+// normalizeBypassExclude masks and validates bypass_exclude prefixes. The
+// backend force-intercept slot holds a single prefix per address family, so
+// bypass_exclude accepts at most one IPv4 and one IPv6 prefix. These prefixes
+// are force-intercepted ahead of every bypass decision (private-address, port,
+// DNS, UID), so a VPN/CGNAT tail such as Tailscale's 100.64.0.0/10 can still
+// reach a proxy even when bypass_private_address would otherwise pass it in
+// kernel.
+
+//nolint:lll
+func normalizeBypassExclude(name string, prefixes []netip.Prefix) ([]netip.Prefix, error) {
+	if len(prefixes) == 0 {
+		return nil, nil
+	}
+	result := make([]netip.Prefix, 0, len(prefixes))
+	seenIPv4 := netip.Prefix{}
+	seenIPv6 := netip.Prefix{}
+	for _, prefix := range prefixes {
+		if !prefix.IsValid() {
+			return nil, E.New("invalid ", name, " prefix")
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96).Masked()
+		}
+		if prefix.Addr().Is4() {
+			if seenIPv4.IsValid() {
+				return nil, E.New(name, " accepts at most one IPv4 prefix; got both ", seenIPv4, " and ", prefix)
+			}
+			seenIPv4 = prefix
+		} else {
+			if seenIPv6.IsValid() {
+				return nil, E.New(name, " accepts at most one IPv6 prefix; got both ", seenIPv6, " and ", prefix)
+			}
+			seenIPv6 = prefix
+		}
+		result = append(result, prefix)
+	}
+	return result, nil
 }
 
 func parseSharedMACAddresses(name string, addresses []string) ([]commonEBPF.MACAddress, error) {
