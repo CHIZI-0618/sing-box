@@ -2,6 +2,8 @@ package endpoint
 
 import (
 	"context"
+	"io"
+	"os"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -75,5 +77,26 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
+	return nil
+}
+
+func (m *Manager) Remove(tag string) error {
+	m.access.Lock()
+	endpoint, loaded := m.endpointByTag[tag]
+	if !loaded {
+		m.access.Unlock()
+		return os.ErrInvalid
+	}
+	delete(m.endpointByTag, tag)
+	for i, item := range m.endpoints {
+		if item == endpoint {
+			m.endpoints = append(m.endpoints[:i], m.endpoints[i+1:]...)
+			break
+		}
+	}
+	m.access.Unlock()
+	if closer, ok := endpoint.(io.Closer); ok {
+		return closer.Close()
+	}
 	return nil
 }

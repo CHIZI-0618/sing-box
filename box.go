@@ -120,7 +120,6 @@ func Context(
 func New(options Options) (*Box, error) {
 	createdAt := time.Now()
 	reloadChan := make(chan struct{}, 1)
-	reloadChan := make(chan struct{}, 1)
 	ctx := options.Context
 	if ctx == nil {
 		ctx = context.Background()

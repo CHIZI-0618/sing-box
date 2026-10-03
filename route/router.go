@@ -119,7 +119,10 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	monitor := taskmonitor.New(r.logger, C.StartTimeout)
 	switch stage {
 	case adapter.StartStateInitialize:
-		scope.Add(r.quicSniffCache.Close)
+		scope.Add(func() error {
+			r.quicSniffCache.Close()
+			return nil
+		})
 		for _, ruleSet := range r.ruleSets {
 			scope.Add(ruleSet.Close)
 		}

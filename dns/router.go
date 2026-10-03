@@ -51,7 +51,7 @@ type Router struct {
 	rulesAccess           sync.RWMutex
 	started               bool
 	closing               bool
-	ruleByUUID             map[string]adapter.DNSRule
+	ruleByUUID            map[string]adapter.DNSRule
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.DNSOptions) (*Router, error) {
@@ -175,6 +175,16 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			deprecated.Report(r.ctx, deprecated.OptionLegacyDNSRuleStrategy)
 		}
 	}
+	return nil
+}
+
+func (r *Router) Close() error {
+	r.rulesAccess.Lock()
+	r.closing = true
+	runtimeRules := r.rules
+	r.rules = nil
+	r.rulesAccess.Unlock()
+	closeRules(runtimeRules)
 	return nil
 }
 

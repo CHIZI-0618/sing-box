@@ -40,7 +40,7 @@ func NewGroup(ctx context.Context, logger log.ContextLogger, tag string, options
 	}, nil
 }
 
-func (t *GroupTransport) Start(stage adapter.StartStage) error {
+func (t *GroupTransport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}

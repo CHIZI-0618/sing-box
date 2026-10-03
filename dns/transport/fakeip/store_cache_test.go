@@ -29,20 +29,22 @@ func TestStoreResetPreservesReservationsAfterUncleanRestart(t *testing.T) {
 
 			path := filepath.Join(t.TempDir(), "cache.db")
 			openStore := func() (*cachefile.CacheFile, *fakeip.Store, func()) {
-				cache := cachefile.New(context.Background(), logger.NOP(), option.CacheFileOptions{
+				ctx := context.Background()
+				cache := cachefile.New(ctx, logger.NOP(), option.CacheFileOptions{
 					Path:        path,
 					StoreFakeIP: true,
 				})
-				require.NoError(t, cache.Start(adapter.StartStateInitialize))
+				scope := adapter.NewScope(ctx, logger.NOP())
+				require.NoError(t, cache.Start(adapter.StartStateInitialize, scope))
 				closed := false
 				closeCache := func() {
 					if !closed {
 						closed = true
-						require.NoError(t, cache.Close())
+						require.NoError(t, scope.Close())
 					}
 				}
 				t.Cleanup(closeCache)
-				ctx := service.ContextWith[adapter.CacheFile](context.Background(), cache)
+				ctx = service.ContextWith[adapter.CacheFile](ctx, cache)
 				store := fakeip.NewStore(ctx, logger.NOP(), netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("fc00::/18"))
 				require.NoError(t, store.Start())
 				return cache, store, closeCache

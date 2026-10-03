@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -184,6 +185,30 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	m.outboundByTag[tag] = outbound
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
+	}
+	return nil
+}
+
+func (m *Manager) Remove(tag string) error {
+	m.access.Lock()
+	outbound, loaded := m.outboundByTag[tag]
+	if !loaded {
+		m.access.Unlock()
+		return os.ErrInvalid
+	}
+	delete(m.outboundByTag, tag)
+	for i, item := range m.outbounds {
+		if item == outbound {
+			m.outbounds = append(m.outbounds[:i], m.outbounds[i+1:]...)
+			break
+		}
+	}
+	if m.defaultOutbound == outbound {
+		m.defaultOutbound = nil
+	}
+	m.access.Unlock()
+	if closer, ok := outbound.(io.Closer); ok {
+		return closer.Close()
 	}
 	return nil
 }
