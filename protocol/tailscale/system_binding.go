@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"sync"
 	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -89,6 +90,17 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 				return nil, err
 			}
 			udpConn := packetConn.(*net.UDPConn)
+			rawConn, rawConnErr := udpConn.SyscallConn()
+			if rawConnErr != nil {
+				return udpConn, nil
+			}
+			cleanup := dialer.EBPFSelfBypassCleanup(network, rawConn)
+			wrapPacketConn := func(conn nettype.PacketConn) nettype.PacketConn {
+				if cleanup == nil {
+					return conn
+				}
+				return &selfBypassPacketConn{PacketConn: conn, cleanup: cleanup}
+			}
 			egressPool := tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
 				Logger:           logger,
 				Network:          networkName,
@@ -100,11 +112,26 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 			})
 			if !egressPool.SetEgressPort(udpConn.LocalAddr().(*net.UDPAddr).AddrPort().Port()) {
 				egressPool.Close()
-				return udpConn, nil
+				return wrapPacketConn(udpConn), nil
 			}
-			return tun.NewUDPEgressConn(udpConn, egressPool), nil
+			return wrapPacketConn(tun.NewUDPEgressConn(udpConn, egressPool)), nil
 		},
 	}, nil
+}
+
+type selfBypassPacketConn struct {
+	nettype.PacketConn
+	cleanup func()
+	once    sync.Once
+}
+
+func (c *selfBypassPacketConn) Close() error {
+	c.once.Do(func() {
+		if c.cleanup != nil {
+			c.cleanup()
+		}
+	})
+	return c.PacketConn.Close()
 }
 
 func (b systemBinding) hooks(dialer N.Dialer) netmon.Hooks {
