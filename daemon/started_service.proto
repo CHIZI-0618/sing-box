@@ -898,6 +898,8 @@ message EBPFInboundDiagnostics {
   string localUdpMapPressure = 52;
   uint32 localUdpNetworkGeneration = 53;
   EBPFPolicyEpochDiagnostics policyEpoch = 54;
+  string localSelfBypassMode = 55;
+  string localSelfBypassCleanupMode = 56;
 }
 
 message EBPFAttachmentDiagnostics {

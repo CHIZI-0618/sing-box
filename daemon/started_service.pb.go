@@ -7838,6 +7838,8 @@ type EBPFInboundDiagnostics struct {
 	LocalUdpMapPressure          string                         `protobuf:"bytes,52,opt,name=localUdpMapPressure,proto3" json:"localUdpMapPressure,omitempty"`
 	LocalUdpNetworkGeneration    uint32                         `protobuf:"varint,53,opt,name=localUdpNetworkGeneration,proto3" json:"localUdpNetworkGeneration,omitempty"`
 	PolicyEpoch                  *EBPFPolicyEpochDiagnostics    `protobuf:"bytes,54,opt,name=policyEpoch,proto3" json:"policyEpoch,omitempty"`
+	LocalSelfBypassMode          string                         `protobuf:"bytes,55,opt,name=localSelfBypassMode,proto3" json:"localSelfBypassMode,omitempty"`
+	LocalSelfBypassCleanupMode   string                         `protobuf:"bytes,56,opt,name=localSelfBypassCleanupMode,proto3" json:"localSelfBypassCleanupMode,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -8199,6 +8201,20 @@ func (x *EBPFInboundDiagnostics) GetPolicyEpoch() *EBPFPolicyEpochDiagnostics {
 		return x.PolicyEpoch
 	}
 	return nil
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassMode() string {
+	if x != nil {
+		return x.LocalSelfBypassMode
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassCleanupMode() string {
+	if x != nil {
+		return x.LocalSelfBypassCleanupMode
+	}
+	return ""
 }
 
 type EBPFAttachmentDiagnostics struct {
@@ -9493,7 +9509,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
-	"\bpressure\x18\v \x01(\tR\bpressure\"\xfb\x12\n" +
+	"\bpressure\x18\v \x01(\tR\bpressure\"\xed\x13\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9544,7 +9560,9 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x14localUdpRecoveryMode\x183 \x01(\tR\x14localUdpRecoveryMode\x120\n" +
 	"\x13localUdpMapPressure\x184 \x01(\tR\x13localUdpMapPressure\x12<\n" +
 	"\x19localUdpNetworkGeneration\x185 \x01(\rR\x19localUdpNetworkGeneration\x12D\n" +
-	"\vpolicyEpoch\x186 \x01(\v2\".daemon.EBPFPolicyEpochDiagnosticsR\vpolicyEpochB\x0e\n" +
+	"\vpolicyEpoch\x186 \x01(\v2\".daemon.EBPFPolicyEpochDiagnosticsR\vpolicyEpoch\x120\n" +
+	"\x13localSelfBypassMode\x187 \x01(\tR\x13localSelfBypassMode\x12>\n" +
+	"\x1alocalSelfBypassCleanupMode\x188 \x01(\tR\x1alocalSelfBypassCleanupModeB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
