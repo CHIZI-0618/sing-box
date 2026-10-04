@@ -112,6 +112,10 @@ type Inbound struct {
 	tcDataPlaneAccess         sync.RWMutex
 	cgroupBackendAccess       sync.RWMutex
 	cgroupReleaseWait         sync.WaitGroup
+	cgroupRecoveryAccess      sync.Mutex
+	cgroupRecoveryCancel      context.CancelFunc
+	cgroupRecoveryDone        chan struct{}
+	cgroupRecoveryEvents      chan commonEBPF.UDPReleaseEvent
 	lifecycleAccess           sync.Mutex
 	interfaceMonitor          tcInterfaceMonitor
 
