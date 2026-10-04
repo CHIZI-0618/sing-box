@@ -20,6 +20,10 @@ type Manager struct {
 	endpoint                adapter.EndpointManager
 	defaultTag              string
 	access                  sync.RWMutex
+	startAccess             sync.Mutex
+	scope                   *adapter.Scope
+	currentStage            adapter.StartStage
+	startedStages           map[string]adapter.StartStage
 	outbounds               []adapter.Outbound
 	outboundByTag           map[string]adapter.Outbound
 	defaultOutbound         adapter.Outbound
@@ -32,6 +36,7 @@ func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointMana
 		endpoint:      endpoint,
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
+		startedStages: make(map[string]adapter.StartStage),
 	}
 }
 
@@ -64,19 +69,28 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	outbounds := m.outbounds
 	m.access.Unlock()
 	if stage == adapter.StartStateStart {
-		return m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...))
-	}
-	for _, outbound := range outbounds {
-		lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
-		if !isLifecycle {
-			continue
-		}
-		name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
-		err := scope.Start(name, lifecycle, stage)
-		if err != nil {
+		if err := m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...)); err != nil {
 			return err
 		}
+	} else {
+		for _, outbound := range outbounds {
+			lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
+			if !isLifecycle {
+				continue
+			}
+			name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
+			err := m.startOutbound(scope, outbound, lifecycle, stage, name)
+			if err != nil {
+				return err
+			}
+		}
 	}
+	m.access.Lock()
+	if m.scope == nil {
+		m.scope = scope
+	}
+	m.currentStage = stage
+	m.access.Unlock()
 	return nil
 }
 
@@ -110,7 +124,7 @@ func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbo
 				continue
 			}
 			name := "outbound/" + outboundToStart.Type() + "[" + outboundTag + "]"
-			err := scope.Start(name, lifecycle, adapter.StartStateStart)
+			err := m.startOutbound(scope, outboundToStart, lifecycle, adapter.StartStateStart, name)
 			if err != nil {
 				return err
 			}
@@ -145,6 +159,30 @@ func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbo
 	return nil
 }
 
+func (m *Manager) startOutbound(scope *adapter.Scope, outbound adapter.Outbound, lifecycle adapter.Lifecycle, stage adapter.StartStage, name string) error {
+	m.startAccess.Lock()
+	defer m.startAccess.Unlock()
+	return m.startOutboundLocked(scope, outbound, lifecycle, stage, name)
+}
+
+func (m *Manager) startOutboundLocked(scope *adapter.Scope, outbound adapter.Outbound, lifecycle adapter.Lifecycle, stage adapter.StartStage, name string) error {
+	m.access.RLock()
+	startedStage, started := m.startedStages[outbound.Tag()]
+	m.access.RUnlock()
+	if started && startedStage >= stage {
+		return nil
+	}
+	if err := scope.Start(name, lifecycle, stage); err != nil {
+		return err
+	}
+	m.access.Lock()
+	if currentStage, loaded := m.startedStages[outbound.Tag()]; !loaded || currentStage < stage {
+		m.startedStages[outbound.Tag()] = stage
+	}
+	m.access.Unlock()
+	return nil
+}
+
 func (m *Manager) Outbounds() []adapter.Outbound {
 	m.access.RLock()
 	defer m.access.RUnlock()
@@ -175,12 +213,31 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	if err != nil {
 		return err
 	}
-	m.access.Lock()
-	defer m.access.Unlock()
+	m.startAccess.Lock()
+	defer m.startAccess.Unlock()
+	m.access.RLock()
 	_, loaded := m.outboundByTag[tag]
+	scope := m.scope
+	currentStage := m.currentStage
+	m.access.RUnlock()
 	if loaded {
 		return E.New("duplicate outbound tag: ", tag)
 	}
+	if scope != nil {
+		if lifecycle, isLifecycle := outbound.(adapter.Lifecycle); isLifecycle {
+			name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
+			for _, stage := range adapter.ListStartStages {
+				if stage > currentStage {
+					break
+				}
+				if err = m.startOutboundLocked(scope, outbound, lifecycle, stage, name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	m.access.Lock()
+	defer m.access.Unlock()
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
@@ -206,6 +263,7 @@ func (m *Manager) Remove(tag string) error {
 	if m.defaultOutbound == outbound {
 		m.defaultOutbound = nil
 	}
+	delete(m.startedStages, tag)
 	m.access.Unlock()
 	if closer, ok := outbound.(io.Closer); ok {
 		return closer.Close()
