@@ -111,7 +111,7 @@ func (i *Inbound) newCgroupPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 		if errors.Is(err, unix.ENOENT) {
 			original, err = backend.RecoverUDPOriginal(redirectDestination)
 		}
-		if errors.Is(err, unix.ENOENT) {
+		if errors.Is(err, unix.ENOENT) && backend.UDPCleanupMode() != "socket_release" {
 			original, err = backend.RecoverConnectedUDPOriginal(redirectDestination)
 		}
 		if err != nil {

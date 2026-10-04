@@ -7790,58 +7790,61 @@ func (x *EBPFMapDiagnostics) GetPressure() string {
 }
 
 type EBPFInboundDiagnostics struct {
-	state                        protoimpl.MessageState         `protogen:"open.v1"`
-	ObservedAt                   int64                          `protobuf:"varint,2,opt,name=observedAt,proto3" json:"observedAt,omitempty"`
-	Tag                          string                         `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
-	State                        string                         `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
-	LocalEnabled                 bool                           `protobuf:"varint,5,opt,name=localEnabled,proto3" json:"localEnabled,omitempty"`
-	LocalDataPlane               string                         `protobuf:"bytes,6,opt,name=localDataPlane,proto3" json:"localDataPlane,omitempty"`
-	SharedEnabled                bool                           `protobuf:"varint,7,opt,name=sharedEnabled,proto3" json:"sharedEnabled,omitempty"`
-	SharedDataPlane              string                         `protobuf:"bytes,8,opt,name=sharedDataPlane,proto3" json:"sharedDataPlane,omitempty"`
-	FakeIPICMPReply              bool                           `protobuf:"varint,9,opt,name=fakeIPICMPReply,proto3" json:"fakeIPICMPReply,omitempty"`
-	Attachments                  []*EBPFAttachmentDiagnostics   `protobuf:"bytes,10,rep,name=attachments,proto3" json:"attachments,omitempty"`
-	LastError                    string                         `protobuf:"bytes,11,opt,name=lastError,proto3" json:"lastError,omitempty"`
-	LastErrorAt                  *int64                         `protobuf:"varint,12,opt,name=lastErrorAt,proto3,oneof" json:"lastErrorAt,omitempty"`
-	LastRecoveryAt               *int64                         `protobuf:"varint,13,opt,name=lastRecoveryAt,proto3,oneof" json:"lastRecoveryAt,omitempty"`
-	RecoveryPending              bool                           `protobuf:"varint,14,opt,name=recoveryPending,proto3" json:"recoveryPending,omitempty"`
-	RecoveryUnrecoverable        bool                           `protobuf:"varint,15,opt,name=recoveryUnrecoverable,proto3" json:"recoveryUnrecoverable,omitempty"`
-	NextRetryAt                  *int64                         `protobuf:"varint,16,opt,name=nextRetryAt,proto3,oneof" json:"nextRetryAt,omitempty"`
-	UdpSessionCount              int64                          `protobuf:"varint,23,opt,name=udpSessionCount,proto3" json:"udpSessionCount,omitempty"`
-	UdpReplySockets              *EBPFUDPReplySocketDiagnostics `protobuf:"bytes,24,opt,name=udpReplySockets,proto3" json:"udpReplySockets,omitempty"`
-	Counters                     *EBPFCounters                  `protobuf:"bytes,25,opt,name=counters,proto3" json:"counters,omitempty"`
-	UdpNAT                       *EBPFUDPNATDiagnostics         `protobuf:"bytes,26,opt,name=udpNAT,proto3" json:"udpNAT,omitempty"`
-	LocalBypassRuleSet           *EBPFBypassRuleSetDiagnostics  `protobuf:"bytes,27,opt,name=localBypassRuleSet,proto3" json:"localBypassRuleSet,omitempty"`
-	SharedBypassRuleSet          *EBPFBypassRuleSetDiagnostics  `protobuf:"bytes,28,opt,name=sharedBypassRuleSet,proto3" json:"sharedBypassRuleSet,omitempty"`
-	LocalCgroupAttachMode        string                         `protobuf:"bytes,29,opt,name=localCgroupAttachMode,proto3" json:"localCgroupAttachMode,omitempty"`
-	LocalUdpCleanupMode          string                         `protobuf:"bytes,30,opt,name=localUdpCleanupMode,proto3" json:"localUdpCleanupMode,omitempty"`
-	LocalUdpUserspaceCleanupMode string                         `protobuf:"bytes,31,opt,name=localUdpUserspaceCleanupMode,proto3" json:"localUdpUserspaceCleanupMode,omitempty"`
-	LocalUdpStorageMode          string                         `protobuf:"bytes,32,opt,name=localUdpStorageMode,proto3" json:"localUdpStorageMode,omitempty"`
-	LocalUdpTimeMode             string                         `protobuf:"bytes,33,opt,name=localUdpTimeMode,proto3" json:"localUdpTimeMode,omitempty"`
-	TcBackendMode                string                         `protobuf:"bytes,34,opt,name=tcBackendMode,proto3" json:"tcBackendMode,omitempty"`
-	TcListenerLookupMode         string                         `protobuf:"bytes,35,opt,name=tcListenerLookupMode,proto3" json:"tcListenerLookupMode,omitempty"`
-	TcAttachmentMode             string                         `protobuf:"bytes,36,opt,name=tcAttachmentMode,proto3" json:"tcAttachmentMode,omitempty"`
-	TcDeliveryInterface          string                         `protobuf:"bytes,37,opt,name=tcDeliveryInterface,proto3" json:"tcDeliveryInterface,omitempty"`
-	TcDeliveryInterfaceIndex     int32                          `protobuf:"varint,38,opt,name=tcDeliveryInterfaceIndex,proto3" json:"tcDeliveryInterfaceIndex,omitempty"`
-	TcRoutingMark                uint32                         `protobuf:"varint,39,opt,name=tcRoutingMark,proto3" json:"tcRoutingMark,omitempty"`
-	TcRoutingTable               int32                          `protobuf:"varint,40,opt,name=tcRoutingTable,proto3" json:"tcRoutingTable,omitempty"`
-	TcRoutingPriority            int32                          `protobuf:"varint,41,opt,name=tcRoutingPriority,proto3" json:"tcRoutingPriority,omitempty"`
-	TcAttachmentCount            int32                          `protobuf:"varint,42,opt,name=tcAttachmentCount,proto3" json:"tcAttachmentCount,omitempty"`
-	TcRetiredAttachmentCount     int32                          `protobuf:"varint,43,opt,name=tcRetiredAttachmentCount,proto3" json:"tcRetiredAttachmentCount,omitempty"`
-	TcRetiredDeliveryCount       int32                          `protobuf:"varint,44,opt,name=tcRetiredDeliveryCount,proto3" json:"tcRetiredDeliveryCount,omitempty"`
-	TcRequiresRebuild            bool                           `protobuf:"varint,45,opt,name=tcRequiresRebuild,proto3" json:"tcRequiresRebuild,omitempty"`
-	TcHealthStatus               string                         `protobuf:"bytes,46,opt,name=tcHealthStatus,proto3" json:"tcHealthStatus,omitempty"`
-	TcLastHealthCheckAt          *int64                         `protobuf:"varint,47,opt,name=tcLastHealthCheckAt,proto3,oneof" json:"tcLastHealthCheckAt,omitempty"`
-	TcLastReconcileAt            *int64                         `protobuf:"varint,48,opt,name=tcLastReconcileAt,proto3,oneof" json:"tcLastReconcileAt,omitempty"`
-	TcNetworkGeneration          uint64                         `protobuf:"varint,49,opt,name=tcNetworkGeneration,proto3" json:"tcNetworkGeneration,omitempty"`
-	LocalUdpState                string                         `protobuf:"bytes,50,opt,name=localUdpState,proto3" json:"localUdpState,omitempty"`
-	LocalUdpRecoveryMode         string                         `protobuf:"bytes,51,opt,name=localUdpRecoveryMode,proto3" json:"localUdpRecoveryMode,omitempty"`
-	LocalUdpMapPressure          string                         `protobuf:"bytes,52,opt,name=localUdpMapPressure,proto3" json:"localUdpMapPressure,omitempty"`
-	LocalUdpNetworkGeneration    uint32                         `protobuf:"varint,53,opt,name=localUdpNetworkGeneration,proto3" json:"localUdpNetworkGeneration,omitempty"`
-	PolicyEpoch                  *EBPFPolicyEpochDiagnostics    `protobuf:"bytes,54,opt,name=policyEpoch,proto3" json:"policyEpoch,omitempty"`
-	LocalSelfBypassMode          string                         `protobuf:"bytes,55,opt,name=localSelfBypassMode,proto3" json:"localSelfBypassMode,omitempty"`
-	LocalSelfBypassCleanupMode   string                         `protobuf:"bytes,56,opt,name=localSelfBypassCleanupMode,proto3" json:"localSelfBypassCleanupMode,omitempty"`
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	state                         protoimpl.MessageState         `protogen:"open.v1"`
+	ObservedAt                    int64                          `protobuf:"varint,2,opt,name=observedAt,proto3" json:"observedAt,omitempty"`
+	Tag                           string                         `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
+	State                         string                         `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
+	LocalEnabled                  bool                           `protobuf:"varint,5,opt,name=localEnabled,proto3" json:"localEnabled,omitempty"`
+	LocalDataPlane                string                         `protobuf:"bytes,6,opt,name=localDataPlane,proto3" json:"localDataPlane,omitempty"`
+	SharedEnabled                 bool                           `protobuf:"varint,7,opt,name=sharedEnabled,proto3" json:"sharedEnabled,omitempty"`
+	SharedDataPlane               string                         `protobuf:"bytes,8,opt,name=sharedDataPlane,proto3" json:"sharedDataPlane,omitempty"`
+	FakeIPICMPReply               bool                           `protobuf:"varint,9,opt,name=fakeIPICMPReply,proto3" json:"fakeIPICMPReply,omitempty"`
+	Attachments                   []*EBPFAttachmentDiagnostics   `protobuf:"bytes,10,rep,name=attachments,proto3" json:"attachments,omitempty"`
+	LastError                     string                         `protobuf:"bytes,11,opt,name=lastError,proto3" json:"lastError,omitempty"`
+	LastErrorAt                   *int64                         `protobuf:"varint,12,opt,name=lastErrorAt,proto3,oneof" json:"lastErrorAt,omitempty"`
+	LastRecoveryAt                *int64                         `protobuf:"varint,13,opt,name=lastRecoveryAt,proto3,oneof" json:"lastRecoveryAt,omitempty"`
+	RecoveryPending               bool                           `protobuf:"varint,14,opt,name=recoveryPending,proto3" json:"recoveryPending,omitempty"`
+	RecoveryUnrecoverable         bool                           `protobuf:"varint,15,opt,name=recoveryUnrecoverable,proto3" json:"recoveryUnrecoverable,omitempty"`
+	NextRetryAt                   *int64                         `protobuf:"varint,16,opt,name=nextRetryAt,proto3,oneof" json:"nextRetryAt,omitempty"`
+	UdpSessionCount               int64                          `protobuf:"varint,23,opt,name=udpSessionCount,proto3" json:"udpSessionCount,omitempty"`
+	UdpReplySockets               *EBPFUDPReplySocketDiagnostics `protobuf:"bytes,24,opt,name=udpReplySockets,proto3" json:"udpReplySockets,omitempty"`
+	Counters                      *EBPFCounters                  `protobuf:"bytes,25,opt,name=counters,proto3" json:"counters,omitempty"`
+	UdpNAT                        *EBPFUDPNATDiagnostics         `protobuf:"bytes,26,opt,name=udpNAT,proto3" json:"udpNAT,omitempty"`
+	LocalBypassRuleSet            *EBPFBypassRuleSetDiagnostics  `protobuf:"bytes,27,opt,name=localBypassRuleSet,proto3" json:"localBypassRuleSet,omitempty"`
+	SharedBypassRuleSet           *EBPFBypassRuleSetDiagnostics  `protobuf:"bytes,28,opt,name=sharedBypassRuleSet,proto3" json:"sharedBypassRuleSet,omitempty"`
+	LocalCgroupAttachMode         string                         `protobuf:"bytes,29,opt,name=localCgroupAttachMode,proto3" json:"localCgroupAttachMode,omitempty"`
+	LocalUdpCleanupMode           string                         `protobuf:"bytes,30,opt,name=localUdpCleanupMode,proto3" json:"localUdpCleanupMode,omitempty"`
+	LocalUdpUserspaceCleanupMode  string                         `protobuf:"bytes,31,opt,name=localUdpUserspaceCleanupMode,proto3" json:"localUdpUserspaceCleanupMode,omitempty"`
+	LocalUdpStorageMode           string                         `protobuf:"bytes,32,opt,name=localUdpStorageMode,proto3" json:"localUdpStorageMode,omitempty"`
+	LocalUdpTimeMode              string                         `protobuf:"bytes,33,opt,name=localUdpTimeMode,proto3" json:"localUdpTimeMode,omitempty"`
+	TcBackendMode                 string                         `protobuf:"bytes,34,opt,name=tcBackendMode,proto3" json:"tcBackendMode,omitempty"`
+	TcListenerLookupMode          string                         `protobuf:"bytes,35,opt,name=tcListenerLookupMode,proto3" json:"tcListenerLookupMode,omitempty"`
+	TcAttachmentMode              string                         `protobuf:"bytes,36,opt,name=tcAttachmentMode,proto3" json:"tcAttachmentMode,omitempty"`
+	TcDeliveryInterface           string                         `protobuf:"bytes,37,opt,name=tcDeliveryInterface,proto3" json:"tcDeliveryInterface,omitempty"`
+	TcDeliveryInterfaceIndex      int32                          `protobuf:"varint,38,opt,name=tcDeliveryInterfaceIndex,proto3" json:"tcDeliveryInterfaceIndex,omitempty"`
+	TcRoutingMark                 uint32                         `protobuf:"varint,39,opt,name=tcRoutingMark,proto3" json:"tcRoutingMark,omitempty"`
+	TcRoutingTable                int32                          `protobuf:"varint,40,opt,name=tcRoutingTable,proto3" json:"tcRoutingTable,omitempty"`
+	TcRoutingPriority             int32                          `protobuf:"varint,41,opt,name=tcRoutingPriority,proto3" json:"tcRoutingPriority,omitempty"`
+	TcAttachmentCount             int32                          `protobuf:"varint,42,opt,name=tcAttachmentCount,proto3" json:"tcAttachmentCount,omitempty"`
+	TcRetiredAttachmentCount      int32                          `protobuf:"varint,43,opt,name=tcRetiredAttachmentCount,proto3" json:"tcRetiredAttachmentCount,omitempty"`
+	TcRetiredDeliveryCount        int32                          `protobuf:"varint,44,opt,name=tcRetiredDeliveryCount,proto3" json:"tcRetiredDeliveryCount,omitempty"`
+	TcRequiresRebuild             bool                           `protobuf:"varint,45,opt,name=tcRequiresRebuild,proto3" json:"tcRequiresRebuild,omitempty"`
+	TcHealthStatus                string                         `protobuf:"bytes,46,opt,name=tcHealthStatus,proto3" json:"tcHealthStatus,omitempty"`
+	TcLastHealthCheckAt           *int64                         `protobuf:"varint,47,opt,name=tcLastHealthCheckAt,proto3,oneof" json:"tcLastHealthCheckAt,omitempty"`
+	TcLastReconcileAt             *int64                         `protobuf:"varint,48,opt,name=tcLastReconcileAt,proto3,oneof" json:"tcLastReconcileAt,omitempty"`
+	TcNetworkGeneration           uint64                         `protobuf:"varint,49,opt,name=tcNetworkGeneration,proto3" json:"tcNetworkGeneration,omitempty"`
+	LocalUdpState                 string                         `protobuf:"bytes,50,opt,name=localUdpState,proto3" json:"localUdpState,omitempty"`
+	LocalUdpRecoveryMode          string                         `protobuf:"bytes,51,opt,name=localUdpRecoveryMode,proto3" json:"localUdpRecoveryMode,omitempty"`
+	LocalUdpMapPressure           string                         `protobuf:"bytes,52,opt,name=localUdpMapPressure,proto3" json:"localUdpMapPressure,omitempty"`
+	LocalUdpNetworkGeneration     uint32                         `protobuf:"varint,53,opt,name=localUdpNetworkGeneration,proto3" json:"localUdpNetworkGeneration,omitempty"`
+	PolicyEpoch                   *EBPFPolicyEpochDiagnostics    `protobuf:"bytes,54,opt,name=policyEpoch,proto3" json:"policyEpoch,omitempty"`
+	LocalSelfBypassMode           string                         `protobuf:"bytes,55,opt,name=localSelfBypassMode,proto3" json:"localSelfBypassMode,omitempty"`
+	LocalSelfBypassCleanupMode    string                         `protobuf:"bytes,56,opt,name=localSelfBypassCleanupMode,proto3" json:"localSelfBypassCleanupMode,omitempty"`
+	LocalUdpReleaseObserver       bool                           `protobuf:"varint,57,opt,name=localUdpReleaseObserver,proto3" json:"localUdpReleaseObserver,omitempty"`
+	LocalUdpReleaseFallbackReason string                         `protobuf:"bytes,58,opt,name=localUdpReleaseFallbackReason,proto3" json:"localUdpReleaseFallbackReason,omitempty"`
+	LocalUdpReleaseProgram        string                         `protobuf:"bytes,59,opt,name=localUdpReleaseProgram,proto3" json:"localUdpReleaseProgram,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *EBPFInboundDiagnostics) Reset() {
@@ -8213,6 +8216,27 @@ func (x *EBPFInboundDiagnostics) GetLocalSelfBypassMode() string {
 func (x *EBPFInboundDiagnostics) GetLocalSelfBypassCleanupMode() string {
 	if x != nil {
 		return x.LocalSelfBypassCleanupMode
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpReleaseObserver() bool {
+	if x != nil {
+		return x.LocalUdpReleaseObserver
+	}
+	return false
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpReleaseFallbackReason() string {
+	if x != nil {
+		return x.LocalUdpReleaseFallbackReason
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalUdpReleaseProgram() string {
+	if x != nil {
+		return x.LocalUdpReleaseProgram
 	}
 	return ""
 }
@@ -9509,7 +9533,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
-	"\bpressure\x18\v \x01(\tR\bpressure\"\xed\x13\n" +
+	"\bpressure\x18\v \x01(\tR\bpressure\"\xa5\x15\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9562,7 +9586,10 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x19localUdpNetworkGeneration\x185 \x01(\rR\x19localUdpNetworkGeneration\x12D\n" +
 	"\vpolicyEpoch\x186 \x01(\v2\".daemon.EBPFPolicyEpochDiagnosticsR\vpolicyEpoch\x120\n" +
 	"\x13localSelfBypassMode\x187 \x01(\tR\x13localSelfBypassMode\x12>\n" +
-	"\x1alocalSelfBypassCleanupMode\x188 \x01(\tR\x1alocalSelfBypassCleanupModeB\x0e\n" +
+	"\x1alocalSelfBypassCleanupMode\x188 \x01(\tR\x1alocalSelfBypassCleanupMode\x128\n" +
+	"\x17localUdpReleaseObserver\x189 \x01(\bR\x17localUdpReleaseObserver\x12D\n" +
+	"\x1dlocalUdpReleaseFallbackReason\x18: \x01(\tR\x1dlocalUdpReleaseFallbackReason\x126\n" +
+	"\x16localUdpReleaseProgram\x18; \x01(\tR\x16localUdpReleaseProgramB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
