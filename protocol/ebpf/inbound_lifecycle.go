@@ -183,6 +183,7 @@ func (i *Inbound) startInbound() error {
 		if err = cgroupBackend.Attach(); err != nil {
 			return err
 		}
+		i.startCgroupRecoveryScheduler(cgroupBackend)
 		i.startCgroupUDPReleaseReader(cgroupBackend)
 	}
 	if backend != nil {
@@ -381,14 +382,15 @@ func (i *Inbound) startCgroupUDPReleaseReader(backend *commonEBPF.CgroupBackend)
 	go func() {
 		defer i.cgroupReleaseWait.Done()
 		for {
-			socketCookie, err := backend.ReadUDPRelease()
+			event, err := backend.ReadUDPRelease()
 			if err != nil {
 				if !errors.Is(err, os.ErrClosed) {
 					i.logger.Warn("read cgroup eBPF UDP socket-release event: ", err)
 				}
 				return
 			}
-			i.udpNat.ReleaseSocket(socketCookie)
+			i.udpNat.ReleaseSocket(event.SocketCookie)
+			i.enqueueCgroupRecoveryEvent(backend, event)
 		}
 	}()
 }
@@ -523,6 +525,7 @@ func (i *Inbound) closeResources() error {
 	cgroupBackend := i.takeCgroupBackend()
 	cgroupErr := error(nil)
 	if cgroupBackend != nil {
+		i.stopCgroupRecoveryScheduler()
 		cgroupErr = cgroupBackend.Close()
 		i.cgroupReleaseWait.Wait()
 		// Close keeps the runtime when a program could not be detached, because a
