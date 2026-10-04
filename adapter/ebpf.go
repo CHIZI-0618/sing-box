@@ -4,7 +4,7 @@ import "time"
 
 // EBPFDiagnosticsSchemaVersion versions the complete GetEBPFDiagnostics
 // response. It remains available even when no eBPF inbound is running.
-const EBPFDiagnosticsSchemaVersion = 12
+const EBPFDiagnosticsSchemaVersion = 13
 
 // EBPFDiagnosticsProvider exposes a running inbound's eBPF state to the
 // sing-box API without coupling the API service to the optional eBPF package.
@@ -54,38 +54,41 @@ type EBPFRuntimeDiagnostics struct {
 	Tag           string
 	State         string
 
-	LocalEnabled                 bool
-	LocalDataPlane               string
-	LocalCgroupAttachMode        string
-	LocalSelfBypassMode          string
-	LocalSelfBypassCleanupMode   string
-	LocalUDPCleanupMode          string
-	LocalUDPUserspaceCleanupMode string
-	LocalUDPStorageMode          string
-	LocalUDPTimeMode             string
-	LocalUDPState                string
-	LocalUDPRecoveryMode         string
-	LocalUDPMapPressure          string
-	LocalUDPNetworkGeneration    uint32
-	SharedEnabled                bool
-	SharedDataPlane              string
-	FakeIPICMPReply              bool
-	TCBackendMode                string
-	TCListenerLookupMode         string
-	TCAttachmentMode             string
-	TCDeliveryInterface          string
-	TCDeliveryInterfaceIndex     int
-	TCRoutingMark                uint32
-	TCRoutingTable               int
-	TCRoutingPriority            int
-	TCAttachmentCount            int
-	TCRetiredAttachmentCount     int
-	TCRetiredDeliveryCount       int
-	TCRequiresRebuild            bool
-	TCHealthStatus               string
-	TCLastHealthCheckAt          *time.Time
-	TCLastReconcileAt            *time.Time
-	TCNetworkGeneration          uint64
+	LocalEnabled                  bool
+	LocalDataPlane                string
+	LocalCgroupAttachMode         string
+	LocalSelfBypassMode           string
+	LocalSelfBypassCleanupMode    string
+	LocalUDPCleanupMode           string
+	LocalUDPUserspaceCleanupMode  string
+	LocalUDPStorageMode           string
+	LocalUDPTimeMode              string
+	LocalUDPState                 string
+	LocalUDPRecoveryMode          string
+	LocalUDPMapPressure           string
+	LocalUDPNetworkGeneration     uint32
+	LocalUDPReleaseObserver       bool
+	LocalUDPReleaseFallbackReason string
+	LocalUDPReleaseProgram        string
+	SharedEnabled                 bool
+	SharedDataPlane               string
+	FakeIPICMPReply               bool
+	TCBackendMode                 string
+	TCListenerLookupMode          string
+	TCAttachmentMode              string
+	TCDeliveryInterface           string
+	TCDeliveryInterfaceIndex      int
+	TCRoutingMark                 uint32
+	TCRoutingTable                int
+	TCRoutingPriority             int
+	TCAttachmentCount             int
+	TCRetiredAttachmentCount      int
+	TCRetiredDeliveryCount        int
+	TCRequiresRebuild             bool
+	TCHealthStatus                string
+	TCLastHealthCheckAt           *time.Time
+	TCLastReconcileAt             *time.Time
+	TCNetworkGeneration           uint64
 
 	Attachments []EBPFAttachmentDiagnostics
 

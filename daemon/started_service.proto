@@ -900,6 +900,9 @@ message EBPFInboundDiagnostics {
   EBPFPolicyEpochDiagnostics policyEpoch = 54;
   string localSelfBypassMode = 55;
   string localSelfBypassCleanupMode = 56;
+  bool localUdpReleaseObserver = 57;
+  string localUdpReleaseFallbackReason = 58;
+  string localUdpReleaseProgram = 59;
 }
 
 message EBPFAttachmentDiagnostics {
