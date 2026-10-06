@@ -7843,6 +7843,8 @@ type EBPFInboundDiagnostics struct {
 	LocalUdpReleaseObserver       bool                           `protobuf:"varint,57,opt,name=localUdpReleaseObserver,proto3" json:"localUdpReleaseObserver,omitempty"`
 	LocalUdpReleaseFallbackReason string                         `protobuf:"bytes,58,opt,name=localUdpReleaseFallbackReason,proto3" json:"localUdpReleaseFallbackReason,omitempty"`
 	LocalUdpReleaseProgram        string                         `protobuf:"bytes,59,opt,name=localUdpReleaseProgram,proto3" json:"localUdpReleaseProgram,omitempty"`
+	WaitingRoles                  []string                       `protobuf:"bytes,60,rep,name=waitingRoles,proto3" json:"waitingRoles,omitempty"`
+	WaitingInterfaces             []string                       `protobuf:"bytes,61,rep,name=waitingInterfaces,proto3" json:"waitingInterfaces,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -8239,6 +8241,20 @@ func (x *EBPFInboundDiagnostics) GetLocalUdpReleaseProgram() string {
 		return x.LocalUdpReleaseProgram
 	}
 	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetWaitingRoles() []string {
+	if x != nil {
+		return x.WaitingRoles
+	}
+	return nil
+}
+
+func (x *EBPFInboundDiagnostics) GetWaitingInterfaces() []string {
+	if x != nil {
+		return x.WaitingInterfaces
+	}
+	return nil
 }
 
 type EBPFAttachmentDiagnostics struct {
@@ -9533,7 +9549,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
-	"\bpressure\x18\v \x01(\tR\bpressure\"\xa5\x15\n" +
+	"\bpressure\x18\v \x01(\tR\bpressure\"\xf7\x15\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9589,7 +9605,9 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x1alocalSelfBypassCleanupMode\x188 \x01(\tR\x1alocalSelfBypassCleanupMode\x128\n" +
 	"\x17localUdpReleaseObserver\x189 \x01(\bR\x17localUdpReleaseObserver\x12D\n" +
 	"\x1dlocalUdpReleaseFallbackReason\x18: \x01(\tR\x1dlocalUdpReleaseFallbackReason\x126\n" +
-	"\x16localUdpReleaseProgram\x18; \x01(\tR\x16localUdpReleaseProgramB\x0e\n" +
+	"\x16localUdpReleaseProgram\x18; \x01(\tR\x16localUdpReleaseProgram\x12\"\n" +
+	"\fwaitingRoles\x18< \x03(\tR\fwaitingRoles\x12,\n" +
+	"\x11waitingInterfaces\x18= \x03(\tR\x11waitingInterfacesB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +

@@ -90,10 +90,24 @@ type udpClientState struct {
 }
 
 type udpRedirectBinding struct {
-	replyAlias      bool
-	redirectAddress netip.Addr
-	packetInfo      []byte
-	connected       bool
+	replyAlias                    bool
+	redirectAddress               netip.Addr
+	packetInfo                    []byte
+	connected                     bool
+	tcAssignmentKeyInterfaceIndex uint32
+	tcAssignmentKeyValid          bool
+	tcAssignment                  commonEBPF.TCAssignment
+}
+
+type tcAssignmentCleanup struct {
+	destination       netip.AddrPort
+	keyInterfaceIndex uint32
+	assignment        commonEBPF.TCAssignment
+}
+
+type udpSessionCleanup struct {
+	cgroupRedirects []netip.Addr
+	tcAssignments   []tcAssignmentCleanup
 }
 
 func (t *udpClientTable) load(key udpSessionKey) (*udpClientState, bool) {
@@ -271,6 +285,27 @@ func (t *udpClientTable) setDirectBinding(
 	state.bindings[destination] = udpRedirectBinding{}
 }
 
+func (t *udpClientTable) setDirectAssignmentBinding(
+	key udpSessionKey,
+	destination netip.AddrPort,
+	sourceMAC net.HardwareAddr,
+	assignmentKeyInterfaceIndex uint32,
+	assignment commonEBPF.TCAssignment,
+) {
+	state := t.loadOrCreate(key)
+	state.access.Lock()
+	defer state.access.Unlock()
+	if len(sourceMAC) > 0 {
+		state.sourceMAC = append(state.sourceMAC[:0], sourceMAC...)
+	}
+	state.socketCookie = assignment.SocketCookie
+	state.bindings[destination] = udpRedirectBinding{
+		tcAssignmentKeyInterfaceIndex: assignmentKeyInterfaceIndex,
+		tcAssignmentKeyValid:          true,
+		tcAssignment:                  assignment,
+	}
+}
+
 func (t *udpClientTable) setDirectReplyBinding(
 	key udpSessionKey,
 	expected *udpClientState,
@@ -299,17 +334,31 @@ func (t *udpClientTable) setDirectReplyBinding(
 }
 
 func (t *udpClientTable) delete(key udpSessionKey, expected *udpClientState) []netip.Addr {
+	return t.deleteWithCleanup(key, expected).cgroupRedirects
+}
+
+func (t *udpClientTable) deleteWithCleanup(key udpSessionKey, expected *udpClientState) udpSessionCleanup {
 	shard := t.clientShard(key)
 	shard.access.Lock()
 	defer shard.access.Unlock()
 	if shard.clients[key] != expected {
-		return nil
+		return udpSessionCleanup{}
 	}
 	delete(shard.clients, key)
 	expected.access.Lock()
 	redirects := make([]netip.Addr, 0, len(expected.cgroupOriginals))
 	for address := range expected.cgroupOriginals {
 		redirects = append(redirects, address)
+	}
+	assignments := make([]tcAssignmentCleanup, 0, len(expected.bindings))
+	for destination, binding := range expected.bindings {
+		if binding.tcAssignmentKeyValid {
+			assignments = append(assignments, tcAssignmentCleanup{
+				destination:       destination,
+				keyInterfaceIndex: binding.tcAssignmentKeyInterfaceIndex,
+				assignment:        binding.tcAssignment,
+			})
+		}
 	}
 	expected.closed = true
 	clear(expected.bindings)
@@ -325,7 +374,7 @@ func (t *udpClientTable) delete(key udpSessionKey, expected *udpClientState) []n
 		}
 	}
 	t.redirectAccess.Unlock()
-	return redirects
+	return udpSessionCleanup{cgroupRedirects: redirects, tcAssignments: assignments}
 }
 
 func (s *udpClientState) isCgroupDataPlane() bool {

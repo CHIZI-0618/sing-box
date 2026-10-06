@@ -130,12 +130,29 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 13 {
-		t.Fatalf("schema version = %d, want 13 after adding release-path diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 14 {
+		t.Fatalf("schema version = %d, want 14 after adding waiting attachment diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 13 {
-		t.Fatalf("diagnostics schema version = %d, want 13", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 14 {
+		t.Fatalf("diagnostics schema version = %d, want 14", diagnostics.SchemaVersion)
+	}
+}
+
+func TestDiagnosticsReportsWaitingSharedInterface(t *testing.T) {
+	inbound := &Inbound{
+		sharedEnabled: true,
+		sharedOptions: option.EBPFSharedOptions{Interface: []string{"wlan2", "rmnet0"}},
+	}
+	diagnostics := inbound.Diagnostics()
+	if diagnostics.State != EBPFDiagnosticsStateWaitingForInterface {
+		t.Fatalf("state = %s, want %s", diagnostics.State, EBPFDiagnosticsStateWaitingForInterface)
+	}
+	if len(diagnostics.WaitingRoles) != 1 || diagnostics.WaitingRoles[0] != "shared" {
+		t.Fatalf("waiting roles = %v, want [shared]", diagnostics.WaitingRoles)
+	}
+	if len(diagnostics.WaitingInterfaces) != 2 || diagnostics.WaitingInterfaces[0] != "wlan2" || diagnostics.WaitingInterfaces[1] != "rmnet0" {
+		t.Fatalf("waiting interfaces = %v, want [wlan2 rmnet0]", diagnostics.WaitingInterfaces)
 	}
 }
 

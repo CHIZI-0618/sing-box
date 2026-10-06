@@ -150,6 +150,8 @@ type EBPFDiagnostics struct {
 	TCLastHealthCheckAt           *time.Time `json:"tc_last_health_check_at,omitempty"`
 	TCLastReconcileAt             *time.Time `json:"tc_last_reconcile_at,omitempty"`
 	TCNetworkGeneration           uint64     `json:"tc_network_generation,omitempty"`
+	WaitingRoles                  []string   `json:"waiting_roles,omitempty"`
+	WaitingInterfaces             []string   `json:"waiting_interfaces,omitempty"`
 
 	Attachments []EBPFAttachmentDiagnostics `json:"attachments,omitempty"`
 
@@ -384,6 +386,8 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCLastHealthCheckAt:           diagnostics.TCLastHealthCheckAt,
 		TCLastReconcileAt:             diagnostics.TCLastReconcileAt,
 		TCNetworkGeneration:           diagnostics.TCNetworkGeneration,
+		WaitingRoles:                  append([]string(nil), diagnostics.WaitingRoles...),
+		WaitingInterfaces:             append([]string(nil), diagnostics.WaitingInterfaces...),
 		Attachments:                   attachments,
 		LastError:                     diagnostics.LastError,
 		LastErrorAt:                   diagnostics.LastErrorAt,
@@ -604,6 +608,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	sort.Slice(diagnostics.Attachments, func(a, b int) bool {
 		return diagnostics.Attachments[a].InterfaceName < diagnostics.Attachments[b].InterfaceName
 	})
+	diagnostics.WaitingRoles, diagnostics.WaitingInterfaces = i.waitingAttachmentDiagnostics(diagnostics.Attachments)
 
 	var lastErrorAt time.Time
 	limiters := []*warningLimiter{
@@ -779,6 +784,60 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	return diagnostics
 }
 
+func (i *Inbound) waitingAttachmentDiagnostics(attachments []EBPFAttachmentDiagnostics) ([]string, []string) {
+	roles := make([]string, 0, 2)
+	interfaces := make([]string, 0, 2)
+	add := func(role, interfaceName string) {
+		roleKnown := false
+		for _, existing := range roles {
+			if existing == role {
+				roleKnown = true
+				break
+			}
+		}
+		if !roleKnown {
+			roles = append(roles, role)
+		}
+		if interfaceName != "" {
+			for _, existing := range interfaces {
+				if existing == interfaceName {
+					return
+				}
+			}
+			interfaces = append(interfaces, interfaceName)
+		}
+	}
+	if i.localEnabled && !attachmentHasRole(attachments, "local") {
+		defaultInterface := i.monitoredDefaultInterfaceName()
+		if defaultInterface == "" {
+			defaultInterface = "default"
+		}
+		add("local", defaultInterface)
+	}
+	if i.sharedEnabled && !attachmentHasRole(attachments, "shared") {
+		configured := activeSharedInterfaces(i.sharedOptions.Interface, i.monitoredDefaultInterfaceName())
+		if len(configured) == 0 {
+			add("shared", "configured interface")
+		} else {
+			for _, interfaceName := range configured {
+				if !attachmentHasInterface(attachments, interfaceName, "shared") {
+					add("shared", interfaceName)
+				}
+			}
+		}
+	}
+	return roles, interfaces
+}
+
+func attachmentHasInterface(attachments []EBPFAttachmentDiagnostics, interfaceName, role string) bool {
+	for _, attachment := range attachments {
+		if attachment.InterfaceName == interfaceName && (attachment.Role == role || attachment.Role == "local+shared") {
+			return true
+		}
+	}
+	return false
+}
+
 type sharedNetworkFragmentPassStats interface {
 	IngressFragmentPasses() (uint64, error)
 	EgressFragmentPasses() (uint64, error)
@@ -859,6 +918,12 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 	}
 	if d.SharedEnabled {
 		lines = append(lines, fmt.Sprintf("Shared data plane: %s", d.SharedDataPlane))
+	}
+	if len(d.WaitingRoles) > 0 {
+		lines = append(lines, fmt.Sprintf("Waiting paths: %s", strings.Join(d.WaitingRoles, ", ")))
+	}
+	if len(d.WaitingInterfaces) > 0 {
+		lines = append(lines, fmt.Sprintf("Waiting interfaces: %s", strings.Join(d.WaitingInterfaces, ", ")))
 	}
 	if d.TCBackendMode != "" {
 		lines = append(lines, fmt.Sprintf(
@@ -970,16 +1035,14 @@ func (i *Inbound) logStartupSummary() {
 		mountsSummary = strings.Join(mounts, ", ")
 	}
 
-	waiting := make([]string, 0, 2)
-	if diagnostics.LocalEnabled && !attachmentHasRole(diagnostics.Attachments, "local") {
-		waiting = append(waiting, "local")
-	}
-	if diagnostics.SharedEnabled && !attachmentHasRole(diagnostics.Attachments, "shared") {
-		waiting = append(waiting, "shared")
-	}
+	waiting := diagnostics.WaitingRoles
 	waitingSummary := "none"
 	if len(waiting) > 0 {
 		waitingSummary = strings.Join(waiting, ", ")
+	}
+	waitingInterfacesSummary := "none"
+	if len(diagnostics.WaitingInterfaces) > 0 {
+		waitingInterfacesSummary = strings.Join(diagnostics.WaitingInterfaces, ", ")
 	}
 
 	fakeIPICMPSummary := "off"
@@ -998,6 +1061,7 @@ func (i *Inbound) logStartupSummary() {
 
 	i.logger.Debug(
 		"eBPF inbound started: paths=[", pathsSummary, "] mounts=[", mountsSummary,
-		"] waiting_for_interface=[", waitingSummary, "] fakeip_icmp=[", fakeIPICMPSummary, "]",
+		"] waiting_for_interface=[", waitingSummary, "] waiting_interfaces=[", waitingInterfacesSummary,
+		"] fakeip_icmp=[", fakeIPICMPSummary, "]",
 	)
 }

@@ -33,6 +33,32 @@ func TestUDPDirectBinding(t *testing.T) {
 	}
 }
 
+func TestUDPDirectBindingCleanupRetainsAssignmentIdentity(t *testing.T) {
+	var table udpClientTable
+	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	destination := netip.MustParseAddrPort("[2001:db8::53]:443")
+	key := udpSessionKey{Source: client, Scope: udpSessionScopeSharedTC, SocketCookie: 42, InterfaceIndex: 17}
+	expected := commonEBPF.TCAssignment{
+		SocketCookie:   42,
+		InterfaceIndex: 17,
+		Path:           commonEBPF.TCPathShared,
+		SourceMACValid: 1,
+	}
+	table.setDirectAssignmentBinding(key, destination, net.HardwareAddr{2, 0, 0, 0, 0, 1}, 17, expected)
+	state, loaded := table.load(key)
+	if !loaded {
+		t.Fatal("client state was not created")
+	}
+	cleanup := table.deleteWithCleanup(key, state)
+	if len(cleanup.tcAssignments) != 1 {
+		t.Fatalf("assignment cleanup count = %d, want 1", len(cleanup.tcAssignments))
+	}
+	entry := cleanup.tcAssignments[0]
+	if entry.destination != destination || entry.keyInterfaceIndex != 17 || entry.assignment != expected {
+		t.Fatalf("unexpected assignment cleanup entry: %+v", entry)
+	}
+}
+
 func TestUDPClientTableSeparatesSocketCookies(t *testing.T) {
 	var table udpClientTable
 	client := netip.MustParseAddrPort("192.0.2.10:53000")

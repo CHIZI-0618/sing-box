@@ -68,9 +68,11 @@ func (i *Inbound) newTCPacket(
 		return false
 	}
 	client := source.AddrPort()
-	assignment, err := backend.LookupAssignment(commonEBPF.ProtocolUDP, client, destination, interfaceIndex, false)
+	assignmentKeyInterfaceIndex := interfaceIndex
+	assignment, err := backend.LookupAssignment(commonEBPF.ProtocolUDP, client, destination, assignmentKeyInterfaceIndex, false)
 	if err != nil && interfaceIndex != 0 {
-		assignment, err = backend.LookupAssignment(commonEBPF.ProtocolUDP, client, destination, 0, false)
+		assignmentKeyInterfaceIndex = 0
+		assignment, err = backend.LookupAssignment(commonEBPF.ProtocolUDP, client, destination, assignmentKeyInterfaceIndex, false)
 	}
 	if err != nil {
 		i.counters.assignmentLookupFailures.Add(1)
@@ -91,7 +93,7 @@ func (i *Inbound) newTCPacket(
 		SocketCookie:   assignment.SocketCookie,
 		InterfaceIndex: assignment.InterfaceIndex,
 	}
-	i.udpClientTable.setDirectBinding(key, destination, sourceMAC, assignment.SocketCookie)
+	i.udpClientTable.setDirectAssignmentBinding(key, destination, sourceMAC, assignmentKeyInterfaceIndex, assignment)
 	if takeOwnership {
 		i.udpNat.NewPacketBuffer(key, buffer, source, M.SocksaddrFromNetIP(destination), nil)
 		return true
@@ -132,7 +134,36 @@ func (i *Inbound) prepareTCPacketConnection(
 	clientState := i.udpClientTable.loadOrCreate(key)
 	writer := &tcPacketWriter{inbound: i, key: key, clientState: clientState}
 	return true, ctx, writer, func(error) {
-		i.deleteCgroupUDPRedirects(i.udpClientTable.delete(key, clientState))
+		cleanup := i.udpClientTable.deleteWithCleanup(key, clientState)
+		i.deleteCgroupUDPRedirects(cleanup.cgroupRedirects)
+		i.deleteTCAssignments(key, cleanup.tcAssignments)
+	}
+}
+
+func (i *Inbound) deleteTCAssignments(key udpSessionKey, assignments []tcAssignmentCleanup) {
+	if len(assignments) == 0 || (key.Scope != udpSessionScopeLocalTC && key.Scope != udpSessionScopeSharedTC) {
+		return
+	}
+	i.tcDataPlaneAccess.RLock()
+	dataPlane := i.tcDataPlane
+	i.tcDataPlaneAccess.RUnlock()
+	if dataPlane == nil {
+		return
+	}
+	backend := dataPlane.Backend()
+	if backend == nil || backend.IsClosed() {
+		return
+	}
+	for _, cleanup := range assignments {
+		if _, err := backend.RemoveAssignmentIfMatch(
+			commonEBPF.ProtocolUDP,
+			key.Source,
+			cleanup.destination,
+			cleanup.keyInterfaceIndex,
+			cleanup.assignment,
+		); err != nil && !errors.Is(err, unix.EBADF) {
+			i.udpWarnings.cleanup.warn(i.logger, "delete TC eBPF UDP assignment: ", err)
+		}
 	}
 }
 
