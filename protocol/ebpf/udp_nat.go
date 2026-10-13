@@ -132,7 +132,6 @@ func (s *udpNATService) connection(
 	}
 	var (
 		newContext context.Context
-		newOnClose N.CloseHandlerFunc
 	)
 	conn, updated, loaded := s.cache.GetAndRefreshOrAdd(key, func() (*udpNATConn, bool) {
 		ok, ctx, writer, onClose := s.prepare(key, source, destination, userData)
@@ -148,13 +147,13 @@ func (s *udpNATService) connection(
 			packetChan:   make(chan *N.PacketBuffer, 64),
 			doneChan:     make(chan struct{}),
 			readDeadline: pipe.MakeDeadline(),
+			onClose:      onClose,
 		}
 		newConn.cleanupEntry = &udpNATCleanupEntry{
 			conn:  newConn,
 			index: -1,
 		}
 		newContext = ctx
-		newOnClose = onClose
 		return newConn, true
 	})
 	if !loaded {
@@ -162,28 +161,24 @@ func (s *udpNATService) connection(
 	}
 	if s.closed.Load() {
 		s.cache.Remove(key)
-		if !updated && newOnClose != nil {
-			newOnClose(net.ErrClosed)
+		if !updated {
+			conn.handleClose(net.ErrClosed)
 		}
 		return nil, false
 	}
 	if !updated {
 		if !s.registerReleaseConnection(conn) {
 			s.cache.Remove(key)
-			if newOnClose != nil {
-				newOnClose(net.ErrClosed)
-			}
+			conn.handleClose(net.ErrClosed)
 			return nil, false
 		}
 		s.cleanup.addOrUpdate(conn.cleanupEntry, time.Now().Add(s.timeout))
 		if conn.isClosed() {
 			s.cache.Remove(key)
-			if newOnClose != nil {
-				newOnClose(net.ErrClosed)
-			}
+			conn.handleClose(net.ErrClosed)
 			return nil, false
 		}
-		go s.handler.NewPacketConnectionEx(newContext, conn, source, destination, newOnClose)
+		go s.handler.NewPacketConnectionEx(newContext, conn, source, destination, conn.handleClose)
 	}
 	return conn, loaded
 }
@@ -387,6 +382,8 @@ type udpNATConn struct {
 	readDeadline    pipe.Deadline
 	readWaitOptions N.ReadWaitOptions
 	cleanupEntry    *udpNATCleanupEntry
+	onClose         N.CloseHandlerFunc
+	cleanupOnce     sync.Once
 }
 
 var (
@@ -565,6 +562,19 @@ func (c *udpNATConn) close() {
 func (c *udpNATConn) closeFromCache() {
 	c.close()
 	c.service.cleanup.remove(c.cleanupEntry)
+	c.handleClose(net.ErrClosed)
+}
+
+// handleClose owns the cleanup callback passed to the downstream handler. The
+// cache can evict a connection before the handler gets a chance to close it,
+// so eviction must run the same callback. Once also protects the normal
+// handler-close path from repeating map cleanup.
+func (c *udpNATConn) handleClose(err error) {
+	c.cleanupOnce.Do(func() {
+		if c.onClose != nil {
+			c.onClose(err)
+		}
+	})
 }
 
 func (c *udpNATConn) isClosed() bool {

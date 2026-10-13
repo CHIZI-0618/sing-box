@@ -4,6 +4,8 @@ package ebpf
 
 import (
 	"context"
+	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +14,32 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
+
+func TestUDPNATEvictionOwnsCleanupCallback(t *testing.T) {
+	connections := make(chan udpNATTestConnection, 1)
+	var cleanupCalls atomic.Int32
+	service := newUDPNATService(
+		&udpNATTestHandler{connections: connections},
+		func(key udpSessionKey, _ M.Socksaddr, _ M.Socksaddr, _ any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
+			return true, context.WithValue(context.Background(), udpNATContextKey{}, key), udpNATTestWriter{}, func(error) {
+				cleanupCalls.Add(1)
+			}
+		},
+		time.Hour,
+	)
+	t.Cleanup(func() { _ = service.Close() })
+
+	source := M.ParseSocksaddr("192.0.2.10:53000")
+	destination := M.ParseSocksaddr("1.1.1.1:53")
+	key := udpSessionKey{Source: source.AddrPort(), Scope: udpSessionScopeLocalTC, SocketCookie: 7}
+	service.NewPacket(key, [][]byte{[]byte("packet")}, source, destination, nil)
+	connection := receiveUDPNATTestConnection(t, connections).conn.(*udpNATConn)
+	connection.closeFromCache()
+	connection.handleClose(net.ErrClosed)
+	if calls := cleanupCalls.Load(); calls != 1 {
+		t.Fatalf("cleanup callback calls = %d, want 1", calls)
+	}
+}
 
 type udpNATTestConnection struct {
 	conn N.PacketConn
