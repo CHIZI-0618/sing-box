@@ -150,6 +150,9 @@ type EBPFDiagnostics struct {
 	TCLastHealthCheckAt           *time.Time `json:"tc_last_health_check_at,omitempty"`
 	TCLastReconcileAt             *time.Time `json:"tc_last_reconcile_at,omitempty"`
 	TCNetworkGeneration           uint64     `json:"tc_network_generation,omitempty"`
+	TCAssignmentSweepScanned      uint64     `json:"tc_assignment_sweep_scanned,omitempty"`
+	TCAssignmentSweepRemoved      uint64     `json:"tc_assignment_sweep_removed,omitempty"`
+	TCAssignmentSweepComplete     bool       `json:"tc_assignment_sweep_complete"`
 	WaitingRoles                  []string   `json:"waiting_roles,omitempty"`
 	WaitingInterfaces             []string   `json:"waiting_interfaces,omitempty"`
 
@@ -386,6 +389,9 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCLastHealthCheckAt:           diagnostics.TCLastHealthCheckAt,
 		TCLastReconcileAt:             diagnostics.TCLastReconcileAt,
 		TCNetworkGeneration:           diagnostics.TCNetworkGeneration,
+		TCAssignmentSweepScanned:      diagnostics.TCAssignmentSweepScanned,
+		TCAssignmentSweepRemoved:      diagnostics.TCAssignmentSweepRemoved,
+		TCAssignmentSweepComplete:     diagnostics.TCAssignmentSweepComplete,
 		WaitingRoles:                  append([]string(nil), diagnostics.WaitingRoles...),
 		WaitingInterfaces:             append([]string(nil), diagnostics.WaitingInterfaces...),
 		Attachments:                   attachments,
@@ -660,6 +666,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		diagnostics.TCLastReconcileAt = &reconcileAt
 	}
 	diagnostics.TCNetworkGeneration = i.networkGeneration
+	diagnostics.TCAssignmentSweepScanned = i.tcAssignmentSweepScanned.Load()
+	diagnostics.TCAssignmentSweepRemoved = i.tcAssignmentSweepRemoved.Load()
+	diagnostics.TCAssignmentSweepComplete = i.tcAssignmentSweepComplete.Load()
 	if i.diagnostics.haveOutcome {
 		diagnostics.RecoveryPending = i.diagnostics.lastOutcome.general == tcSharedRewriteRecoverable ||
 			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteRecoverable ||

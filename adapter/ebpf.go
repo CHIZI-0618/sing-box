@@ -89,6 +89,9 @@ type EBPFRuntimeDiagnostics struct {
 	TCLastHealthCheckAt           *time.Time
 	TCLastReconcileAt             *time.Time
 	TCNetworkGeneration           uint64
+	TCAssignmentSweepScanned      uint64
+	TCAssignmentSweepRemoved      uint64
+	TCAssignmentSweepComplete     bool
 	WaitingRoles                  []string
 	WaitingInterfaces             []string
 
