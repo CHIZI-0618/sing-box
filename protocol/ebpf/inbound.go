@@ -203,6 +203,7 @@ type Inbound struct {
 	tcAssignmentPressureRounds    atomic.Uint32
 	tcAssignmentSweepRuns         atomic.Uint64
 	tcAssignmentSweepPartial      atomic.Uint64
+	tcAssignmentSweepFailure      atomic.Value
 	tcAssignmentSweepLastAt       atomic.Int64
 	tcAssignmentSweepPartialAt    atomic.Int64
 	tcAssignmentWake              chan struct{}
@@ -377,6 +378,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if inbound.tcPriority == 0 {
 		inbound.tcPriority = defaultTCPriority
 	}
+	inbound.tcAssignmentSweepFailure.Store("")
 	if dnsTransportManager := service.FromContext[adapter.DNSTransportManager](ctx); dnsTransportManager != nil {
 		if fakeIPTransport := dnsTransportManager.FakeIP(); fakeIPTransport != nil {
 			if rangeProvider, loaded := fakeIPTransport.Store().(fakeIPRangeProvider); loaded {

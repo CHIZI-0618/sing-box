@@ -158,6 +158,7 @@ type EBPFDiagnostics struct {
 	TCAssignmentSweepPressure     bool       `json:"tc_assignment_sweep_pressure"`
 	TCAssignmentSweepRuns         uint64     `json:"tc_assignment_sweep_runs,omitempty"`
 	TCAssignmentSweepPartial      uint64     `json:"tc_assignment_sweep_partial,omitempty"`
+	TCAssignmentSweepFailure      string     `json:"tc_assignment_sweep_failure,omitempty"`
 	TCAssignmentSweepLastAt       *time.Time `json:"tc_assignment_sweep_last_at,omitempty"`
 	TCAssignmentSweepPartialAt    *time.Time `json:"tc_assignment_sweep_partial_at,omitempty"`
 	CgroupRecoveryQueueOverflows  uint64     `json:"cgroup_recovery_queue_overflows,omitempty"`
@@ -406,6 +407,7 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCAssignmentSweepPressure:     diagnostics.TCAssignmentSweepPressure,
 		TCAssignmentSweepRuns:         diagnostics.TCAssignmentSweepRuns,
 		TCAssignmentSweepPartial:      diagnostics.TCAssignmentSweepPartial,
+		TCAssignmentSweepFailure:      diagnostics.TCAssignmentSweepFailure,
 		TCAssignmentSweepLastAt:       diagnostics.TCAssignmentSweepLastAt,
 		TCAssignmentSweepPartialAt:    diagnostics.TCAssignmentSweepPartialAt,
 		CgroupRecoveryQueueOverflows:  diagnostics.CgroupRecoveryQueueOverflows,
@@ -692,6 +694,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	diagnostics.TCAssignmentSweepPressure = i.tcAssignmentSweepPressure.Load()
 	diagnostics.TCAssignmentSweepRuns = i.tcAssignmentSweepRuns.Load()
 	diagnostics.TCAssignmentSweepPartial = i.tcAssignmentSweepPartial.Load()
+	if failure, ok := i.tcAssignmentSweepFailure.Load().(string); ok {
+		diagnostics.TCAssignmentSweepFailure = failure
+	}
 	if at := i.tcAssignmentSweepLastAt.Load(); at != 0 {
 		t := time.Unix(0, at)
 		diagnostics.TCAssignmentSweepLastAt = &t
