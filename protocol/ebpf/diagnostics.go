@@ -153,6 +153,15 @@ type EBPFDiagnostics struct {
 	TCAssignmentSweepScanned      uint64     `json:"tc_assignment_sweep_scanned,omitempty"`
 	TCAssignmentSweepRemoved      uint64     `json:"tc_assignment_sweep_removed,omitempty"`
 	TCAssignmentSweepComplete     bool       `json:"tc_assignment_sweep_complete"`
+	TCAssignmentSweepEntries      uint64     `json:"tc_assignment_sweep_entries,omitempty"`
+	TCAssignmentSweepCapacity     uint64     `json:"tc_assignment_sweep_capacity,omitempty"`
+	TCAssignmentSweepPressure     bool       `json:"tc_assignment_sweep_pressure"`
+	TCAssignmentSweepRuns         uint64     `json:"tc_assignment_sweep_runs,omitempty"`
+	TCAssignmentSweepPartial      uint64     `json:"tc_assignment_sweep_partial,omitempty"`
+	TCAssignmentSweepLastAt       *time.Time `json:"tc_assignment_sweep_last_at,omitempty"`
+	TCAssignmentSweepPartialAt    *time.Time `json:"tc_assignment_sweep_partial_at,omitempty"`
+	CgroupRecoveryQueueOverflows  uint64     `json:"cgroup_recovery_queue_overflows,omitempty"`
+	CgroupRecoveryQueueOverflowAt *time.Time `json:"cgroup_recovery_queue_overflow_at,omitempty"`
 	WaitingRoles                  []string   `json:"waiting_roles,omitempty"`
 	WaitingInterfaces             []string   `json:"waiting_interfaces,omitempty"`
 
@@ -392,6 +401,15 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCAssignmentSweepScanned:      diagnostics.TCAssignmentSweepScanned,
 		TCAssignmentSweepRemoved:      diagnostics.TCAssignmentSweepRemoved,
 		TCAssignmentSweepComplete:     diagnostics.TCAssignmentSweepComplete,
+		TCAssignmentSweepEntries:      diagnostics.TCAssignmentSweepEntries,
+		TCAssignmentSweepCapacity:     diagnostics.TCAssignmentSweepCapacity,
+		TCAssignmentSweepPressure:     diagnostics.TCAssignmentSweepPressure,
+		TCAssignmentSweepRuns:         diagnostics.TCAssignmentSweepRuns,
+		TCAssignmentSweepPartial:      diagnostics.TCAssignmentSweepPartial,
+		TCAssignmentSweepLastAt:       diagnostics.TCAssignmentSweepLastAt,
+		TCAssignmentSweepPartialAt:    diagnostics.TCAssignmentSweepPartialAt,
+		CgroupRecoveryQueueOverflows:  diagnostics.CgroupRecoveryQueueOverflows,
+		CgroupRecoveryQueueOverflowAt: diagnostics.CgroupRecoveryQueueOverflowAt,
 		WaitingRoles:                  append([]string(nil), diagnostics.WaitingRoles...),
 		WaitingInterfaces:             append([]string(nil), diagnostics.WaitingInterfaces...),
 		Attachments:                   attachments,
@@ -669,6 +687,24 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	diagnostics.TCAssignmentSweepScanned = i.tcAssignmentSweepScanned.Load()
 	diagnostics.TCAssignmentSweepRemoved = i.tcAssignmentSweepRemoved.Load()
 	diagnostics.TCAssignmentSweepComplete = i.tcAssignmentSweepComplete.Load()
+	diagnostics.TCAssignmentSweepEntries = i.tcAssignmentSweepEntries.Load()
+	diagnostics.TCAssignmentSweepCapacity = i.tcAssignmentSweepCapacity.Load()
+	diagnostics.TCAssignmentSweepPressure = i.tcAssignmentSweepPressure.Load()
+	diagnostics.TCAssignmentSweepRuns = i.tcAssignmentSweepRuns.Load()
+	diagnostics.TCAssignmentSweepPartial = i.tcAssignmentSweepPartial.Load()
+	if at := i.tcAssignmentSweepLastAt.Load(); at != 0 {
+		t := time.Unix(0, at)
+		diagnostics.TCAssignmentSweepLastAt = &t
+	}
+	if at := i.tcAssignmentSweepPartialAt.Load(); at != 0 {
+		t := time.Unix(0, at)
+		diagnostics.TCAssignmentSweepPartialAt = &t
+	}
+	diagnostics.CgroupRecoveryQueueOverflows = i.cgroupRecoveryQueueOverflows.Load()
+	if at := i.cgroupRecoveryQueueOverflowAt.Load(); at != 0 {
+		t := time.Unix(0, at)
+		diagnostics.CgroupRecoveryQueueOverflowAt = &t
+	}
 	if i.diagnostics.haveOutcome {
 		diagnostics.RecoveryPending = i.diagnostics.lastOutcome.general == tcSharedRewriteRecoverable ||
 			i.diagnostics.lastOutcome.sharedRewrite == tcSharedRewriteRecoverable ||
