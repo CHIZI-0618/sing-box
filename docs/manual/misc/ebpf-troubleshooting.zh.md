@@ -138,8 +138,10 @@ health check/reconcile 时间以及网络代数。它们来自运行中的资源
 - shared ingress/egress pass 覆盖所有显式放行出口，可用于识别不对称绕过或回复路径；
 - UDP `capacity_evictions`、`queue_drops`、pending-release 拒绝和 release 通知丢失是
   不同压力信号，并不都代表 BPF assignment map 缺项；
-- map occupancy 只在显式请求诊断时采集。`UNKNOWN` 表示该 map 类型无法安全遍历或
-  检查被拒绝，不表示占用为零。
+- map occupancy 只在显式请求诊断时采集。map 的 `pressure: not_applicable` 表示其布局固定，
+  不能安全遍历；`configured` 表示容量来自已编译的策略，填满是预期状态；
+  `recovery_failed` 表示键遍历本身失败。上述状态都不表示占用为零。顶层 `error` 表示在
+  完成所有 map 检查前，map 枚举或检查权限被拒绝。
 
 program/map 枚举按 `sb_` 命名约定筛选，同一内核中其他可见的 sing-ebpf 进程也可能
 出现；每个入站自身的 attachment、策略状态、用户态会话和计数才是实例级证据。

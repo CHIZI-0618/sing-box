@@ -58,6 +58,11 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
 除非目标内核或链路类型需要其他路径，建议使用默认值。各路径的内核能力与接口差异
 见 [eBPF 内核要求](/zh/manual/misc/ebpf-kernel-requirements/)。
 
+在标准 Linux 和 OpenWrt 上，需要匹配目标内核的 BPF/TC 配置以及 root 或等价能力；
+OpenWrt 内核模块必须针对正在运行的目标内核构建。Root Android 还受 SELinux 策略、cgroup2、
+bpffs/netd 共存和厂商接口帧类型限制。运行时不需要 `bpftool`、`tc`、`ip`、libbpf 或
+clang；非挂载探测成功也不能替代真实启动验证。
+
 ## 字段
 
 ### network

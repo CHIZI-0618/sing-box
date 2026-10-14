@@ -11,6 +11,39 @@ eBPF 入站的 local 接管默认使用 cgroup v2 socket-address 数据面，sha
 trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，因此需要保守地检查
 版本范围。若 TCX link 能力可用则优先使用，否则回退兼容的 `clsact` 挂载。
 
+## 平台部署要求
+
+实际部署分为两种场景。两者使用相同的 eBPF 对象，但内核资源所有权、权限和链路
+拓扑不同。
+
+### 标准 Linux 与 OpenWrt
+
+在普通 Linux 主机或 OpenWrt 路由器上，应以 root 运行 sing-box，或授予等价能力，通常
+需要 `CAP_BPF` 和 `CAP_NET_ADMIN`；旧内核还可能需要 `CAP_SYS_ADMIN`。目标配置必须
+提供所需的 BPF syscall、map、helper、TC classifier；只有 local TC 需要可用的 veth。
+local `cgroup` 还需要可见且可写的 cgroup v2 层级。如果发行版没有自动挂载，应在启动
+前挂载 cgroup2；只有使用 pinned netd 或其他 pin 集成时才需要 bpffs。
+
+OpenWrt 内核模块必须与正在运行的目标内核和架构完全匹配。根据数据面，固件通常需要
+BPF、TC/scheduler classifier 和 veth 模块，常见包名包括 `kmod-bpf`、`kmod-sched-core`、
+`kmod-veth`，或拆分出的 `cls_bpf`/`act_bpf` 包；实际名称随发行版和版本变化。运行时
+不需要 `bpftool`、`tc`、`ip`、libbpf 或 clang 可执行文件，sing-box 直接使用 BPF syscall
+和 netlink。请用与服务相同的接口、协议和数据面运行内置探测，再执行真实启动；非挂载
+探测不能证明路由、qdisc、sysctl 和 LSM 权限可用。
+
+### Root Android
+
+拥有 root 并不等于兼容。root service 必须能看到厂商 cgroup v2 层级和 bpffs/netd pin，
+Android SELinux 也必须允许所选 BPF、cgroup、TC、路由和 sysctl 操作。Android 15+ 及部分
+厂商内核可能在 cgroup hook 上放置 netd 单程序 owner；运行时会报告并分别选择多程序、旧式
+挂载或严格识别的 netd 放行程序替换路径。可选的 socket-release 和进程追踪 hook 被拒绝时，
+会回退有界 LRU 清理或用户态进程查询，不会自动判定主数据面不可用。
+
+local TC 仍需要厂商 veth/TC 和策略路由能力；local cgroup 不需要 veth 或 TC。
+`packet_rewrite` 要求以太网帧，`socket_assign` 支持文档中列出的 raw-IP、PPP 和隧道链路。
+应使用 `sing-box tools ebpf status` 和真实启动验证设备，并记录内核版本/配置、build
+fingerprint、SELinux 拒绝日志、实际挂载/清理路径和接口帧类型。
+
 ## 数据面能力概要
 
 | 数据面 | hook 与交付方式 | 链路要求 | 主要额外要求 |
@@ -205,7 +238,10 @@ cgroup 可使用 `--cgroup-path <path>` 检查指定 cgroup v2 路径，省略�
 这些检查不会创建 qdisc、挂载 hook 或修改系统状态。
 
 命令末尾会显示 `sb_` map 的一次性 occupancy 诊断；不支持安全遍历的 map 会标为
-`UNKNOWN`。该诊断不会在 sing-box 运行期间周期执行，也不会改变 map 或数据面。
+`not_applicable`。运行时状态 map 使用 `healthy`、`warning`、`degraded` 阈值；容量按当前
+编译策略条目数确定的 map 使用 `configured`，填满是预期状态，不代表运行时压力；实际遍历
+失败则使用 `recovery_failed`。该诊断不会在 sing-box 运行期间周期执行，也不会改变 map
+或数据面。
 
 探测会针对所选协议、地址族、数据面和 shared 接口。local TC 模式会报告必需的 TC socket-cookie
 helper 以及可选的 cgroup socket-cookie hook。添加 `--process-tracking` 可检查可选的

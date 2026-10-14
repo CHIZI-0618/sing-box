@@ -86,6 +86,10 @@ make ebpf_check
 生成用 Makefile 会让 `bpf2go` Go 工具在构建主机上运行，因此最终交叉构建设置的
 `GOOS`/`GOARCH` 不会改变生成器的可执行文件格式。
 
+NDK 和 clang 只是维护者生成对象时的依赖。Linux、OpenWrt 和 root Android 用户使用仓库
+内嵌的纯 Go 对象构建，不需要 NDK、clang、cgo、bpftool、libbpf、`tc` 或 `ip` 可执行文件。
+修改 native BPF 或 Go/C ABI 后，必须重新生成并校验大小端对象，再更新消费者依赖。
+
 ## :material-wrench: 链接器标志
 
 官方构建所需的链接器标志维护在 `release/LDFLAGS` 中。下游构建应原样使用该文件。

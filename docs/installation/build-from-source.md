@@ -82,6 +82,12 @@ make ebpf_check
 The generation Makefile runs the `bpf2go` Go tool on the build host, so a final
 `GOOS`/`GOARCH` cross-build does not change the generator's executable format.
 
+The NDK and clang are maintainer-only generation dependencies. Downstream Linux,
+OpenWrt, and root Android users build against the checked-in pure-Go objects and
+do not need the NDK, clang, cgo, bpftool, libbpf, `tc`, or `ip` executables.
+When changing native BPF or its Go/C ABI, regenerate and verify both little- and
+big-endian objects before updating the consumer dependency.
+
 ## :material-wrench: Linker Flags
 
 The required linker flags for official builds are maintained in `release/LDFLAGS`. Downstream builds should use that file unchanged.

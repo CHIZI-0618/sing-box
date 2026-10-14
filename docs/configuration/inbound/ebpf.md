@@ -61,6 +61,13 @@ Use the defaults unless the target kernel or link type requires another path.
 See [eBPF kernel requirements](/manual/misc/ebpf-kernel-requirements/) for the
 exact capability and interface differences.
 
+For standard Linux and OpenWrt, the runtime needs a matching kernel BPF/TC
+configuration and root or equivalent capabilities; OpenWrt kernel modules must
+be built for the exact target kernel. For root Android, SELinux policy, cgroup2,
+bpffs/netd coexistence, and vendor interface framing are additional constraints.
+The binary does not require `bpftool`, `tc`, `ip`, libbpf, or clang at runtime,
+and a successful non-attaching probe does not replace a real startup test.
+
 ## Fields
 
 ### network

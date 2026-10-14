@@ -160,9 +160,12 @@ interpreting a single large number:
 - UDP `capacity_evictions`, `queue_drops`, pending-release rejection, and
   release-notification drops are distinct pressure signals. They do not all
   mean that the BPF assignment map is missing;
-- map occupancy is collected only on an explicit diagnostic request. `UNKNOWN`
-  means the map type cannot be safely iterated or inspection was denied; it is
-  not zero occupancy.
+- map occupancy is collected only on an explicit diagnostic request. A map with
+  `pressure: not_applicable` has a fixed layout that is not safely iterable;
+  `configured` means its capacity comes from the compiled policy and filling it
+  is expected; `recovery_failed` means key iteration itself failed. Do not
+  interpret any of these states as zero occupancy. A top-level `error` means
+  map enumeration or inspection was denied before all maps could be observed.
 
 Program/map enumeration uses the `sb_` naming convention and can see another
 visible sing-ebpf process in the same kernel. Per-inbound attachments, policy
