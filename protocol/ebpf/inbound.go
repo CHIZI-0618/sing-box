@@ -186,17 +186,31 @@ type Inbound struct {
 	sharedBypassRuleSetTC              bypassRuleSetBackendVersion
 	sharedBypassRuleSetShared          bypassRuleSetBackendVersion
 
-	udpClientTable            udpClientTable
-	udpReplySockets           udpReplySocketPool
-	udpWarnings               udpWarningLimiters
-	tcpWarnings               warningLimiter
-	policyWarnings            warningLimiter
-	interfaceWarnings         interfaceWarningLimiters
-	diagnostics               tcOutcomeHistory
-	counters                  ebpfCounters
-	tcAssignmentSweepScanned  atomic.Uint64
-	tcAssignmentSweepRemoved  atomic.Uint64
-	tcAssignmentSweepComplete atomic.Bool
+	udpClientTable                udpClientTable
+	udpReplySockets               udpReplySocketPool
+	udpWarnings                   udpWarningLimiters
+	tcpWarnings                   warningLimiter
+	policyWarnings                warningLimiter
+	interfaceWarnings             interfaceWarningLimiters
+	diagnostics                   tcOutcomeHistory
+	counters                      ebpfCounters
+	tcAssignmentSweepScanned      atomic.Uint64
+	tcAssignmentSweepRemoved      atomic.Uint64
+	tcAssignmentSweepComplete     atomic.Bool
+	tcAssignmentSweepEntries      atomic.Uint64
+	tcAssignmentSweepCapacity     atomic.Uint64
+	tcAssignmentSweepPressure     atomic.Bool
+	tcAssignmentPressureRounds    atomic.Uint32
+	tcAssignmentSweepRuns         atomic.Uint64
+	tcAssignmentSweepPartial      atomic.Uint64
+	tcAssignmentSweepLastAt       atomic.Int64
+	tcAssignmentSweepPartialAt    atomic.Int64
+	tcAssignmentWake              chan struct{}
+	tcAssignmentJanitorAccess     sync.Mutex
+	tcAssignmentJanitorCancel     context.CancelFunc
+	tcAssignmentJanitorDone       chan struct{}
+	cgroupRecoveryQueueOverflows  atomic.Uint64
+	cgroupRecoveryQueueOverflowAt atomic.Int64
 	// diagnosticsAPICache is request-driven only. API polling can be frequent,
 	// so native per-CPU counter reads are coalesced for a short
 	// window without adding a timer or background wakeup.
@@ -358,6 +372,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		},
 		androidUIDOptions: newAndroidUIDOptions(options.Local),
 		fakeIPICMPReply:   fakeIPICMPReply,
+		tcAssignmentWake:  make(chan struct{}, 1),
 	}
 	if inbound.tcPriority == 0 {
 		inbound.tcPriority = defaultTCPriority

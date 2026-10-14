@@ -92,6 +92,8 @@ func (i *Inbound) enqueueCgroupRecoveryEvent(backend *commonEBPF.CgroupBackend, 
 		}
 	}
 	i.cgroupRecoveryAccess.Unlock()
+	i.cgroupRecoveryQueueOverflows.Add(1)
+	i.cgroupRecoveryQueueOverflowAt.Store(time.Now().UnixNano())
 	// A full queue means the event stream is incomplete. Use one bounded
 	// value-checked sweep immediately instead of waiting for LRU pressure.
 	if _, err := backend.SweepUDPRecovery(cgroupRecoveryMaxIdle, cgroupRecoverySweepBudget); err != nil && !backend.IsClosed() {
