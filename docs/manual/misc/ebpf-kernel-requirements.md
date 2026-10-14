@@ -44,7 +44,8 @@ non-attaching probe.
 ### Root Android
 
 Root access alone is not a compatibility guarantee. The root service must see
-the vendor cgroup v2 hierarchy and bpffs/netd pins, and Android SELinux must
+the vendor cgroup v2 hierarchy; bpffs and netd pins are additionally required
+when netd coexistence or hook restoration is in use. Android SELinux must
 allow the selected BPF, cgroup, TC, route, and sysctl operations. Android 15+
 and vendor kernels may place a single-program netd owner on cgroup hooks; the
 runtime reports and selects multi-program, legacy, or the narrowly recognized
