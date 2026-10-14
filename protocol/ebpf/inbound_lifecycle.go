@@ -191,6 +191,9 @@ func (i *Inbound) startInbound() error {
 			return err
 		}
 	}
+	if backend != nil && !i.sharedRewriteEnabled() {
+		i.startTCAssignmentJanitor()
+	}
 	if backend != nil || i.cgroupBackendInstance() != nil || i.sharedRewriteInstance() != nil {
 		if err = i.startTCInterfaceMonitor(); err != nil {
 			return err
@@ -511,6 +514,7 @@ func (i *Inbound) cleanupStartFailure() error {
 }
 
 func (i *Inbound) closeResources() error {
+	i.stopTCAssignmentJanitor()
 	monitorErr := i.stopTCInterfaceMonitor()
 	i.stopBypassRuleSets()
 	sharedRewriteErr := error(nil)

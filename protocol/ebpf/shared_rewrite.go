@@ -85,6 +85,7 @@ func (s *sharedRewrite) Start(interfaceNames []string, hostAddresses []netip.Add
 	if err := dataPlane.Reconcile(interfaceNames, hostAddresses); err != nil {
 		return E.Errors(err, s.Close())
 	}
+	s.startFlowJanitor()
 	if s.sharedBackendInstance() == nil {
 		s.inbound.logger.Debug(
 			"eBPF shared packet-rewrite waiting for downstream interfaces: interfaces=[",
@@ -265,6 +266,16 @@ func (s *sharedRewrite) stopFlowJanitor() {
 
 func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
+	tcTicker := time.NewTicker(tcAssignmentMaintenanceInterval)
+	defer tcTicker.Stop()
+	var tcContinuation <-chan time.Time
+	var tcTimer *time.Timer
+	defer func() {
+		if tcTimer != nil {
+			tcTimer.Stop()
+		}
+	}()
+	tcMaintenancePending := false
 	var releaseTimer *time.Timer
 	var releaseTimerChannel <-chan time.Time
 	resetReleaseTimer := func(backend *ECommon.SharedPacketRewriteBackend) {
@@ -301,14 +312,15 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 	scanInProgress := false
 	for {
 		backend := s.sharedBackendInstance()
-		if backend == nil {
-			return
+		var flowWake <-chan struct{}
+		if backend != nil {
+			flowWake = backend.TCPFlowWake()
 		}
 		sweepRequested := false
 		select {
 		case <-ctx.Done():
 			return
-		case <-backend.TCPFlowWake():
+		case <-flowWake:
 			resetReleaseTimer(backend)
 			knownPressure, sweepRequested = updateSharedFlowWakeState(
 				pressure,
@@ -319,7 +331,35 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			if !sweepRequested {
 				continue
 			}
+		case <-s.inbound.tcAssignmentWake:
+			tcMaintenancePending = true
+		case <-tcTicker.C:
+			tcMaintenancePending = true
+		case <-tcContinuation:
+			tcContinuation = nil
+			tcMaintenancePending = true
 		case <-releaseTimerChannel:
+		}
+		if tcMaintenancePending {
+			complete, _ := s.inbound.sweepTCAssignmentMaintenance()
+			tcMaintenancePending = false
+			if !complete {
+				if tcTimer == nil {
+					tcTimer = time.NewTimer(tcAssignmentMaintenanceContinue)
+				} else {
+					if !tcTimer.Stop() {
+						select {
+						case <-tcTimer.C:
+						default:
+						}
+					}
+					tcTimer.Reset(tcAssignmentMaintenanceContinue)
+				}
+				tcContinuation = tcTimer.C
+			}
+		}
+		if backend == nil {
+			continue
 		}
 		now := time.Now()
 		if !sweepRequested {

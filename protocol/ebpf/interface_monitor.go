@@ -360,10 +360,7 @@ func (t *tcRealRetryTimer) Expired() <-chan time.Time { return t.timer.C }
 
 var tcRetryTimerFactory = newTCRetryTimer
 
-const (
-	tcAssignmentSweepIdle   = 2 * time.Minute
-	tcAssignmentSweepBudget = 1024
-)
+const ()
 
 func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
 	runTCInterfaceUpdateLoopWithHealth(ctx, updates, i.interfaceDriftCheckInterval(), i.tcInterfaceHealthCheck, func(ctx context.Context) tcUpdateOutcome {
@@ -740,16 +737,8 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 }
 
 func (i *Inbound) sweepTCAssignments() {
-	backend := i.tcBackend()
-	if backend == nil {
-		return
-	}
-	result, err := backend.SweepAssignments(tcAssignmentSweepIdle, tcAssignmentSweepBudget)
-	if err != nil {
-		i.interfaceWarnings.reconcile.warn(i.logger, "sweep TC eBPF assignments: ", err)
-		return
-	}
-	i.tcAssignmentSweepScanned.Add(uint64(result.Scanned))
-	i.tcAssignmentSweepRemoved.Add(uint64(result.Removed))
-	i.tcAssignmentSweepComplete.Store(result.Complete)
+	// The bounded assignment maintenance worker owns scans. Interface
+	// reconciliation only provides an event wake so scans are not tied to the
+	// drift-check cadence.
+	i.requestTCAssignmentMaintenance()
 }
