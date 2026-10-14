@@ -33,8 +33,9 @@ BPF、TC/scheduler classifier 和 veth 模块，常见包名包括 `kmod-bpf`、
 
 ### Root Android
 
-拥有 root 并不等于兼容。root service 必须能看到厂商 cgroup v2 层级和 bpffs/netd pin，
-Android SELinux 也必须允许所选 BPF、cgroup、TC、路由和 sysctl 操作。Android 15+ 及部分
+拥有 root 并不等于兼容。root service 必须能看到厂商 cgroup v2 层级；只有需要与 netd
+共存或恢复 hook 时才额外需要 bpffs 和 netd pin。Android SELinux 也必须允许所选 BPF、
+cgroup、TC、路由和 sysctl 操作。Android 15+ 及部分
 厂商内核可能在 cgroup hook 上放置 netd 单程序 owner；运行时会报告并分别选择多程序、旧式
 挂载或严格识别的 netd 放行程序替换路径。可选的 socket-release 和进程追踪 hook 被拒绝时，
 会回退有界 LRU 清理或用户态进程查询，不会自动判定主数据面不可用。
