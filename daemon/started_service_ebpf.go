@@ -117,6 +117,7 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 		TcAssignmentSweepPressure:     source.TCAssignmentSweepPressure,
 		TcAssignmentSweepRuns:         source.TCAssignmentSweepRuns,
 		TcAssignmentSweepPartial:      source.TCAssignmentSweepPartial,
+		TcAssignmentSweepFailure:      source.TCAssignmentSweepFailure,
 		TcAssignmentSweepLastAt:       optionalUnixMillis(source.TCAssignmentSweepLastAt),
 		TcAssignmentSweepPartialAt:    optionalUnixMillis(source.TCAssignmentSweepPartialAt),
 		CgroupRecoveryQueueOverflows:  source.CgroupRecoveryQueueOverflows,

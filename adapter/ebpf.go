@@ -97,6 +97,7 @@ type EBPFRuntimeDiagnostics struct {
 	TCAssignmentSweepPressure     bool
 	TCAssignmentSweepRuns         uint64
 	TCAssignmentSweepPartial      uint64
+	TCAssignmentSweepFailure      string
 	TCAssignmentSweepLastAt       *time.Time
 	TCAssignmentSweepPartialAt    *time.Time
 	CgroupRecoveryQueueOverflows  uint64

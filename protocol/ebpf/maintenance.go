@@ -161,6 +161,7 @@ func (i *Inbound) recordTCAssignmentSweep(result commonEBPF.TCAssignmentSweepRes
 	i.tcAssignmentSweepScanned.Add(uint64(result.Scanned))
 	i.tcAssignmentSweepRemoved.Add(uint64(result.Removed))
 	i.tcAssignmentSweepRuns.Add(1)
+	i.tcAssignmentSweepFailure.Store(result.Failure)
 	i.tcAssignmentSweepComplete.Store(result.Complete)
 	i.tcAssignmentSweepLastAt.Store(time.Now().UnixNano())
 	if result.Complete {

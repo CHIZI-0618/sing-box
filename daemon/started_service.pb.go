@@ -7854,6 +7854,7 @@ type EBPFInboundDiagnostics struct {
 	TcAssignmentSweepPartialAt    *int64                         `protobuf:"varint,68,opt,name=tcAssignmentSweepPartialAt,proto3,oneof" json:"tcAssignmentSweepPartialAt,omitempty"`
 	CgroupRecoveryQueueOverflows  uint64                         `protobuf:"varint,69,opt,name=cgroupRecoveryQueueOverflows,proto3" json:"cgroupRecoveryQueueOverflows,omitempty"`
 	CgroupRecoveryQueueOverflowAt *int64                         `protobuf:"varint,70,opt,name=cgroupRecoveryQueueOverflowAt,proto3,oneof" json:"cgroupRecoveryQueueOverflowAt,omitempty"`
+	TcAssignmentSweepFailure      string                         `protobuf:"bytes,71,opt,name=tcAssignmentSweepFailure,proto3" json:"tcAssignmentSweepFailure,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -8327,6 +8328,13 @@ func (x *EBPFInboundDiagnostics) GetCgroupRecoveryQueueOverflowAt() int64 {
 		return *x.CgroupRecoveryQueueOverflowAt
 	}
 	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetTcAssignmentSweepFailure() string {
+	if x != nil {
+		return x.TcAssignmentSweepFailure
+	}
+	return ""
 }
 
 type EBPFAttachmentDiagnostics struct {
@@ -9621,7 +9629,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
-	"\bpressure\x18\v \x01(\tR\bpressure\"\x91\x1b\n" +
+	"\bpressure\x18\v \x01(\tR\bpressure\"\xcd\x1b\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9688,7 +9696,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x17tcAssignmentSweepLastAt\x18C \x01(\x03H\x05R\x17tcAssignmentSweepLastAt\x88\x01\x01\x12C\n" +
 	"\x1atcAssignmentSweepPartialAt\x18D \x01(\x03H\x06R\x1atcAssignmentSweepPartialAt\x88\x01\x01\x12B\n" +
 	"\x1ccgroupRecoveryQueueOverflows\x18E \x01(\x04R\x1ccgroupRecoveryQueueOverflows\x12I\n" +
-	"\x1dcgroupRecoveryQueueOverflowAt\x18F \x01(\x03H\aR\x1dcgroupRecoveryQueueOverflowAt\x88\x01\x01B\x0e\n" +
+	"\x1dcgroupRecoveryQueueOverflowAt\x18F \x01(\x03H\aR\x1dcgroupRecoveryQueueOverflowAt\x88\x01\x01\x12:\n" +
+	"\x18tcAssignmentSweepFailure\x18G \x01(\tR\x18tcAssignmentSweepFailureB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +

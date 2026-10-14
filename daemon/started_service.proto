@@ -914,6 +914,7 @@ message EBPFInboundDiagnostics {
   optional int64 tcAssignmentSweepPartialAt = 68;
   uint64 cgroupRecoveryQueueOverflows = 69;
   optional int64 cgroupRecoveryQueueOverflowAt = 70;
+  string tcAssignmentSweepFailure = 71;
 }
 
 message EBPFAttachmentDiagnostics {
