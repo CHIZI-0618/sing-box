@@ -905,6 +905,15 @@ message EBPFInboundDiagnostics {
   string localUdpReleaseProgram = 59;
   repeated string waitingRoles = 60;
   repeated string waitingInterfaces = 61;
+  uint64 tcAssignmentSweepEntries = 62;
+  uint64 tcAssignmentSweepCapacity = 63;
+  bool tcAssignmentSweepPressure = 64;
+  uint64 tcAssignmentSweepRuns = 65;
+  uint64 tcAssignmentSweepPartial = 66;
+  optional int64 tcAssignmentSweepLastAt = 67;
+  optional int64 tcAssignmentSweepPartialAt = 68;
+  uint64 cgroupRecoveryQueueOverflows = 69;
+  optional int64 cgroupRecoveryQueueOverflowAt = 70;
 }
 
 message EBPFAttachmentDiagnostics {
