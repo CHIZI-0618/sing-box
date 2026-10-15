@@ -7678,6 +7678,7 @@ type EBPFMapDiagnostics struct {
 	Supported     bool                   `protobuf:"varint,9,opt,name=supported,proto3" json:"supported,omitempty"`
 	Error         string                 `protobuf:"bytes,10,opt,name=error,proto3" json:"error,omitempty"`
 	Pressure      string                 `protobuf:"bytes,11,opt,name=pressure,proto3" json:"pressure,omitempty"`
+	Category      string                 `protobuf:"bytes,12,opt,name=category,proto3" json:"category,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7785,6 +7786,13 @@ func (x *EBPFMapDiagnostics) GetError() string {
 func (x *EBPFMapDiagnostics) GetPressure() string {
 	if x != nil {
 		return x.Pressure
+	}
+	return ""
+}
+
+func (x *EBPFMapDiagnostics) GetCategory() string {
+	if x != nil {
+		return x.Category
 	}
 	return ""
 }
@@ -9614,7 +9622,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x1bEBPFMapOccupancyDiagnostics\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12.\n" +
 	"\x04maps\x18\x02 \x03(\v2\x1a.daemon.EBPFMapDiagnosticsR\x04maps\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\xa4\x02\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xc0\x02\n" +
 	"\x12EBPFMapDiagnostics\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -9629,7 +9637,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\tsupported\x18\t \x01(\bR\tsupported\x12\x14\n" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
-	"\bpressure\x18\v \x01(\tR\bpressure\"\xcd\x1b\n" +
+	"\bpressure\x18\v \x01(\tR\bpressure\x12\x1a\n" +
+	"\bcategory\x18\f \x01(\tR\bcategory\"\xcd\x1b\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +

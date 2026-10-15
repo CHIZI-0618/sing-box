@@ -847,6 +847,7 @@ message EBPFMapDiagnostics {
   bool supported = 9;
   string error = 10;
   string pressure = 11;
+  string category = 12;
 }
 
 message EBPFInboundDiagnostics {

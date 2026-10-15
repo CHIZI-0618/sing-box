@@ -130,12 +130,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 15 {
-		t.Fatalf("schema version = %d, want 15 after adding assignment maintenance diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 16 {
+		t.Fatalf("schema version = %d, want 16 after adding map metadata diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 15 {
-		t.Fatalf("diagnostics schema version = %d, want 15", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 16 {
+		t.Fatalf("diagnostics schema version = %d, want 16", diagnostics.SchemaVersion)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestKernelRuntimeForAPI(t *testing.T) {
 		MapOccupancy: commonEBPF.MapOccupancyReport{
 			Status: "unknown",
 			Maps: []commonEBPF.MapOccupancy{{
-				ID: 9, Name: "sb_shared_flows", Type: "LRUHash", MaxEntries: 4096,
+				ID: 9, Name: "sb_shared_flows", Category: "runtime", Type: "LRUHash", MaxEntries: 4096,
 				Entries: 3, Supported: true,
 			}},
 			Error: "map enumeration incomplete",
@@ -198,7 +198,8 @@ func TestKernelRuntimeForAPI(t *testing.T) {
 		t.Fatalf("unexpected programs: %+v", diagnostics.Programs)
 	}
 	if diagnostics.MapOccupancy.Status != "unknown" || diagnostics.MapOccupancy.Error != "map enumeration incomplete" ||
-		len(diagnostics.MapOccupancy.Maps) != 1 || diagnostics.MapOccupancy.Maps[0].Entries != 3 {
+		len(diagnostics.MapOccupancy.Maps) != 1 || diagnostics.MapOccupancy.Maps[0].Entries != 3 ||
+		diagnostics.MapOccupancy.Maps[0].Category != "runtime" {
 		t.Fatalf("unexpected map occupancy: %+v", diagnostics.MapOccupancy)
 	}
 }

@@ -52,8 +52,10 @@ github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.11.0.20261014144550-8ea7f033a71e h1
 github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.11.0.20261014144550-8ea7f033a71e/go.mod h1:oSoJNXBL46MKyiUJ2qCgyKSPsRWGE8k1mMCq8W3mjh8=
 github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.11.0.20261014150716-bf770b94fb9b h1:E1MiB3cUTcpAej9XH6mdhfZa7h7k7JtCv/djvZunF8A=
 github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.11.0.20261014150716-bf770b94fb9b/go.mod h1:oSoJNXBL46MKyiUJ2qCgyKSPsRWGE8k1mMCq8W3mjh8=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12 h1:zC6S+yecPTM66gKKCwzLxxxWOv/THJNCtrvDenpMvmM=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12/go.mod h1:oSoJNXBL46MKyiUJ2qCgyKSPsRWGE8k1mMCq8W3mjh8=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261015111348-669f3a605145 h1:TvxByL5QmcL+cH0mPC330qnIDKioK2+VdiDNuo9EePk=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261015111348-669f3a605145/go.mod h1:oSoJNXBL46MKyiUJ2qCgyKSPsRWGE8k1mMCq8W3mjh8=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261015125803-b8e83c7f3059 h1:S8h7CHWKEtuZ51PcCiPJWFpup0zM9PWP6JrwGDWWDPk=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261015125803-b8e83c7f3059/go.mod h1:oSoJNXBL46MKyiUJ2qCgyKSPsRWGE8k1mMCq8W3mjh8=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=

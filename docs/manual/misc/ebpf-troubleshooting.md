@@ -162,8 +162,10 @@ interpreting a single large number:
   mean that the BPF assignment map is missing;
 - map occupancy is collected only on an explicit diagnostic request. A map with
   `pressure: not_applicable` has a fixed layout that is not safely iterable;
-  `configured` means its capacity comes from the compiled policy and filling it
-  is expected; `recovery_failed` means key iteration itself failed. Do not
+  `category: configured_policy` identifies a policy-sized map whose capacity
+  comes from the compiled policy; `pressure: configured` is retained as the
+  corresponding neutral result. `recovery_failed` means key iteration itself
+  failed. Do not
   interpret any of these states as zero occupancy. A top-level `error` means
   map enumeration or inspection was denied before all maps could be observed.
 
