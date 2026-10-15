@@ -139,7 +139,8 @@ health check/reconcile 时间以及网络代数。它们来自运行中的资源
 - UDP `capacity_evictions`、`queue_drops`、pending-release 拒绝和 release 通知丢失是
   不同压力信号，并不都代表 BPF assignment map 缺项；
 - map occupancy 只在显式请求诊断时采集。map 的 `pressure: not_applicable` 表示其布局固定，
-  不能安全遍历；`configured` 表示容量来自已编译的策略，填满是预期状态；
+  不能安全遍历；`category: configured_policy` 表示容量来自已编译的策略，填满是预期状态，
+  `pressure: configured` 只是对应的中性结果；
   `recovery_failed` 表示键遍历本身失败。上述状态都不表示占用为零。顶层 `error` 表示在
   完成所有 map 检查前，map 枚举或检查权限被拒绝。
 

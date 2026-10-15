@@ -524,6 +524,7 @@ func kernelRuntimeForAPI(observedAt time.Time, runtimeState commonEBPF.RuntimeSt
 		maps = append(maps, adapter.EBPFMapDiagnostics{
 			ID:         uint32(item.ID),
 			Name:       item.Name,
+			Category:   string(item.Category),
 			Type:       item.Type,
 			MaxEntries: item.MaxEntries,
 			KeySize:    item.KeySize,

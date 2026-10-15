@@ -58,6 +58,7 @@ func marshalEBPFKernelRuntime(source adapter.EBPFKernelRuntimeDiagnostics) *EBPF
 		destination.MapOccupancy.Maps = append(destination.MapOccupancy.Maps, &EBPFMapDiagnostics{
 			Id:         item.ID,
 			Name:       item.Name,
+			Category:   item.Category,
 			Type:       item.Type,
 			MaxEntries: item.MaxEntries,
 			KeySize:    item.KeySize,
