@@ -10,14 +10,69 @@ import (
 )
 
 const (
-	tcAssignmentMaintenanceInterval = time.Minute
-	tcAssignmentMaintenanceContinue = 100 * time.Millisecond
-	tcAssignmentPressureMaxIdle     = 15 * time.Second
-	tcAssignmentNormalMaxIdle       = 2 * time.Minute
-	tcAssignmentMaintenanceBudget   = 1024
-	tcAssignmentPressureExitPercent = 50
-	tcAssignmentPressureExitRounds  = 3
+	tcAssignmentMaintenanceInterval  = time.Minute
+	tcAssignmentMaintenanceContinue  = 100 * time.Millisecond
+	tcAssignmentPressureMaxIdle      = 15 * time.Second
+	tcAssignmentNormalMaxIdle        = 2 * time.Minute
+	tcAssignmentMaintenanceBudget    = 1024
+	tcAssignmentPressureEnterPercent = 70
+	tcAssignmentPressureExitPercent  = 50
+	tcAssignmentPressureExitRounds   = 3
 )
+
+type mapPressureHysteresis struct {
+	enterPercent uint64
+	exitPercent  uint64
+	exitRounds   uint32
+}
+
+func mapUsageAtLeastPercent(usage commonEBPF.MapUsage, percent uint64) bool {
+	return usage.Capacity != 0 && uint64(usage.Entries)*100 >= uint64(usage.Capacity)*percent
+}
+
+func mapUsageAbovePercent(usage commonEBPF.MapUsage, percent uint64) bool {
+	return usage.Capacity != 0 && uint64(usage.Entries)*100 > uint64(usage.Capacity)*percent
+}
+
+func updateMapPressure(
+	active bool,
+	belowExitRounds uint32,
+	usage commonEBPF.MapUsage,
+	policy mapPressureHysteresis,
+) (bool, uint32, bool, bool) {
+	if usage.Capacity == 0 {
+		return active, 0, false, false
+	}
+	if !active {
+		if mapUsageAtLeastPercent(usage, policy.enterPercent) {
+			return true, 0, true, false
+		}
+		return false, 0, false, false
+	}
+	if mapUsageAbovePercent(usage, policy.exitPercent) {
+		return true, 0, false, false
+	}
+	belowExitRounds++
+	if belowExitRounds < policy.exitRounds {
+		return true, belowExitRounds, false, false
+	}
+	return false, 0, false, true
+}
+
+func resetMaintenanceContinuation(timer **time.Timer, continuation *<-chan time.Time) {
+	if *timer == nil {
+		*timer = time.NewTimer(tcAssignmentMaintenanceContinue)
+	} else {
+		if !(*timer).Stop() {
+			select {
+			case <-(*timer).C:
+			default:
+			}
+		}
+		(*timer).Reset(tcAssignmentMaintenanceContinue)
+	}
+	*continuation = (*timer).C
+}
 
 // startTCAssignmentJanitor owns the TC assignment side of the same bounded
 // maintenance model used by shared packet-rewrite. It is event-woken for
@@ -83,20 +138,7 @@ func (i *Inbound) runTCAssignmentJanitor(ctx context.Context, done chan<- struct
 		if err != nil || complete {
 			continue
 		}
-		if !complete {
-			if timer == nil {
-				timer = time.NewTimer(tcAssignmentMaintenanceContinue)
-			} else {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(tcAssignmentMaintenanceContinue)
-			}
-			continuation = timer.C
-		}
+		resetMaintenanceContinuation(&timer, &continuation)
 	}
 }
 
@@ -138,23 +180,11 @@ func (i *Inbound) sweepTCAssignmentMaintenance() (bool, error) {
 }
 
 func updateTCAssignmentPressure(active bool, belowExitRounds uint32, usage commonEBPF.MapUsage) (bool, uint32, bool, bool) {
-	if usage.Capacity == 0 {
-		return active, 0, false, false
-	}
-	if !active {
-		if uint64(usage.Entries)*100 >= uint64(usage.Capacity)*70 {
-			return true, 0, true, false
-		}
-		return false, 0, false, false
-	}
-	if uint64(usage.Entries)*100 > uint64(usage.Capacity)*tcAssignmentPressureExitPercent {
-		return true, 0, false, false
-	}
-	belowExitRounds++
-	if belowExitRounds < tcAssignmentPressureExitRounds {
-		return true, belowExitRounds, false, false
-	}
-	return false, 0, false, true
+	return updateMapPressure(active, belowExitRounds, usage, mapPressureHysteresis{
+		enterPercent: tcAssignmentPressureEnterPercent,
+		exitPercent:  tcAssignmentPressureExitPercent,
+		exitRounds:   tcAssignmentPressureExitRounds,
+	})
 }
 
 func (i *Inbound) recordTCAssignmentSweep(result commonEBPF.TCAssignmentSweepResult) {

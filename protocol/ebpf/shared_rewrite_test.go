@@ -22,7 +22,7 @@ func TestUpdateSharedRewriteFlowPressure(t *testing.T) {
 		t.Fatal("70% map usage did not enter pressure mode")
 	}
 	usage.Entries = 50
-	for expected := 1; expected < sharedFlowPressureExitRounds; expected++ {
+	for expected := uint32(1); expected < sharedFlowPressureExitRounds; expected++ {
 		active, rounds, entered, exited = updateSharedFlowPressure(active, rounds, usage)
 		if !active || rounds != expected || entered || exited {
 			t.Fatalf("unexpected pressure exit state at round %d", expected)

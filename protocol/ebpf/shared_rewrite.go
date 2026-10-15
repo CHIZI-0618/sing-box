@@ -307,7 +307,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 	}()
 	pressure := false
 	knownPressure := false
-	belowExitRounds := 0
+	var belowExitRounds uint32
 	var lastReservationFailures uint64
 	scanInProgress := false
 	for {
@@ -344,18 +344,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			complete, _ := s.inbound.sweepTCAssignmentMaintenance()
 			tcMaintenancePending = false
 			if !complete {
-				if tcTimer == nil {
-					tcTimer = time.NewTimer(tcAssignmentMaintenanceContinue)
-				} else {
-					if !tcTimer.Stop() {
-						select {
-						case <-tcTimer.C:
-						default:
-						}
-					}
-					tcTimer.Reset(tcAssignmentMaintenanceContinue)
-				}
-				tcContinuation = tcTimer.C
+				resetMaintenanceContinuation(&tcTimer, &tcContinuation)
 			}
 		}
 		if backend == nil {
@@ -438,31 +427,16 @@ func updateSharedFlowWakeState(pressure, knownPressure, scanInProgress bool, usa
 }
 
 func flowUsagePressure(active bool, usage ECommon.MapUsage) bool {
-	if usage.Capacity == 0 {
-		return false
-	}
 	if active {
-		return uint64(usage.Entries)*100 > uint64(usage.Capacity)*sharedFlowPressureExitPercent
+		return mapUsageAbovePercent(usage, sharedFlowPressureExitPercent)
 	}
-	return uint64(usage.Entries)*100 >= uint64(usage.Capacity)*sharedFlowPressureEnterPercent
+	return mapUsageAtLeastPercent(usage, sharedFlowPressureEnterPercent)
 }
 
-func updateSharedFlowPressure(active bool, belowExitRounds int, usage ECommon.MapUsage) (bool, int, bool, bool) {
-	if usage.Capacity == 0 {
-		return active, 0, false, false
-	}
-	if !active {
-		if uint64(usage.Entries)*100 >= uint64(usage.Capacity)*sharedFlowPressureEnterPercent {
-			return true, 0, true, false
-		}
-		return false, 0, false, false
-	}
-	if uint64(usage.Entries)*100 > uint64(usage.Capacity)*sharedFlowPressureExitPercent {
-		return true, 0, false, false
-	}
-	belowExitRounds++
-	if belowExitRounds < sharedFlowPressureExitRounds {
-		return true, belowExitRounds, false, false
-	}
-	return false, 0, false, true
+func updateSharedFlowPressure(active bool, belowExitRounds uint32, usage ECommon.MapUsage) (bool, uint32, bool, bool) {
+	return updateMapPressure(active, belowExitRounds, usage, mapPressureHysteresis{
+		enterPercent: sharedFlowPressureEnterPercent,
+		exitPercent:  sharedFlowPressureExitPercent,
+		exitRounds:   sharedFlowPressureExitRounds,
+	})
 }
