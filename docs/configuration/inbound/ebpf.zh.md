@@ -212,6 +212,11 @@ fake-ip 范围重叠的前缀会在启动时报错，因为 fake-ip 已占用该
 raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 与 shared 可
 独立选择数据面。
 
+`socket_assign` 和 local `tc` 的 **TCP、UDP 都使用专用网络命名空间**，透明 UDP
+回包 socket 也位于其中，两种协议都不改写 IP 地址或端口。代理出站拨号、local cgroup
+监听器和 `packet_rewrite` 保持原有路径。这样可以隔离宿主 NAT 状态和端口占用；
+需要 netns/veth 支持及创建、进入命名空间的权限，参见[内核要求](../../manual/misc/ebpf-kernel-requirements.md)。
+
 ### shared.dns_mode
 
 取值与 `local.dns_mode` 相同。`respect_policy` 会先应用来源 CIDR/MAC 筛选，再
