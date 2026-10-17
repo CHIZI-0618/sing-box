@@ -25,7 +25,7 @@ but their kernel ownership, permissions, and link topology are different.
 For a normal Linux host or OpenWrt router, run sing-box as root or grant the
 equivalent capabilities, normally `CAP_BPF` and `CAP_NET_ADMIN` (older kernels
 may also require `CAP_SYS_ADMIN`). The selected configuration must expose the
-required BPF syscall, maps, helpers and TC classifiers. Both local TC and shared
+required BPF syscall, maps, helpers and TC classifiers. Both local socket assignment and shared
 `socket_assign` isolate TCP/UDP in a private namespace: they require
 `CONFIG_NET_NS`, `CONFIG_VETH`, `CAP_SYS_ADMIN` for creation/reentry (including
 on newer kernels), and `CAP_NET_ADMIN` for links/routes/transparent sockets.
@@ -58,7 +58,7 @@ netd pass-through replacement path. Optional socket-release and process-tracking
 hooks can be denied and will fall back to bounded LRU cleanup or userspace
 process lookup without disabling the main data plane.
 
-Local TC and shared socket assignment need vendor netns/veth/TC and routing
+Local socket assignment and shared socket assignment need vendor netns/veth/TC and routing
 support, plus SELinux permission for `unshare`/`setns`. Startup verifies actual
 creation/reentry and transparent listeners; failures do not silently select
 host listeners. Local cgroup does not need netns, veth or TC. `packet_rewrite` needs Ethernet framing, while
@@ -72,7 +72,7 @@ selected attachment/cleanup paths, and interface framing.
 | Data plane | Hook and delivery | Link requirement | Main extra requirements |
 | --- | --- | --- | --- |
 | local `cgroup` | cgroup v2 socket-address hooks rewrite destinations to token addresses | No network-interface attachment | `CONFIG_CGROUP_BPF`, connect hooks, and UDP sendmsg/recvmsg hooks for enabled families |
-| local `tc` | default-interface egress → private-netns veth ingress → TCP/UDP socket assignment | Ethernet or supported L3 framing | netns, veth, TC classifiers, private routing, socket lookup/assignment and redirect helpers |
+| local `socket_assign` | default-interface egress → private-netns veth ingress → TCP/UDP socket assignment | Ethernet or supported L3 framing | netns, veth, TC classifiers, private routing, socket lookup/assignment and redirect helpers |
 | shared `socket_assign` | downstream ingress → same private netns → TCP/UDP transparent listeners | Ethernet, raw-IP, PPP/SLIP, or supported tunnels | netns, veth, TC classifiers, private routing and socket lookup/assignment helpers |
 | shared `packet_rewrite` | downstream ingress rewrites requests; egress restores replies | Ethernet only | TC classifiers, checksum/packet rewrite helpers and per-flow state |
 
@@ -80,6 +80,19 @@ The four paths do not form a version ladder. A vendor kernel may support one
 path and reject another at object load or attachment time. Probe the exact path
 that will be configured and treat a successful real startup as the final
 attachment test.
+
+### Upstream capability floor and validation targets
+
+Upstream Linux 5.7 introduced `bpf_sk_assign`, so older kernels without that
+backport cannot use `socket_assign`. netns/veth do not raise this helper floor,
+but version 5.7 or later does not prove that the selected programs, permissions,
+or routing work. Optional TCX requires newer kernel capabilities.
+
+`cgroup` and `packet_rewrite` are compatibility-oriented paths. CI targets 5.4
+for these paths and 5.10/6.6 for the complete paths. This matrix is not a minimum
+version promise for all vendor kernels, and skipped tests do not establish
+support. Validate the selected objects, attachment, and real traffic on the
+deployment kernel.
 
 ## Kernel configuration
 
@@ -92,7 +105,7 @@ The following options, or their vendor equivalents, are required:
 | `CONFIG_NET_CLS_BPF` | Runs BPF classifiers at TC hooks. |
 | `CONFIG_NET_SCH_INGRESS` | Provides the `clsact` ingress and egress hooks. |
 | `CONFIG_NET_CLS_ACT` | Enables direct-action classifier results. |
-| `CONFIG_NET_NS` | Isolates local TC and shared socket-assignment TCP/UDP listeners. |
+| `CONFIG_NET_NS` | Isolates local socket assignment and shared socket-assignment TCP/UDP listeners. |
 | `CONFIG_VETH` | Provides their bidirectional delivery link. |
 | `CONFIG_INET` | IPv4 TCP/UDP and transparent sockets. |
 | `CONFIG_IPV6` | Required when local or shared IPv6 interception is enabled. |
@@ -121,14 +134,14 @@ Shared `packet_rewrite` additionally uses `bpf_ktime_get_ns`, `bpf_csum_diff`,
   `bpf_l3_csum_replace`, `bpf_l4_csum_replace`, `bpf_skb_load_bytes` and `bpf_skb_pull_data` in
   `SCHED_CLS`.
 
-Shared `socket_assign` and local TC instead require
+Shared `socket_assign` and local socket assignment instead require
 `bpf_skc_lookup_tcp`, `bpf_sk_lookup_udp`, `bpf_sk_assign`, and
 `bpf_sk_release` in `SCHED_CLS`. The requirement follows the enabled protocol;
 for example, UDP-only operation does not require the TCP lookup helper.
 
 Both socket-assignment paths use `bpf_redirect`, `bpf_skb_store_bytes`,
 `bpf_skb_change_head`, `bpf_skb_change_type` and `bpf_ktime_get_ns` for delivery
-and return routing. Only local TC additionally needs `bpf_get_socket_uid` and
+and return routing. Only local socket assignment additionally needs `bpf_get_socket_uid` and
 `bpf_get_socket_cookie` for local selection. Only L2 framing changes; TCP/UDP
 IP addresses and ports do not. Transparent replies also originate in the
 private namespace, while proxy outbound dialing stays in the host. No host
@@ -158,7 +171,7 @@ reference the map and performs direct `bpf_skc_lookup_tcp` lookup. The selected
 path is decided by map creation and program loading, not by the kernel release
 string. Older kernels commonly gate SOCKMAP behind `CONFIG_BPF_STREAM_PARSER`.
 
-For the local TC data plane, `bpf_get_socket_cookie` in `SCHED_CLS` is required for the
+For the local socket assignment data plane, `bpf_get_socket_cookie` in `SCHED_CLS` is required for the
 self-bypass cookie map. `CGROUP_SOCK` with `inet_sock_create` and
 `inet_sock_release`, together with `bpf_get_socket_cookie`, is an optional
 optimization that populates and removes that map in kernel hooks. If the
@@ -237,7 +250,7 @@ same guard.
 Startup needs enough privilege for the selected data plane to:
 
 - load BPF maps and programs;
-- create and remove a veth pair for local TC;
+- create and remove a veth pair for local socket assignment;
 - add and remove `clsact` qdiscs and BPF filters;
 - add and remove TC policy routing or token local routes;
 - change `rp_filter` and `accept_local` on the internal delivery peer;
@@ -256,7 +269,7 @@ syscalls and netlink directly.
 
 ## Interface requirements
 
-Local TC mode attaches to the network manager's current default interface.
+Local socket assignment mode attaches to the network manager's current default interface.
 Shared mode attaches to each configured downstream interface. The default
 `packet_rewrite` data plane requires Ethernet framing. `socket_assign` supports
 Ethernet/IPoE and L3-only raw-IP, PPP, SLIP, and IPIP/SIT/GRE tunnel links.
@@ -273,7 +286,7 @@ One sing-box eBPF inbound may manage an interface at a time. Existing unrelated
 `clsact` filters are preserved, but a conflicting sing-box filter handle or
 interface lock prevents startup.
 
-The local TC delivery veth requires writable per-interface IPv4 sysctls under
+The local socket assignment delivery veth requires writable per-interface IPv4 sysctls under
 `/proc/sys/net/ipv4/conf`. Original values are restored during cleanup.
 
 ## Runtime policy updates
@@ -291,22 +304,22 @@ untrusted backend avoids running with mismatched maps and control flags.
 
 Use the built-in kernel probe with the same data planes, protocols, and IPv6
 setting as the intended configuration. Select concrete paths with
-`--local-data-plane=tc|cgroup` and
+`--local-data-plane=socket_assign|cgroup` and
 `--shared-data-plane=socket_assign|packet_rewrite`; omit either flag to disable
 that path. For shared mode, pass one active downstream interface so its link
 type can be checked.
 
 ```sh
-sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
+sing-box tools ebpf status --local-data-plane socket_assign --network tcp,udp --json
 sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan --json
-sing-box tools ebpf status --local-data-plane tc --shared-data-plane socket_assign --interface wlan1 --json
+sing-box tools ebpf status --local-data-plane socket_assign --shared-data-plane socket_assign --interface wlan1 --json
 ```
 
 The `--mode local|shared|all` form selects the default local `cgroup`, shared
 `packet_rewrite`, or both. Use the explicit data-plane flags for the optional
 TC or `socket_assign` paths.
 
-For local TC, `--local-interface <name>` performs a read-only check of the
+For local socket assignment, `--local-interface <name>` performs a read-only check of the
 interface and any existing clsact qdisc. For local cgroup, `--cgroup-path
 <path>` checks a selected cgroup v2 path; when omitted, the current process's
 cgroup is checked. These checks do not create qdiscs, attach hooks, or modify
@@ -321,7 +334,7 @@ uses `recovery_failed`. This diagnostic never runs periodically while sing-box
 is active and does not modify maps or data paths.
 
 The probe uses the selected protocols, address families, data planes, and shared interface.
-For local TC mode it reports the required TC socket-cookie helper and the optional
+For local socket assignment mode it reports the required TC socket-cookie helper and the optional
 cgroup socket-cookie hooks. Add `--process-tracking` to inspect the optional
 socket-address process tracker and socket-release cleanup capabilities. A real
 startup determines whether the process cgroup is

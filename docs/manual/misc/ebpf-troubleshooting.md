@@ -21,7 +21,7 @@ or resource growth.
 | Device reboots or kernel panics | `/sys/fs/pstore`, kernel release, enabled policy | Kernel verifier/map/driver defect; userspace logs alone are insufficient |
 
 Do not infer the responsible data plane from the word “eBPF” alone. Local
-`cgroup`, local `tc`, shared `socket_assign`, and shared `packet_rewrite` use
+`cgroup`, local `socket_assign`, shared `socket_assign`, and shared `packet_rewrite` use
 different hooks, maps, delivery paths, and cleanup mechanisms.
 
 ## Minimum report
@@ -116,6 +116,19 @@ described below.
 
 ### Interpreting `sing-box api ebpf`
 
+Schema 17 separates lightweight status from deep inspection. Use
+`sing-box api ebpf --deep` or the dashboard's **Inspect owned maps** action.
+Each inbound has its own `kernelRuntime`; the top-level section is a
+de-duplicated union, not an inbound's health. Deep snapshots are request-driven
+and cached for up to five seconds.
+
+Assignment and return-route occupancy are separate. Unknown/partial usage is
+not zero; the last complete count is historical until another full scan.
+`tcAssignmentSweepFailureMap` identifies the failing map.
+`not_applicable` maps do not contribute pressure. Configured policy capacity
+is not runtime saturation. Return publication failures, conflicting owners
+and missing routes have separate counters; compare deltas, not lifetime totals.
+
 The top-level state is an operational summary:
 
 | State | Meaning | Action |
@@ -136,7 +149,7 @@ For local cgroup, also record the effective runtime fields returned by the API:
 `local_udp_time_mode`. These describe the path actually selected after vendor
 kernel and security-policy fallbacks; they are not capability guesses.
 
-When local TC or shared `socket_assign` is enabled, the API also reports `tc_*`
+When local socket assignment or shared `socket_assign` is enabled, the API also reports `tc_*`
 runtime fields: the effective `tcx`/`clsact`/`mixed` attachment mechanism,
 `sockmap`/`direct` TCP listener lookup, delivery interface and ifindex, policy
 routing mark/table/priority, active and retired resource counts, health state,
@@ -247,7 +260,7 @@ tc -statistics -details filter show
 Also retain the startup `eBPF TC active` summary. Do not manually remove the
 internal veth or managed TC filters while sing-box is running.
 
-For local `tc` interception, compare the packet counts on the default-interface
+For local `socket_assign` interception, compare the packet counts on the default-interface
 egress filter and the logged delivery-interface ingress filter:
 
 ```sh
@@ -290,7 +303,7 @@ Capture `sing-box api ebpf` immediately before the switch, during the failure,
 and after the expected recovery. Correlate `last_error_at`, `last_recovery_at`,
 `next_retry_at`, attachment ifindex changes, and route/link events.
 
-Local TC follows the current default interface. Shared interfaces are eligible
+Local socket assignment follows the current default interface. Shared interfaces are eligible
 only while downstream; an interface temporarily acting as the default upstream
 is deliberately detached. The last local attachment can remain until a new
 default interface is ready, avoiding an unnecessary gap. This does not recreate
