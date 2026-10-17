@@ -527,6 +527,12 @@ func (i *Inbound) closeResources() error {
 	sharedRewriteErr := error(nil)
 	if shared := i.takeSharedRewrite(); shared != nil {
 		sharedRewriteErr = shared.Close()
+		if !shared.IsClosed() {
+			i.setSharedRewrite(shared)
+			if sharedRewriteErr == nil {
+				sharedRewriteErr = E.New("shared packet-rewrite runtime remained open after close")
+			}
+		}
 	}
 	dataPlane := i.takeTCDataPlane()
 	disableErr := error(nil)
@@ -556,6 +562,12 @@ func (i *Inbound) closeResources() error {
 	i.udpReplySockets.stopSweeper()
 	udpReplySocketErr := i.udpReplySockets.close()
 	dataPlaneErr := i.closeTakenTCDataPlane(dataPlane)
+	// Failed detaches retain their owner and dependencies for the next Close.
+	// In particular, removing redirect routes or self-bypass while a hook is
+	// still attached can redirect traffic into a dead path or capture ourselves.
+	if i.tcBackend() != nil || i.cgroupBackendInstance() != nil || i.sharedRewriteInstance() != nil {
+		return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, cgroupErr)
+	}
 	namespaceErr := error(nil)
 	if i.tcBackend() == nil {
 		i.tcNamespaceAccess.Lock()
