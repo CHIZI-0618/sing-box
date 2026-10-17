@@ -12,6 +12,8 @@ import (
 const (
 	tcAssignmentMaintenanceInterval  = time.Minute
 	tcAssignmentMaintenanceContinue  = 100 * time.Millisecond
+	tcAssignmentMaintenanceCooldown  = 5 * time.Second
+	tcAssignmentPressureCooldown     = time.Second
 	tcAssignmentPressureMaxIdle      = 15 * time.Second
 	tcAssignmentNormalMaxIdle        = 2 * time.Minute
 	tcAssignmentMaintenanceBudget    = 1024
@@ -59,9 +61,9 @@ func updateMapPressure(
 	return false, 0, false, true
 }
 
-func resetMaintenanceContinuation(timer **time.Timer, continuation *<-chan time.Time) {
+func resetMaintenanceTimer(timer **time.Timer, continuation *<-chan time.Time, delay time.Duration) {
 	if *timer == nil {
-		*timer = time.NewTimer(tcAssignmentMaintenanceContinue)
+		*timer = time.NewTimer(delay)
 	} else {
 		if !(*timer).Stop() {
 			select {
@@ -69,9 +71,47 @@ func resetMaintenanceContinuation(timer **time.Timer, continuation *<-chan time.
 			default:
 			}
 		}
-		(*timer).Reset(tcAssignmentMaintenanceContinue)
+		(*timer).Reset(delay)
 	}
 	*continuation = (*timer).C
+}
+
+// One instance belongs to the active worker, whether standalone or shared.
+// Wakeups coalesce until the deadline; traffic never postpones that deadline.
+type tcMaintenanceSchedule struct{ next time.Time }
+
+func (s *tcMaintenanceSchedule) delay(now time.Time) time.Duration {
+	return max(0, s.next.Sub(now))
+}
+
+func (s *tcMaintenanceSchedule) finish(now time.Time, complete, pressure bool, err error) time.Duration {
+	delay := tcAssignmentMaintenanceCooldown
+	if err == nil && !complete {
+		delay = tcAssignmentMaintenanceContinue
+	} else if err == nil && pressure {
+		delay = tcAssignmentPressureCooldown
+	}
+	s.next = now.Add(delay)
+	if err == nil && (!complete || pressure) {
+		return delay
+	}
+	return 0
+}
+
+func (i *Inbound) maintainTCAssignments(schedule *tcMaintenanceSchedule, timer **time.Timer, continuation *<-chan time.Time) {
+	if delay := schedule.delay(time.Now()); delay > 0 {
+		resetMaintenanceTimer(timer, continuation, delay)
+		return
+	}
+	complete, err := i.sweepTCAssignmentMaintenance()
+	if delay := schedule.finish(time.Now(), complete, i.tcAssignmentSweepPressure.Load(), err); delay > 0 {
+		resetMaintenanceTimer(timer, continuation, delay)
+	} else {
+		if *timer != nil {
+			(*timer).Stop()
+		}
+		*continuation = nil
+	}
 }
 
 // startTCAssignmentJanitor owns the TC assignment side of the same bounded
@@ -122,23 +162,26 @@ func (i *Inbound) runTCAssignmentJanitor(ctx context.Context, done chan<- struct
 	defer ticker.Stop()
 	var continuation <-chan time.Time
 	var timer *time.Timer
+	var schedule tcMaintenanceSchedule
 	for {
+		// Leave one wake queued during a cooldown/continuation instead of
+		// waking this goroutine and resetting its timer for every UDP packet.
+		var wake <-chan struct{}
+		if continuation == nil {
+			wake = i.tcAssignmentWake
+		}
 		select {
 		case <-ctx.Done():
 			if timer != nil {
 				timer.Stop()
 			}
 			return
-		case <-i.tcAssignmentWake:
+		case <-wake:
 		case <-ticker.C:
 		case <-continuation:
 			continuation = nil
 		}
-		complete, err := i.sweepTCAssignmentMaintenance()
-		if err != nil || complete {
-			continue
-		}
-		resetMaintenanceContinuation(&timer, &continuation)
+		i.maintainTCAssignments(&schedule, &timer, &continuation)
 	}
 }
 
@@ -155,26 +198,32 @@ func (i *Inbound) sweepTCAssignmentMaintenance() (bool, error) {
 		maxIdle = tcAssignmentPressureMaxIdle
 	}
 	result, err := backend.SweepAssignments(maxIdle, tcAssignmentMaintenanceBudget)
+	i.recordTCAssignmentSweep(result)
 	if err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "sweep TC eBPF assignments: ", err)
 		return true, err
 	}
-	i.recordTCAssignmentSweep(result)
 	if !result.Complete {
 		return false, nil
+	}
+	// Both maps share the worker, but a nearly-full return map must not be
+	// hidden behind a mostly-empty assignment map after TCP accepts.
+	pressureUsage := result.Usage
+	if result.ReturnUsageKnown && uint64(result.ReturnUsage.Entries)*uint64(pressureUsage.Capacity) > uint64(pressureUsage.Entries)*uint64(result.ReturnUsage.Capacity) {
+		pressureUsage = result.ReturnUsage
 	}
 	active, rounds, entered, exited := updateTCAssignmentPressure(
 		i.tcAssignmentSweepPressure.Load(),
 		i.tcAssignmentPressureRounds.Load(),
-		result.Usage,
+		pressureUsage,
 	)
 	i.tcAssignmentSweepPressure.Store(active)
 	i.tcAssignmentPressureRounds.Store(rounds)
 	if entered {
-		i.logger.Warn("eBPF TC assignment map pressure: state=", result.Usage.Entries, "/", result.Usage.Capacity,
+		i.logger.Warn("eBPF TC flow map pressure: state=", pressureUsage.Entries, "/", pressureUsage.Capacity,
 			", max_idle=", tcAssignmentPressureMaxIdle)
 	} else if exited {
-		i.logger.Info("eBPF TC assignment map pressure cleared: state=", result.Usage.Entries, "/", result.Usage.Capacity)
+		i.logger.Info("eBPF TC flow map pressure cleared: state=", pressureUsage.Entries, "/", pressureUsage.Capacity)
 	}
 	return true, nil
 }
@@ -194,7 +243,7 @@ func (i *Inbound) recordTCAssignmentSweep(result commonEBPF.TCAssignmentSweepRes
 	i.tcAssignmentSweepFailure.Store(result.Failure)
 	i.tcAssignmentSweepComplete.Store(result.Complete)
 	i.tcAssignmentSweepLastAt.Store(time.Now().UnixNano())
-	if result.Complete {
+	if result.Complete && result.Failure == "" {
 		i.tcAssignmentSweepPartialAt.Store(0)
 		i.tcAssignmentSweepEntries.Store(uint64(result.Usage.Entries))
 		i.tcAssignmentSweepCapacity.Store(uint64(result.Usage.Capacity))

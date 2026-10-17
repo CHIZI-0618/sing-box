@@ -270,6 +270,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 	defer tcTicker.Stop()
 	var tcContinuation <-chan time.Time
 	var tcTimer *time.Timer
+	var tcSchedule tcMaintenanceSchedule
 	defer func() {
 		if tcTimer != nil {
 			tcTimer.Stop()
@@ -316,6 +317,10 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 		if backend != nil {
 			flowWake = backend.TCPFlowWake()
 		}
+		var tcWake <-chan struct{}
+		if tcContinuation == nil {
+			tcWake = s.inbound.tcAssignmentWake
+		}
 		sweepRequested := false
 		select {
 		case <-ctx.Done():
@@ -331,7 +336,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			if !sweepRequested {
 				continue
 			}
-		case <-s.inbound.tcAssignmentWake:
+		case <-tcWake:
 			tcMaintenancePending = true
 		case <-tcTicker.C:
 			tcMaintenancePending = true
@@ -341,11 +346,8 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 		case <-releaseTimerChannel:
 		}
 		if tcMaintenancePending {
-			complete, _ := s.inbound.sweepTCAssignmentMaintenance()
+			s.inbound.maintainTCAssignments(&tcSchedule, &tcTimer, &tcContinuation)
 			tcMaintenancePending = false
-			if !complete {
-				resetMaintenanceContinuation(&tcTimer, &tcContinuation)
-			}
 		}
 		if backend == nil {
 			continue
