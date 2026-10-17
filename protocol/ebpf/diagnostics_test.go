@@ -53,7 +53,7 @@ func (l *captureLogger) PanicContext(context.Context, ...any) {}
 // the state that is not a failure at all: a data plane is configured but no
 // matching interface exists yet, so there is nothing to attach to.
 func TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet(t *testing.T) {
-	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	diagnostics := inbound.Diagnostics()
 	if diagnostics.SchemaVersion != adapter.EBPFDiagnosticsSchemaVersion || diagnostics.ObservedAt.IsZero() {
 		t.Fatalf("diagnostics metadata = version %d at %v, want schema version %d and timestamp", diagnostics.SchemaVersion, diagnostics.ObservedAt, adapter.EBPFDiagnosticsSchemaVersion)
@@ -67,7 +67,7 @@ func TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet(t *testin
 }
 
 func TestEBPFDiagnosticsUsesShortRequestDrivenCache(t *testing.T) {
-	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	first := inbound.EBPFDiagnostics()
 	second := inbound.EBPFDiagnostics()
 	if !first.ObservedAt.Equal(second.ObservedAt) {
@@ -208,7 +208,7 @@ func TestKernelRuntimeForAPI(t *testing.T) {
 // case: local TC configured and actually attached to an interface, nothing
 // failing, no rollback anomaly.
 func TestDiagnosticsReportsNormalWithAHealthyAttachment(t *testing.T) {
-	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.tcDataPlane = &testTCRuntime{
 		attachments: []commonEBPF.AttachmentInfo{{
 			InterfaceName:  "eth0",
@@ -391,7 +391,7 @@ func TestDiagnosticsUDPSessionCountIncludesSharedPacketRewriteClients(t *testing
 // distinctly from an ordinary in-progress recovery.
 func TestDiagnosticsReportsNeedsAttentionWhenBypassRuleSetIsInconsistent(t *testing.T) {
 	inbound := &Inbound{}
-	inbound.bypassRuleSetInconsistent = true
+	inbound.localBypassRules.inconsistent = true
 	diagnostics := inbound.Diagnostics()
 	if diagnostics.LocalBypassRuleSet.Consistent {
 		t.Fatal("LocalBypassRuleSet.Consistent = true, want false")
@@ -430,7 +430,7 @@ func TestDiagnosticsLastErrorIncludesSharedRewriteWarnings(t *testing.T) {
 // produces valid, complete JSON matching the struct's fields -- not just
 // that it doesn't panic.
 func TestDiagnosticsWriteJSONRoundTrips(t *testing.T) {
-	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	diagnostics := inbound.Diagnostics()
 	var buffer bytes.Buffer
 	if err := diagnostics.WriteJSON(&buffer); err != nil {
@@ -447,7 +447,7 @@ func TestDiagnosticsWriteJSONRoundTrips(t *testing.T) {
 
 // TestDiagnosticsWriteTextIncludesTheKeyFields covers the text-only fields.
 func TestDiagnosticsWriteTextIncludesTheKeyFields(t *testing.T) {
-	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	diagnostics := inbound.Diagnostics()
 	var buffer bytes.Buffer
 	if err := diagnostics.WriteText(&buffer); err != nil {
@@ -477,7 +477,7 @@ func TestLogStartupSummaryNamesEachRequiredFact(t *testing.T) {
 	logger := &captureLogger{}
 	inbound := &Inbound{
 		localEnabled:    true,
-		localDataPlane:  localDataPlaneTC,
+		localDataPlane:  localDataPlaneSocketAssign,
 		fakeIPICMPReply: true,
 		logger:          logger,
 	}
@@ -487,7 +487,7 @@ func TestLogStartupSummaryNamesEachRequiredFact(t *testing.T) {
 		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=1 Info=0", len(logger.debugMessages), len(logger.infoMessages))
 	}
 	message := logger.debugMessages[0]
-	for _, want := range []string{"local=tc", "waiting_for_interface=[local]", "fakeip_icmp=[enabled, not yet covering any attachment]"} {
+	for _, want := range []string{"local=socket_assign", "waiting_for_interface=[local]", "fakeip_icmp=[enabled, not yet covering any attachment]"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("summary %q missing %q", message, want)
 		}
@@ -502,7 +502,7 @@ func TestLogStartupSummaryReportsAnActualAttachmentAndItsFakeIPICMPCoverage(t *t
 	logger := &captureLogger{}
 	inbound := &Inbound{
 		localEnabled:    true,
-		localDataPlane:  localDataPlaneTC,
+		localDataPlane:  localDataPlaneSocketAssign,
 		fakeIPICMPReply: true,
 		logger:          logger,
 	}

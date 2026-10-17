@@ -71,10 +71,10 @@ func (i *Inbound) startInbound() error {
 	defaultInterface := i.currentDefaultInterfaceName()
 	hostAddresses := i.hostAddresses()
 	localInterface := ""
-	localTCEnabled := i.localTCEnabled()
+	localSocketAssignEnabled := i.localSocketAssignEnabled()
 	sharedSocketAssignEnabled := i.sharedSocketAssignEnabled()
 	sharedRewriteEnabled := i.sharedRewriteEnabled()
-	if localTCEnabled {
+	if localSocketAssignEnabled {
 		localInterface = defaultInterface
 		if localInterface == "" {
 			i.logger.Warn("default interface unavailable; local TC eBPF interception is paused")
@@ -85,7 +85,7 @@ func (i *Inbound) startInbound() error {
 	if sharedSocketAssignEnabled {
 		tcSharedInterfaces = sharedInterfaces
 	}
-	if localTCEnabled || sharedSocketAssignEnabled {
+	if localSocketAssignEnabled || sharedSocketAssignEnabled {
 		if err := i.startTCListeners(); err != nil {
 			return err
 		}
@@ -111,13 +111,12 @@ func (i *Inbound) startInbound() error {
 		}
 	}
 	backendConfig := commonEBPF.TCConfig{
-		Isolated:         true,
 		ListenerPort:     i.tcListeners.selectedPort(),
-		EnableLocal:      localTCEnabled,
+		EnableLocal:      localSocketAssignEnabled,
 		EnableShared:     sharedSocketAssignEnabled,
 		EnableIPv4:       true,
-		EnableLocalIPv6:  i.localIPv6,
-		EnableSharedIPv6: i.sharedIPv6,
+		EnableLocalIPv6:  localSocketAssignEnabled && i.localIPv6,
+		EnableSharedIPv6: sharedSocketAssignEnabled && i.sharedIPv6,
 		EnableTCP:        i.enableTCP,
 		EnableUDP:        i.enableUDP,
 		Policy:           i.compiledPolicy,
@@ -129,7 +128,7 @@ func (i *Inbound) startInbound() error {
 		backendConfig.AssignmentCapacity = commonEBPF.CompactTCAssignmentCapacity
 	}
 	var backend *commonEBPF.TCBackend
-	if localTCEnabled || sharedSocketAssignEnabled {
+	if localSocketAssignEnabled || sharedSocketAssignEnabled {
 		backend, err = commonEBPF.PrepareTC(backendConfig)
 	}
 	if err != nil && i.processTracker != nil {
@@ -157,10 +156,9 @@ func (i *Inbound) startInbound() error {
 	}
 	var dataPlane tcRuntime
 	if backend != nil {
-		tcIPv6Enabled := localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6
+		tcIPv6Enabled := i.socketAssignIPv6Enabled()
 		dataPlane, err = newTCRuntime(backend, tcRuntimeConfig{
 			Namespace:             i.tcNamespace,
-			LocalEnabled:          localTCEnabled,
 			IPv6Enabled:           tcIPv6Enabled,
 			LocalInterface:        localInterface,
 			SharedInterfaces:      tcSharedInterfaces,
@@ -337,7 +335,9 @@ func (i *Inbound) startInbound() error {
 		", process_tracking=", i.processTrackingMode(),
 		", tc_priority=", i.tcPriority,
 	)
-	i.udpReplySockets.startSweeper(i.ctx)
+	if i.enableUDP && (i.localSocketAssignEnabled() || i.sharedSocketAssignEnabled()) {
+		i.udpReplySockets.startSweeper(i.ctx)
+	}
 	i.logStartupSummary()
 	return nil
 }
@@ -431,12 +431,12 @@ func (i *Inbound) startSelfBypass() error {
 }
 
 func (i *Inbound) checkKernelCapabilities() error {
-	localTCEnabled := i.localTCEnabled()
+	localSocketAssignEnabled := i.localSocketAssignEnabled()
 	localCgroupEnabled := i.localCgroupEnabled()
 	sharedSocketAssignEnabled := i.sharedSocketAssignEnabled()
 	sharedRewriteEnabled := i.sharedRewriteEnabled()
 	mode := commonEBPF.KernelProbeModeShared
-	localSelected := localTCEnabled || localCgroupEnabled
+	localSelected := localSocketAssignEnabled || localCgroupEnabled
 	sharedSelected := sharedSocketAssignEnabled || sharedRewriteEnabled
 	if localSelected && sharedSelected {
 		mode = commonEBPF.KernelProbeModeAll
@@ -451,8 +451,8 @@ func (i *Inbound) checkKernelCapabilities() error {
 		network = append(network, "udp")
 	}
 	localPlane := commonEBPF.KernelProbeDataPlane("")
-	if localTCEnabled {
-		localPlane = commonEBPF.KernelProbeDataPlaneTC
+	if localSocketAssignEnabled {
+		localPlane = commonEBPF.KernelProbeDataPlaneSocketAssign
 	} else if localCgroupEnabled {
 		localPlane = commonEBPF.KernelProbeDataPlaneCgroup
 	}
@@ -468,6 +468,8 @@ func (i *Inbound) checkKernelCapabilities() error {
 		SharedDataPlane:     sharedPlane,
 		Network:             network,
 		InterfaceNames:      i.sharedOptions.Interface,
+		CgroupPath:          i.cgroupPath,
+		LocalInterface:      i.currentDefaultInterfaceName(),
 		EnableIPv6:          (localSelected && i.localIPv6) || (sharedSelected && i.sharedIPv6),
 		NeedLPMPolicy:       i.needsLPMPolicy(),
 		NeedProcessTracking: localSelected && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
@@ -483,7 +485,12 @@ func (i *Inbound) checkKernelCapabilities() error {
 }
 
 func (i *Inbound) needsLPMPolicy() bool {
-	if (i.localTCEnabled() || i.localCgroupEnabled()) &&
+	if i.fakeIPIPv4Prefix.IsValid() || i.fakeIPIPv6Prefix.IsValid() ||
+		(i.localEnabled && (len(i.localBypassExclude) > 0 || i.localPolicy.BypassPrivateAddress)) ||
+		(i.sharedEnabled && (len(i.sharedBypassExclude) > 0 || i.sharedBypassPrivate)) {
+		return true
+	}
+	if (i.localSocketAssignEnabled() || i.localCgroupEnabled()) &&
 		(len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) {
 		return true
 	}
@@ -491,7 +498,7 @@ func (i *Inbound) needsLPMPolicy() bool {
 		(len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0) {
 		return true
 	}
-	for _, ruleSets := range [][]adapter.RuleSet{i.bypassRuleSet, i.sharedBypassRuleSet} {
+	for _, ruleSets := range [][]adapter.RuleSet{i.localBypassRules.ruleSets, i.sharedBypassRules.ruleSets} {
 		for _, ruleSet := range ruleSets {
 			for _, ipSet := range ruleSet.ExtractIPSet() {
 				if len(ipSet.Prefixes()) > 0 {

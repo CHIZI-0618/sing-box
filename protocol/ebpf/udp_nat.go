@@ -265,7 +265,9 @@ func (c *udpNATConn) enqueuePacketLocked(buffer *buf.Buffer, destination M.Socks
 }
 
 func (s *udpNATService) Purge() {
-	s.cache.Purge()
+	if s != nil {
+		s.cache.Purge()
+	}
 }
 
 const (
@@ -279,7 +281,7 @@ const (
 // TC and shared sessions are deliberately excluded: they keep deadline-based
 // cleanup and do not install a cgroup socket-release observer.
 func (s *udpNATService) ReleaseSocket(socketCookie uint64) {
-	if socketCookie == 0 || s.closed.Load() {
+	if s == nil || socketCookie == 0 || s.closed.Load() {
 		return
 	}
 	s.socketReleaseEvents.Add(1)
@@ -353,6 +355,9 @@ func (s *udpNATService) unregisterReleaseConnection(conn *udpNATConn) {
 }
 
 func (s *udpNATService) Close() error {
+	if s == nil {
+		return nil
+	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		close(s.cleanupDone)

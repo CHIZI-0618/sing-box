@@ -89,7 +89,7 @@ func (i *Inbound) startTCListeners() error {
 		i.enableTCP,
 		i.enableUDP,
 		true,
-		i.localIPv6 || i.sharedIPv6,
+		i.socketAssignIPv6Enabled(),
 		func(network string, ipv6 bool, port uint16) *listener.Listener {
 			return i.newInternalListenerInNamespace(tcListenerHandler{i}, network, ipv6, port, i.tcNamespace.Path())
 		},

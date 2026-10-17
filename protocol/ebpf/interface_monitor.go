@@ -360,8 +360,6 @@ func (t *tcRealRetryTimer) Expired() <-chan time.Time { return t.timer.C }
 
 var tcRetryTimerFactory = newTCRetryTimer
 
-const ()
-
 func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
 	runTCInterfaceUpdateLoopWithHealth(ctx, updates, i.interfaceDriftCheckInterval(), i.tcInterfaceHealthCheck, func(ctx context.Context) tcUpdateOutcome {
 		outcome := i.updateTCInterfaces(ctx)
@@ -571,7 +569,7 @@ func (i *Inbound) tcInterfaceHealthCheck(ctx context.Context) (healthy bool) {
 		return true
 	}
 	defaultInterface := i.monitoredDefaultInterfaceName()
-	localInterface, err := availableLocalTCInterface(i.localTCEnabled(), defaultInterface)
+	localInterface, err := availableLocalTCInterface(i.localSocketAssignEnabled(), defaultInterface)
 	if err != nil {
 		return false
 	}
@@ -643,14 +641,14 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		outcome.general = tcSharedRewriteRecoverable
 	}
 	defaultInterface := i.monitoredDefaultInterfaceName()
-	localTCEnabled := i.localTCEnabled()
-	localInterface, err := availableLocalTCInterface(localTCEnabled, defaultInterface)
+	localSocketAssignEnabled := i.localSocketAssignEnabled()
+	localInterface, err := availableLocalTCInterface(localSocketAssignEnabled, defaultInterface)
 	if err != nil {
 		i.interfaceWarnings.topology.warn(i.logger, "inspect TC eBPF local interface: ", err)
 		outcome.general = tcSharedRewriteRecoverable
 		return
 	}
-	if localTCEnabled && localInterface == "" {
+	if localSocketAssignEnabled && localInterface == "" {
 		i.interfaceWarnings.defaultInterface.warn(i.logger, "default interface unavailable; retaining previous local TC attachment")
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)

@@ -19,7 +19,7 @@ type EBPFInboundOptions struct {
 	// FakeIPICMP, when "reply", answers ICMP Echo Request packets addressed to
 	// a FakeIP so a client's ping sees that address as reachable, without the
 	// request ever leaving this box. It applies to whichever of local/shared
-	// is enabled and has a TC data plane (local.data_plane=tc, or any shared
+	// is enabled and has a TC data plane (local.data_plane=socket_assign, or any shared
 	// data plane) — local.data_plane=cgroup has no TC attachment for this to
 	// ride on and is rejected explicitly rather than silently doing nothing.
 	// The default, "off", changes nothing about existing network semantics.
@@ -29,7 +29,7 @@ type EBPFInboundOptions struct {
 type EBPFLocalOptions struct {
 	Enabled              *bool                            `json:"enabled,omitempty"`
 	DNSMode              string                           `json:"dns_mode,omitempty" enum:"hijack,respect_policy,off"`
-	DataPlane            string                           `json:"data_plane,omitempty" enum:"tc,cgroup"`
+	DataPlane            string                           `json:"data_plane,omitempty" enum:"cgroup,socket_assign"`
 	CgroupPath           string                           `json:"cgroup_path,omitempty"`
 	IPv6                 *bool                            `json:"ipv6,omitempty"`
 	BypassPrivateAddress *bool                            `json:"bypass_private_address,omitempty"`

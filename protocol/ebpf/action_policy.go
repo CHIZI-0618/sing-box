@@ -7,56 +7,7 @@ import (
 	"sort"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
-	E "github.com/sagernet/sing/common/exceptions"
 )
-
-// validateActionPolicyScope keeps data-plane-specific mapping decisions in
-// sing-box. These fields have no corresponding map in the selected eBPF
-// paths, so silently passing them to sing-ebpf would turn a caller mistake
-// into an ignored policy.
-func validateActionPolicyScope(policy commonEBPF.ActionPolicy) error {
-	if len(policy.Local.SourceCIDR) > 0 || len(policy.Local.SourceMAC) > 0 {
-		return E.New("local eBPF action policy does not support source CIDR or MAC decisions")
-	}
-	if len(policy.Shared.UID) > 0 {
-		return E.New("shared eBPF action policy does not support UID decisions")
-	}
-	return nil
-}
-
-// validateBypassExcludeConflicts rejects bypass_exclude prefixes that would
-// collide with the fake-ip force-intercept slot. The backend force-intercept
-// is a single prefix per address family; fake-ip occupies the same slot, so a
-// bypass_exclude prefix for the same family would make the compiled policy
-// ambiguous (multiple intercept prefixes) or be silently ignored.
-func (i *Inbound) validateBypassExcludeConflicts() error {
-	conflict := func(name, family string, bypassExclude, fakeIP netip.Prefix) error {
-		if fakeIP.IsValid() && bypassExclude.IsValid() {
-			return E.New(name, " bypass_exclude ", bypassExclude, " conflicts with the ", family,
-				" fake-ip force-intercept prefix ", fakeIP, "; use redir-host DNS mode or drop one of them")
-		}
-		return nil
-	}
-	for _, prefix := range i.localBypassExclude {
-		if prefix.Addr().Is4() {
-			if err := conflict("local", "IPv4", prefix, i.fakeIPIPv4Prefix); err != nil {
-				return err
-			}
-		} else if err := conflict("local", "IPv6", prefix, i.fakeIPIPv6Prefix); err != nil {
-			return err
-		}
-	}
-	for _, prefix := range i.sharedBypassExclude {
-		if prefix.Addr().Is4() {
-			if err := conflict("shared", "IPv4", prefix, i.fakeIPIPv4Prefix); err != nil {
-				return err
-			}
-		} else if err := conflict("shared", "IPv6", prefix, i.fakeIPIPv6Prefix); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // compileProcessUIDPolicy converts sing-box's include/exclude/package result
 // into final UID actions for sing-ebpf. The library receives no selector
@@ -165,9 +116,6 @@ var eBPFPrivateDestinationPrefixes = []netip.Prefix{
 }
 
 func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
-	if err := i.validateBypassExcludeConflicts(); err != nil {
-		return commonEBPF.CompiledPolicy{}, err
-	}
 	policy := commonEBPF.ActionPolicy{
 		EnableTCP: i.enableTCP,
 		EnableUDP: i.enableUDP,
@@ -218,9 +166,6 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.sharedBypassExclude, i.enableTCP, i.enableUDP)
 	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
 	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
-	if err := validateActionPolicyScope(policy); err != nil {
-		return commonEBPF.CompiledPolicy{}, err
-	}
 	return commonEBPF.CompileActionPolicy(policy)
 }
 
@@ -293,12 +238,12 @@ func appendPortDecisions(scope *commonEBPF.ActionScope, bypass []portRange, dnsM
 			}
 		}
 	}
-	if dnsMode == dnsModeHijack {
+	if dnsMode == dnsModeHijack || dnsMode == dnsModeRespectPolicy {
 		if enableTCP {
-			scope.DestinationPort = append(scope.DestinationPort, commonEBPF.PortDecision{Protocol: commonEBPF.ProtocolTCP, Port: 53, Action: commonEBPF.DecisionIntercept})
+			scope.DestinationPort = append(scope.DestinationPort, commonEBPF.PortDecision{Protocol: commonEBPF.ProtocolTCP, Port: 53, Action: commonEBPF.DecisionIntercept, AfterSelectors: dnsMode == dnsModeRespectPolicy})
 		}
 		if enableUDP {
-			scope.DestinationPort = append(scope.DestinationPort, commonEBPF.PortDecision{Protocol: commonEBPF.ProtocolUDP, Port: 53, Action: commonEBPF.DecisionIntercept})
+			scope.DestinationPort = append(scope.DestinationPort, commonEBPF.PortDecision{Protocol: commonEBPF.ProtocolUDP, Port: 53, Action: commonEBPF.DecisionIntercept, AfterSelectors: dnsMode == dnsModeRespectPolicy})
 		}
 	} else if dnsMode == dnsModeOff {
 		if enableTCP {

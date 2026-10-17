@@ -238,7 +238,7 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 		cgroupPath string
 	}{
 		{name: "default", options: option.EBPFLocalOptions{}, dataPlane: localDataPlaneCgroup},
-		{name: "explicit tc", options: option.EBPFLocalOptions{DataPlane: "tc"}, dataPlane: localDataPlaneTC},
+		{name: "explicit socket_assign", options: option.EBPFLocalOptions{DataPlane: "socket_assign"}, dataPlane: localDataPlaneSocketAssign},
 		{name: "cgroup root", options: option.EBPFLocalOptions{DataPlane: "cgroup"}, dataPlane: localDataPlaneCgroup},
 		{name: "explicit cgroup", options: option.EBPFLocalOptions{DataPlane: "cgroup", CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
 		{name: "implicit cgroup path", options: option.EBPFLocalOptions{CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},

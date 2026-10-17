@@ -78,27 +78,37 @@ func resetMaintenanceTimer(timer **time.Timer, continuation *<-chan time.Time, d
 
 // One instance belongs to the active worker, whether standalone or shared.
 // Wakeups coalesce until the deadline; traffic never postpones that deadline.
-type tcMaintenanceSchedule struct{ next time.Time }
+type maintenanceSchedule struct {
+	next     time.Time
+	failures uint
+}
 
-func (s *tcMaintenanceSchedule) delay(now time.Time) time.Duration {
+func (s *maintenanceSchedule) delay(now time.Time) time.Duration {
 	return max(0, s.next.Sub(now))
 }
 
-func (s *tcMaintenanceSchedule) finish(now time.Time, complete, pressure bool, err error) time.Duration {
+func (s *maintenanceSchedule) finish(now time.Time, complete, pressure bool, err error) time.Duration {
 	delay := tcAssignmentMaintenanceCooldown
-	if err == nil && !complete {
+	if err != nil {
+		s.failures = min(s.failures+1, 5)
+		delay = min(tcAssignmentMaintenanceCooldown<<(s.failures-1), tcAssignmentMaintenanceInterval)
+	} else if !complete {
+		s.failures = 0
 		delay = tcAssignmentMaintenanceContinue
-	} else if err == nil && pressure {
+	} else if pressure {
+		s.failures = 0
 		delay = tcAssignmentPressureCooldown
+	} else {
+		s.failures = 0
 	}
 	s.next = now.Add(delay)
-	if err == nil && (!complete || pressure) {
+	if err != nil || !complete || pressure {
 		return delay
 	}
 	return 0
 }
 
-func (i *Inbound) maintainTCAssignments(schedule *tcMaintenanceSchedule, timer **time.Timer, continuation *<-chan time.Time) {
+func (i *Inbound) maintainTCAssignments(schedule *maintenanceSchedule, timer **time.Timer, continuation *<-chan time.Time) {
 	if delay := schedule.delay(time.Now()); delay > 0 {
 		resetMaintenanceTimer(timer, continuation, delay)
 		return
@@ -162,7 +172,7 @@ func (i *Inbound) runTCAssignmentJanitor(ctx context.Context, done chan<- struct
 	defer ticker.Stop()
 	var continuation <-chan time.Time
 	var timer *time.Timer
-	var schedule tcMaintenanceSchedule
+	var schedule maintenanceSchedule
 	for {
 		// Leave one wake queued during a cooldown/continuation instead of
 		// waking this goroutine and resetting its timer for every UDP packet.

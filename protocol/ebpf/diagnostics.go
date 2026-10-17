@@ -744,32 +744,32 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 
 	i.bypassRuleSetAccess.Lock()
 	localState := scopedBypassRuleSetDiagnostics{
-		Consistent:            !i.bypassRuleSetInconsistent,
-		Pending:               i.bypassRuleSetNeedsRetry,
-		PolicyVersion:         i.bypassRuleSetPolicyVersion,
-		ExpectedPolicyVersion: i.bypassRuleSetExpectedVersion,
-		RetryCount:            i.bypassRuleSetRetryCount,
+		Consistent:            !i.localBypassRules.inconsistent,
+		Pending:               i.localBypassRules.needsRetry,
+		PolicyVersion:         i.localBypassRules.policyVersion,
+		ExpectedPolicyVersion: i.localBypassRules.expectedVersion,
+		RetryCount:            i.localBypassRules.retryCount,
 		BackendState:          make(map[string]BypassRuleSetBackendState, 2),
 	}
-	if i.localTCEnabled() && i.tcBackend() != nil {
-		localState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.bypassRuleSetTC.version, Known: i.bypassRuleSetTC.known}
+	if i.localSocketAssignEnabled() && i.tcBackend() != nil {
+		localState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.localBypassRules.tc.version, Known: i.localBypassRules.tc.known}
 	}
 	if i.cgroupBackendInstance() != nil {
-		localState.BackendState["cgroup"] = BypassRuleSetBackendState{Version: i.bypassRuleSetCgroup.version, Known: i.bypassRuleSetCgroup.known}
+		localState.BackendState["cgroup"] = BypassRuleSetBackendState{Version: i.localBypassRules.cgroup.version, Known: i.localBypassRules.cgroup.known}
 	}
 	sharedState := scopedBypassRuleSetDiagnostics{
-		Consistent:            !i.sharedBypassRuleSetInconsistent,
-		Pending:               i.sharedBypassRuleSetNeedsRetry,
-		PolicyVersion:         i.sharedBypassRuleSetPolicyVersion,
-		ExpectedPolicyVersion: i.sharedBypassRuleSetExpectedVersion,
-		RetryCount:            i.sharedBypassRuleSetRetryCount,
+		Consistent:            !i.sharedBypassRules.inconsistent,
+		Pending:               i.sharedBypassRules.needsRetry,
+		PolicyVersion:         i.sharedBypassRules.policyVersion,
+		ExpectedPolicyVersion: i.sharedBypassRules.expectedVersion,
+		RetryCount:            i.sharedBypassRules.retryCount,
 		BackendState:          make(map[string]BypassRuleSetBackendState, 2),
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil && shared.sharedBackendInstance() != nil {
-		sharedState.BackendState["packet_rewrite"] = BypassRuleSetBackendState{Version: i.bypassRuleSetShared.version, Known: i.bypassRuleSetShared.known}
+		sharedState.BackendState["packet_rewrite"] = BypassRuleSetBackendState{Version: i.sharedBypassRules.shared.version, Known: i.sharedBypassRules.shared.known}
 	}
 	if i.sharedSocketAssignEnabled() && i.tcBackend() != nil {
-		sharedState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.sharedBypassRuleSetTC.version, Known: i.sharedBypassRuleSetTC.known}
+		sharedState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.sharedBypassRules.tc.version, Known: i.sharedBypassRules.tc.known}
 	}
 	diagnostics.LocalBypassRuleSet = localState
 	diagnostics.SharedBypassRuleSet = sharedState

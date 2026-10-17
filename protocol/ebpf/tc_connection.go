@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"sync"
 	"syscall"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
@@ -48,14 +47,7 @@ func (i *Inbound) newTCConnection(
 		_ = conn.Close()
 		return
 	}
-	previousOnClose := onClose
-	var releaseOnce sync.Once
-	onClose = func(err error) {
-		releaseOnce.Do(returnHandle.Release)
-		if previousOnClose != nil {
-			previousOnClose(err)
-		}
-	}
+	onClose = N.AppendClose(onClose, N.OnceClose(func(error) { returnHandle.Release() }))
 	metadata.Inbound = i.Tag()
 	metadata.InboundType = i.Type()
 	metadata.Source = M.SocksaddrFromNetIP(source)
@@ -155,7 +147,12 @@ func (i *Inbound) prepareTCPacketConnection(
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	ctx := log.ContextWithNewID(i.ctx)
 	clientState := i.udpClientTable.loadOrCreate(key)
-	writer := &tcPacketWriter{inbound: i, key: key, clientState: clientState}
+	var writer N.PacketWriter
+	if key.Scope == udpSessionScopeLocalCgroup {
+		writer = &cgroupPacketWriter{inbound: i, key: key, clientState: clientState}
+	} else {
+		writer = &tcPacketWriter{inbound: i, key: key, clientState: clientState}
+	}
 	return true, ctx, writer, func(error) {
 		cleanup := i.udpClientTable.deleteWithCleanup(key, clientState)
 		for _, handle := range cleanup.tcReturns {
@@ -203,12 +200,8 @@ type tcPacketWriter struct {
 func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	defer buffer.Release()
 	destinationAddress := destination.AddrPort()
-	binding, err := w.ensureReplyBinding(destinationAddress)
-	if err != nil {
+	if _, err := w.ensureReplyBinding(destinationAddress); err != nil {
 		return err
-	}
-	if w.clientState.isCgroupDataPlane() {
-		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.redirectAddress)
 	}
 	entry, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.replySocketFactory())
 	if err != nil {
@@ -222,29 +215,6 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 
 func (w *tcPacketWriter) ensureReplyBinding(destinationAddress netip.AddrPort) (udpRedirectBinding, error) {
 	binding, loaded := w.clientState.redirectBinding(destinationAddress)
-	if !loaded {
-		if w.clientState.isCgroupDataPlane() {
-			backend := w.inbound.cgroupBackendInstance()
-			if backend == nil {
-				return udpRedirectBinding{}, E.New("cgroup eBPF backend is closed")
-			}
-			redirectAddress, err := backend.ReserveUDPReplyRedirect(destinationAddress, w.inbound.listeners.selectedPort())
-			if err != nil {
-				return udpRedirectBinding{}, err
-			}
-			if !w.inbound.udpClientTable.setCgroupReplyBinding(w.key, w.clientState, destinationAddress, redirectAddress) {
-				_ = backend.DeleteRedirect(
-					commonEBPF.ProtocolUDP,
-					netip.AddrPortFrom(redirectAddress, w.inbound.listeners.selectedPort()),
-				)
-				return udpRedirectBinding{}, E.New("cgroup eBPF UDP reply binding was rejected")
-			}
-			binding, loaded = w.clientState.redirectBinding(destinationAddress)
-			if !loaded {
-				return udpRedirectBinding{}, E.New("cgroup eBPF UDP reply binding is unavailable")
-			}
-		}
-	}
 	if !loaded {
 		if !w.clientState.hasAddressFamily(destinationAddress.Addr().Is4()) {
 			return udpRedirectBinding{}, E.New("TC eBPF UDP reply alias limit reached or address family unavailable")
@@ -262,7 +232,7 @@ func (w *tcPacketWriter) ensureReplyBinding(destinationAddress netip.AddrPort) (
 			return udpRedirectBinding{}, E.New("TC eBPF UDP reply binding is unavailable")
 		}
 	}
-	if !w.clientState.isCgroupDataPlane() && w.newReplySocket == nil {
+	if w.newReplySocket == nil {
 		backend := w.inbound.tcBackend()
 		if backend == nil {
 			return udpRedirectBinding{}, E.New("TC eBPF backend is closed")
@@ -278,20 +248,6 @@ func (w *tcPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []
 	if len(buffers) == 0 || len(buffers) != len(destinations) {
 		buf.ReleaseMulti(buffers)
 		return os.ErrInvalid
-	}
-	if w.clientState.isCgroupDataPlane() {
-		packetInfos := make([][]byte, len(buffers))
-		sources := make([]netip.Addr, len(buffers))
-		for index, destination := range destinations {
-			binding, err := w.ensureReplyBinding(destination.AddrPort())
-			if err != nil {
-				buf.ReleaseMulti(buffers)
-				return err
-			}
-			packetInfos[index] = binding.packetInfo
-			sources[index] = binding.redirectAddress
-		}
-		return w.inbound.listeners.writeUDPBatch(buffers, packetInfos, w.key.Source, sources)
 	}
 	type packetGroup struct {
 		buffers      []*buf.Buffer
