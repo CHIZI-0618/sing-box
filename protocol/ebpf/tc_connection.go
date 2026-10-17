@@ -257,12 +257,14 @@ func (w *tcPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []
 	client := M.SocksaddrFromNetIP(w.key.Source)
 	for index, destination := range destinations {
 		destinationAddress := destination.AddrPort()
-		if _, err := w.ensureReplyBinding(destinationAddress); err != nil {
-			buf.ReleaseMulti(buffers)
-			return err
-		}
 		group := groups[destinationAddress]
 		if group == nil {
+			// All packets in this group share one session and destination.
+			// Validate/retain once per batch, never cache across batches.
+			if _, err := w.ensureReplyBinding(destinationAddress); err != nil {
+				buf.ReleaseMulti(buffers)
+				return err
+			}
 			group = &packetGroup{}
 			groups[destinationAddress] = group
 		}
