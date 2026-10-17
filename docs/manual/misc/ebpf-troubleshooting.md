@@ -241,7 +241,7 @@ system for the kernel side.
 ## Attachment and interface checks
 
 Local `cgroup` mode follows the selected cgroup v2 hierarchy and has no network
-interface attachment. Local `tc` follows the current default interface. Shared
+interface attachment. Local `socket_assign` follows the current default interface. Shared
 mode follows the configured downstream interfaces and retries interfaces that
 were absent at startup. A configured shared interface is detached while it is
 the current default upstream and restored when it becomes downstream again. Network events also
