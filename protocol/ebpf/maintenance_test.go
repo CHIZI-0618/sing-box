@@ -64,3 +64,23 @@ func TestTCAssignmentPartialUsageIsNotPressureEvidence(t *testing.T) {
 		t.Fatalf("empty/unknown usage changed pressure state: active=%v rounds=%d entered=%v exited=%v", active, rounds, entered, exited)
 	}
 }
+func TestTCSweepReportsIndependentMapValidity(t *testing.T) {
+	i := &Inbound{}
+	i.recordTCAssignmentSweep(commonEBPF.TCAssignmentSweepResult{
+		Usage: commonEBPF.MapUsage{Entries: 7, Capacity: 64}, UsageKnown: true,
+		ReturnUsage: commonEBPF.MapUsage{Entries: 40, Capacity: 64}, ReturnUsageKnown: true, Complete: true,
+	})
+	i.recordTCAssignmentSweep(commonEBPF.TCAssignmentSweepResult{
+		Usage: commonEBPF.MapUsage{Entries: 8, Capacity: 64}, UsageKnown: true,
+		FailureMap: "sb_tc_return", Failure: "scan",
+	})
+	if !i.tcAssignmentSweepUsageKnown.Load() || i.tcReturnSweepUsageKnown.Load() {
+		t.Fatal("return failure erased assignment validity or reported stale return usage as current")
+	}
+	if i.tcAssignmentSweepEntries.Load() != 8 || i.tcReturnSweepEntries.Load() != 40 {
+		t.Fatal("per-map snapshots were mixed")
+	}
+	if name, _ := i.tcAssignmentSweepFailureMap.Load().(string); name != "sb_tc_return" {
+		t.Fatalf("failure map = %q", name)
+	}
+}

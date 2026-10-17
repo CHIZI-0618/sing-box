@@ -8,10 +8,10 @@ package daemon
 
 import (
 	context "context"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -87,7 +87,7 @@ type StartedServiceClient interface {
 	CloseAllConnections(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetDeprecatedWarnings(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DeprecatedWarnings, error)
 	GetStartedAt(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*StartedAt, error)
-	GetEBPFDiagnostics(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EBPFDiagnosticsResponse, error)
+	GetEBPFDiagnostics(ctx context.Context, in *EBPFDiagnosticsRequest, opts ...grpc.CallOption) (*EBPFDiagnosticsResponse, error)
 	SubscribeOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[OutboundList], error)
 	StartNetworkQualityTest(ctx context.Context, in *NetworkQualityTestRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NetworkQualityTestProgress], error)
 	StartSTUNTest(ctx context.Context, in *STUNTestRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[STUNTestProgress], error)
@@ -356,7 +356,7 @@ func (c *startedServiceClient) GetStartedAt(ctx context.Context, in *emptypb.Emp
 	return out, nil
 }
 
-func (c *startedServiceClient) GetEBPFDiagnostics(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EBPFDiagnosticsResponse, error) {
+func (c *startedServiceClient) GetEBPFDiagnostics(ctx context.Context, in *EBPFDiagnosticsRequest, opts ...grpc.CallOption) (*EBPFDiagnosticsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EBPFDiagnosticsResponse)
 	err := c.cc.Invoke(ctx, StartedService_GetEBPFDiagnostics_FullMethodName, in, out, cOpts...)
@@ -736,7 +736,7 @@ type StartedServiceServer interface {
 	CloseAllConnections(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	GetDeprecatedWarnings(context.Context, *emptypb.Empty) (*DeprecatedWarnings, error)
 	GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error)
-	GetEBPFDiagnostics(context.Context, *emptypb.Empty) (*EBPFDiagnosticsResponse, error)
+	GetEBPFDiagnostics(context.Context, *EBPFDiagnosticsRequest) (*EBPFDiagnosticsResponse, error)
 	SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error
 	StartNetworkQualityTest(*NetworkQualityTestRequest, grpc.ServerStreamingServer[NetworkQualityTestProgress]) error
 	StartSTUNTest(*STUNTestRequest, grpc.ServerStreamingServer[STUNTestProgress]) error
@@ -825,7 +825,7 @@ func (UnimplementedStartedServiceServer) GetDeprecatedWarnings(context.Context, 
 func (UnimplementedStartedServiceServer) GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetStartedAt not implemented")
 }
-func (UnimplementedStartedServiceServer) GetEBPFDiagnostics(context.Context, *emptypb.Empty) (*EBPFDiagnosticsResponse, error) {
+func (UnimplementedStartedServiceServer) GetEBPFDiagnostics(context.Context, *EBPFDiagnosticsRequest) (*EBPFDiagnosticsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetEBPFDiagnostics not implemented")
 }
 func (UnimplementedStartedServiceServer) SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error {
@@ -1204,7 +1204,7 @@ func _StartedService_GetStartedAt_Handler(srv interface{}, ctx context.Context, 
 }
 
 func _StartedService_GetEBPFDiagnostics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
+	in := new(EBPFDiagnosticsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1216,7 +1216,7 @@ func _StartedService_GetEBPFDiagnostics_Handler(srv interface{}, ctx context.Con
 		FullMethod: StartedService_GetEBPFDiagnostics_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StartedServiceServer).GetEBPFDiagnostics(ctx, req.(*emptypb.Empty))
+		return srv.(StartedServiceServer).GetEBPFDiagnostics(ctx, req.(*EBPFDiagnosticsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

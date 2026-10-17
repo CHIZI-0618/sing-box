@@ -3,10 +3,12 @@ package main
 import (
 	"os"
 
+	"github.com/sagernet/sing-box/daemon"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+var commandAPIEBPFDeep bool
 
 var commandAPIEBPF = &cobra.Command{
 	Use:   "ebpf",
@@ -19,6 +21,7 @@ var commandAPIEBPF = &cobra.Command{
 
 func init() {
 	commandAPIRoot.AddCommand(commandAPIEBPF)
+	commandAPIEBPF.Flags().BoolVar(&commandAPIEBPFDeep, "deep", false, "Inspect owned kernel programs and map occupancy")
 }
 
 func runAPIEBPF() error {
@@ -27,7 +30,7 @@ func runAPIEBPF() error {
 		return err
 	}
 	defer clientConn.Close()
-	diagnostics, err := client.GetEBPFDiagnostics(globalCtx, &emptypb.Empty{})
+	diagnostics, err := client.GetEBPFDiagnostics(globalCtx, &daemon.EBPFDiagnosticsRequest{Deep: commandAPIEBPFDeep})
 	if err != nil {
 		return err
 	}

@@ -27,7 +27,7 @@ service StartedService {
   rpc CloseAllConnections(google.protobuf.Empty) returns(google.protobuf.Empty) {}
   rpc GetDeprecatedWarnings(google.protobuf.Empty) returns(DeprecatedWarnings) {}
   rpc GetStartedAt(google.protobuf.Empty) returns(StartedAt) {}
-  rpc GetEBPFDiagnostics(google.protobuf.Empty) returns(EBPFDiagnosticsResponse) {}
+  rpc GetEBPFDiagnostics(EBPFDiagnosticsRequest) returns(EBPFDiagnosticsResponse) {}
 
   rpc SubscribeOutbounds(google.protobuf.Empty) returns (stream OutboundList) {}
   rpc StartNetworkQualityTest(NetworkQualityTestRequest) returns (stream NetworkQualityTestProgress) {}
@@ -808,6 +808,11 @@ message NotificationCancel {
   int32 typeID = 2;
 }
 
+message EBPFDiagnosticsRequest {
+  // Explicitly enumerate owned programs/maps. Ordinary status polling stays cheap.
+  bool deep = 1;
+}
+
 message EBPFDiagnosticsResponse {
   repeated EBPFInboundDiagnostics inbounds = 1;
   EBPFKernelRuntimeDiagnostics kernelRuntime = 2;
@@ -917,6 +922,14 @@ message EBPFInboundDiagnostics {
   optional int64 cgroupRecoveryQueueOverflowAt = 70;
   string tcAssignmentSweepFailure = 71;
   string tcNetworkNamespace = 72;
+  EBPFKernelRuntimeDiagnostics kernelRuntime = 73;
+  uint64 tcReturnSweepEntries = 74;
+  uint64 tcReturnSweepCapacity = 75;
+  uint64 tcReturnSweepScanned = 76;
+  uint64 tcReturnSweepRemoved = 77;
+  bool tcAssignmentSweepUsageKnown = 78;
+  bool tcReturnSweepUsageKnown = 79;
+  string tcAssignmentSweepFailureMap = 80;
 }
 
 message EBPFAttachmentDiagnostics {

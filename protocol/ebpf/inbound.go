@@ -134,6 +134,13 @@ type Inbound struct {
 	interfaceWarnings             interfaceWarningLimiters
 	diagnostics                   tcOutcomeHistory
 	counters                      ebpfCounters
+	tcReturnSweepEntries          atomic.Uint64
+	tcReturnSweepCapacity         atomic.Uint64
+	tcReturnSweepScanned          atomic.Uint64
+	tcReturnSweepRemoved          atomic.Uint64
+	tcAssignmentSweepUsageKnown   atomic.Bool
+	tcReturnSweepUsageKnown       atomic.Bool
+	tcAssignmentSweepFailureMap   atomic.Value
 	tcAssignmentSweepScanned      atomic.Uint64
 	tcAssignmentSweepRemoved      atomic.Uint64
 	tcAssignmentSweepComplete     atomic.Bool
