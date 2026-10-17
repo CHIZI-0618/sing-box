@@ -19,7 +19,7 @@ icon: material/stethoscope
 | CPU 或内存持续增长 | pprof、活动 UDP 会话、回复 socket 池、map 占用 | Go heap/goroutine、用户态会话抖动或内核 map 分配 |
 | 设备重启或 kernel panic | `/sys/fs/pstore`、内核版本、已启用策略 | 内核 verifier/map/驱动问题，仅用户态日志不足以判断 |
 
-不要只凭“eBPF”一词推断责任路径。local `cgroup`、local `tc`、shared
+不要只凭“eBPF”一词推断责任路径。local `cgroup`、local `socket_assign`、shared
 `socket_assign` 和 shared `packet_rewrite` 使用不同 hook、map、交付和清理机制。
 
 ## 最低限度材料
@@ -103,6 +103,15 @@ local/shared 角色和帧格式。网络事件仅在 attachment 或受管
 
 ### 解读 `sing-box api ebpf`
 
+Schema 17 将轻量状态与深度检查分开。用 `sing-box api ebpf --deep` 或 dashboard
+的“深度检查所属 Map”枚举内核资源。每个 inbound 有自己的 `kernelRuntime`，
+顶层仅为去重汇总，不能把它的压力归到所有 inbound。深度快照按需读取，最多缓存 5 秒。
+
+assignment 与返程 map 占用分别报告；未知/未完成扫描不等于零，上一次完整计数只代表
+历史状态。`tcAssignmentSweepFailureMap` 标明扫描失败的 map。`not_applicable`
+不参与压力计算；策略 map 的配置容量不代表运行时饱和。返程写入失败、所有权冲突和
+查询失败分别计数，应比较增量，而非把累计历史错误持续视为新故障。
+
 顶层状态是运行情况摘要：
 
 | 状态 | 含义 | 操作 |
@@ -121,7 +130,7 @@ local cgroup 还应记录 API 返回的实际运行字段：`local_cgroup_attach
 `local_udp_storage_mode` 和 `local_udp_time_mode`。这些字段表示厂商内核或安全策略
 触发回退后真正选中的路径，不是能力猜测。
 
-local TC 或 shared `socket_assign` 启用时，API 还会返回 `tc_*` 运行态字段：实际
+local socket assignment 或 shared `socket_assign` 启用时，API 还会返回 `tc_*` 运行态字段：实际
 `tcx`/`clsact`/`mixed` 挂载机制、TCP listener 的 `sockmap`/`direct` 查找方式、delivery
 接口及其 ifindex、策略路由 mark/table/priority、活动和待回收资源数量、健康状态、最近
 health check/reconcile 时间以及网络代数。它们来自运行中的资源快照，不是按内核版本推测；
@@ -193,7 +202,7 @@ TC 状态、`dmesg` 和目标系统可用的 BPF 检查工具判断。
 
 ## attachment 和接口检查
 
-local `cgroup` 模式跟随选中的 cgroup v2 层级，不挂载网络接口；local `tc` 才跟随
+local `cgroup` 模式跟随选中的 cgroup v2 层级，不挂载网络接口；local `socket_assign` 才跟随
 当前默认接口。shared 模式跟随配置的下游接口，并会重试启动时不存在的接口。配置的
 shared 接口成为当前默认上游时会停止接管，重新成为下游后恢复。网络
 事件也会检查受管 TC filter、策略路由和 delivery 链路。如果接口事件前后接管行为发生
@@ -210,7 +219,7 @@ tc -statistics -details filter show
 同时保留启动时的 `eBPF TC active` 摘要。sing-box 运行期间不要手动删除内部 veth
 或其管理的 TC filter。
 
-排查 local `tc` 接管时，可对比默认接口 egress filter 和日志所示 delivery 接口
+排查 local `socket_assign` 接管时，可对比默认接口 egress filter 和日志所示 delivery 接口
 ingress filter 的报文计数：
 
 ```sh
@@ -248,7 +257,7 @@ tuple；五元组代理不能安全地单独重定向后续分片。若不应出
 `last_error_at`、`last_recovery_at`、`next_retry_at`、attachment ifindex 变化与
 route/link 事件。
 
-local TC 跟随当前默认接口。shared 接口仅在作为下游时可接管；暂时成为默认上游时会
+local socket assignment 跟随当前默认接口。shared 接口仅在作为下游时可接管；暂时成为默认上游时会
 按设计卸载。旧 local attachment 可保留到新默认接口准备完成，以减少不必要的空窗。
 这些机制不会重新创建被 Android 撤销的热点 IPv6 前缀、默认路由、DHCP、NAT 或转发。
 

@@ -53,7 +53,7 @@ interface name:
 | Path | Data plane | Use |
 | --- | --- | --- |
 | local | `cgroup` (default) | Intercepts this host's sockets in a cgroup v2 hierarchy without following an interface. |
-| local | `tc` | Intercepts this host's packets on the current default interface. |
+| local | `socket_assign` | Intercepts this host's packets on the current default interface. |
 | shared | `packet_rewrite` (default) | Rewrites packets on Ethernet-framed downstream interfaces and restores replies. |
 | shared | `socket_assign` | Assigns packets to transparent listeners; also supports raw-IP, PPP and tunnel links. |
 
@@ -96,7 +96,27 @@ custom priority uses `clsact` so numeric ordering remains meaningful.
 
 The reply only proves that this host answered; it does not measure the mapped
 destination. Local `cgroup` has no packet hook and cannot answer local ICMP.
-Local `tc` and either shared data plane can answer traffic on their own paths.
+Local `socket_assign` and either shared data plane can answer traffic on their own paths.
+
+### Independent mechanism selection
+
+`cgroup` and `packet_rewrite` are compatibility-oriented.
+`socket_assign` is experimental and requires more kernel capabilities; it
+preserves TCP **and** UDP tuples in a private namespace. Migrate the old local
+name `tc` to `socket_assign`; it is not an alias.
+
+| Local | Shared | Mechanisms |
+| --- | --- | --- |
+| cgroup | packet_rewrite | Socket-address + Ethernet packet rewrite; no assignment namespace |
+| cgroup | socket_assign | cgroup hooks + independent shared assignment namespace |
+| socket_assign | packet_rewrite | Local assignment namespace + independent shared rewrite |
+| socket_assign | socket_assign | One assignment engine/namespace, independent scope policies |
+
+Either scope can run alone. TCP/UDP selection applies to enabled scopes;
+IPv6 is independent per scope. Disabled paths cannot enable another path's
+IPv6 listener or change its policy. Optional cgroup self-bypass/process
+tracking is not a mandatory dependency of socket assignment. Missing
+capabilities fail startup explicitly; no mechanism silently changes.
 
 ## local
 
@@ -108,7 +128,7 @@ Once either field is explicit, omitted paths are disabled.
 
 ### local.data_plane
 
-`cgroup` (default) or `tc`. The TC path follows the current default interface;
+`cgroup` (default) or `socket_assign`. The TC path follows the current default interface;
 the cgroup path follows the selected cgroup v2 subtree.
 
 ### local.cgroup_path
@@ -118,7 +138,7 @@ visible cgroup v2 root and its descendants are intercepted.
 
 On Android, a vendor netd cgroup hook can conflict with attachment. sing-box
 prefers multi-program attachment and falls back to legacy exclusive attachment
-only for compatible errors. Use local `tc` if the device cannot safely share
+only for compatible errors. Use local `socket_assign` if the device cannot safely share
 the root cgroup hook.
 
 ### local.dns_mode
@@ -162,10 +182,9 @@ even when `local.bypass_private_address`, `local.bypass_port`, or another
 bypass rule would otherwise pass them in kernel. The kernel checks the
 force-intercept prefix before all bypass checks.
 
-At most one IPv4 and one IPv6 prefix is accepted (the backend keeps a single
-force-intercept prefix per address family). A prefix that overlaps the DNS
-fake-ip range is rejected at startup because fake-ip already occupies that
-slot; use `redir-host` DNS mode when you need bypass_exclude.
+Multiple IPv4 and IPv6 prefixes are supported. Local and shared sets are
+independent, and can coexist with FakeIP prefixes. Duplicate prefixes are
+normalized; a local force prefix never forces the shared path.
 
 Typical use: keep a VPN/CGNAT range such as Tailscale's `100.64.0.0/10` (and
 IPv6 `fd7a:115c:a1e0::/48`) intercepted so tailnet traffic can reach a
@@ -229,7 +248,7 @@ Enables interception of traffic arriving from configured downstream interfaces.
 Ethernet framing; use `socket_assign` for raw-IP, PPP/PPPoE and supported tunnel
 links. Local and shared data planes are selected independently.
 
-`socket_assign` and local `tc` use a private network namespace for **both TCP
+Local and shared `socket_assign` use a private network namespace for **both TCP
 and UDP**, including transparent UDP reply sockets. Neither protocol rewrites
 IP addresses or ports. Proxy outbound dialing, local cgroup listeners and
 `packet_rewrite` stay on their existing paths. This isolates listeners from
@@ -325,7 +344,7 @@ any matching exclude selector takes precedence.
   fallback. It requires the
   [sing-box API service](/configuration/service/api/).
 
-For local TC and shared `socket_assign`, the response also reports the effective
+For local socket assignment and shared `socket_assign`, the response also reports the effective
 TCX/clsact attachment mode, SOCKMAP/direct listener lookup, delivery interface,
 policy-routing values, active/retired resource counts, health/reconcile times,
 and a network generation that increments at managed handover boundaries.

@@ -5,7 +5,7 @@ icon: material/chip
 # eBPF 内核要求
 
 eBPF 入站的 local 接管默认使用 cgroup v2 socket-address 数据面，shared 接管默认
-使用 TC `packet_rewrite`。local 可显式选择 TC，shared 也可显式选择保留 tuple 的
+使用 TC `packet_rewrite`。local 可显式选择 `socket_assign`，shared 也可显式选择保留 tuple 的
 `socket_assign`。是否支持由实际 map、程序加载、helper 与挂载结果决定，
 不使用最低 Linux 版本号判断。供应商内核可能回移、禁用或限制单项能力。下述 LPM
 trie 安全检查是例外：受影响内核可能在探测动作本身执行时出错，因此需要保守地检查
@@ -20,7 +20,7 @@ trie 安全检查是例外：受影响内核可能在探测动作本身执行时
 
 在普通 Linux 主机或 OpenWrt 路由器上，应以 root 运行 sing-box，或授予等价能力，通常
 需要 `CAP_BPF` 和 `CAP_NET_ADMIN`；旧内核还可能需要 `CAP_SYS_ADMIN`。目标配置必须
-提供所需的 BPF syscall、map、helper、TC classifier。local TC 和 shared `socket_assign`
+提供所需的 BPF syscall、map、helper、TC classifier。local socket assignment 和 shared `socket_assign`
 的 TCP/UDP 均使用专用 netns，需要 `CONFIG_NET_NS`、`CONFIG_VETH`，以及创建/切换
 命名空间所需的 `CAP_SYS_ADMIN`（新内核也需要）和配置链路/路由所需的 `CAP_NET_ADMIN`。
 这些机制早于 `bpf_sk_assign`，不会提高已有 socket-assignment 路径的主线内核能力门槛；
@@ -44,7 +44,7 @@ cgroup、TC、路由和 sysctl 操作。Android 15+ 及部分
 挂载或严格识别的 netd 放行程序替换路径。可选的 socket-release 和进程追踪 hook 被拒绝时，
 会回退有界 LRU 清理或用户态进程查询，不会自动判定主数据面不可用。
 
-local TC 和 shared `socket_assign` 需要厂商 netns/veth/TC 与策略路由能力，SELinux
+local socket assignment 和 shared `socket_assign` 需要厂商 netns/veth/TC 与策略路由能力，SELinux
 还必须允许 `unshare`/`setns`。创建、切换和透明监听会在启动时实际验证；不支持时明确
 报错，不静默退回宿主监听。local cgroup 不需要 netns、veth 或 TC。
 `packet_rewrite` 要求以太网帧，`socket_assign` 支持文档中列出的 raw-IP、PPP 和隧道链路。
@@ -56,12 +56,22 @@ fingerprint、SELinux 拒绝日志、实际挂载/清理路径和接口帧类型
 | 数据面 | hook 与交付方式 | 链路要求 | 主要额外要求 |
 | --- | --- | --- | --- |
 | local `cgroup` | cgroup v2 socket-address hook 将目标改写为 token 地址 | 不挂载网络接口 | `CONFIG_CGROUP_BPF`、connect hook，以及启用地址族的 UDP sendmsg/recvmsg hook |
-| local `tc` | 默认接口 egress → 专用 netns 的 veth ingress → TCP/UDP socket assignment | 以太网或受支持的 L3 帧 | netns、veth、TC classifier、私有策略路由、socket lookup/assignment 与 redirect helper |
+| local `socket_assign` | 默认接口 egress → 专用 netns 的 veth ingress → TCP/UDP socket assignment | 以太网或受支持的 L3 帧 | netns、veth、TC classifier、私有策略路由、socket lookup/assignment 与 redirect helper |
 | shared `socket_assign` | 下游 ingress → 同一专用 netns → TCP/UDP 透明监听器 | 以太网、raw-IP、PPP/SLIP 或受支持隧道 | netns、veth、TC classifier、私有策略路由和 socket lookup/assignment helper |
 | shared `packet_rewrite` | 下游 ingress 改写请求，egress 恢复回复 | 仅以太网 | TC classifier、校验和/报文改写 helper 与逐 flow 状态 |
 
 这四条路径不是按内核版本递进的能力层级。厂商内核可能支持其中一条，却在另一条的
 对象加载或挂载阶段拒绝。应探测实际准备配置的路径，并以真实启动成功作为最终挂载验证。
+
+### 主线能力门槛与验证目标
+
+上游 Linux 5.7 才引入 `bpf_sk_assign`，因此没有相应回移的更旧内核不能使用
+`socket_assign`。netns/veth 本身不会进一步抬高这一 helper 门槛；但 5.7 或更新版本
+也不代表所选程序、权限和路由一定可用。可选 TCX 需要更晚的内核能力。
+
+`cgroup` 与 `packet_rewrite` 是兼容性优先路径；CI 以 5.4 为兼容路径验证目标，
+以 5.10、6.6 验证完整路径。该矩阵不是对所有厂商内核的最低版本承诺，
+也不以测试跳过代表支持。部署仍以所选对象加载、挂载和真实流量验证为准。
 
 ## 内核配置
 
@@ -74,8 +84,8 @@ fingerprint、SELinux 拒绝日志、实际挂载/清理路径和接口帧类型
 | `CONFIG_NET_CLS_BPF` | 在 TC hook 运行 BPF 分类器。 |
 | `CONFIG_NET_SCH_INGRESS` | 提供 `clsact` ingress/egress hook。 |
 | `CONFIG_NET_CLS_ACT` | 支持 direct-action 分类结果。 |
-| `CONFIG_NET_NS` | local TC 与 shared socket assignment 的 TCP/UDP 监听隔离。 |
-| `CONFIG_VETH` | local TC 与 shared socket assignment 的双向交付链路。 |
+| `CONFIG_NET_NS` | local socket assignment 与 shared socket assignment 的 TCP/UDP 监听隔离。 |
+| `CONFIG_VETH` | local socket assignment 与 shared socket assignment 的双向交付链路。 |
 | `CONFIG_INET` | IPv4 TCP/UDP 和透明 socket。 |
 | `CONFIG_IPV6` | 启用 local 或 shared IPv6 接管时必需。 |
 
@@ -99,13 +109,13 @@ shared `packet_rewrite` 另外使用 `SCHED_CLS` 中的 `bpf_ktime_get_ns`、`bp
   `bpf_skb_store_bytes`、`bpf_l3_csum_replace`、`bpf_l4_csum_replace` 和
   `bpf_skb_pull_data`、`bpf_skb_load_bytes`。
 
-shared `socket_assign` 和 local TC 则需要 `SCHED_CLS` 中的
+shared `socket_assign` 和 local socket assignment 则需要 `SCHED_CLS` 中的
 `bpf_skc_lookup_tcp`、`bpf_sk_lookup_udp`、`bpf_sk_assign` 和 `bpf_sk_release`。
 实际要求会随启用协议收敛，例如 UDP-only 不要求 TCP lookup helper。
 
 两种 socket-assignment 路径都使用 `bpf_redirect`、`bpf_skb_store_bytes`、
 `bpf_skb_change_head`、`bpf_skb_change_type` 和 `bpf_ktime_get_ns` 完成交付与返程。
-只有 local TC 还需要本机选择使用的 `bpf_get_socket_uid`、`bpf_get_socket_cookie`。
+只有 local socket assignment 还需要本机选择使用的 `bpf_get_socket_uid`、`bpf_get_socket_cookie`。
 仅改变必要的二层封装，不改写 TCP/UDP 的 IP 地址或端口。透明回包 socket 也在专用
 netns 内，代理出站拨号仍在宿主；不需要清理系统 conntrack 或修改宿主 NAT 规则。
 
@@ -128,7 +138,7 @@ TCP listener 的 SOCKMAP 是可选能力。内核能够创建 `BPF_MAP_TYPE_SOCK
 `bpf_skc_lookup_tcp`。路径选择依据实际 map 创建和程序加载结果，不依据内核
 版本字符串。旧内核通常需要 `CONFIG_BPF_STREAM_PARSER` 才能提供 SOCKMAP。
 
-local TC 数据面还要求 `SCHED_CLS` 中的 `bpf_get_socket_cookie`，用于自身绕过的
+local socket assignment 数据面还要求 `SCHED_CLS` 中的 `bpf_get_socket_cookie`，用于自身绕过的
 socket-cookie map。`CGROUP_SOCK` 的 `inet_sock_create` 和 `inet_sock_release` hook
 以及同一 helper 是可选优化：在进程 cgroup 独占时由内核自动写入和删除 cookie。
 如果 cgroup 共享或 hook 无法挂载，sing-box 会在自己创建的 socket 上通过 control
@@ -206,7 +216,7 @@ netlink。
 
 ## 接口要求
 
-local TC 模式挂载到网络管理器当前的默认接口；shared 模式挂载到配置的下游接口。
+local socket assignment 模式挂载到网络管理器当前的默认接口；shared 模式挂载到配置的下游接口。
 默认的 `packet_rewrite` 要求接口使用以太网帧；`socket_assign` 支持 Ethernet/IPoE
 以及仅含 L3 的 raw-IP、PPP、SLIP 和 IPIP/SIT/GRE 隧道链路。来源 MAC 策略同样要求以太网帧。不支持
 loopback 和无法识别的链路封装。
@@ -233,21 +243,21 @@ local attachment 会跟随默认接口变化。配置的 shared 接口存在时�
 ## 探测
 
 使用与计划配置相同的数据面、协议和 IPv6 设置运行内置内核探测。通过
-`--local-data-plane=tc|cgroup` 和
+`--local-data-plane=socket_assign|cgroup` 和
 `--shared-data-plane=socket_assign|packet_rewrite` 选择具体路径；未指定对应参数表示
 禁用该路径。shared 模式应传入一个当前存在的下游接口，以检查链路类型。
 
 ```sh
-sing-box tools ebpf status --local-data-plane tc --network tcp,udp --json
+sing-box tools ebpf status --local-data-plane socket_assign --network tcp,udp --json
 sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan --json
-sing-box tools ebpf status --local-data-plane tc --shared-data-plane socket_assign --interface wlan1 --json
+sing-box tools ebpf status --local-data-plane socket_assign --shared-data-plane socket_assign --interface wlan1 --json
 ```
 
 `--mode local|shared|all` 分别选择默认的 local `cgroup`、shared
 `packet_rewrite` 以及两者同时启用；可使用显式 data-plane 参数探测可选的 TC 或
 `socket_assign` 路径。
 
-local TC 可使用 `--local-interface <name>` 只读检查接口状态和现有 clsact qdisc；local
+local socket assignment 可使用 `--local-interface <name>` 只读检查接口状态和现有 clsact qdisc；local
 cgroup 可使用 `--cgroup-path <path>` 检查指定 cgroup v2 路径，省略时检查当前进程所在的路径。
 这些检查不会创建 qdisc、挂载 hook 或修改系统状态。
 
@@ -257,7 +267,7 @@ cgroup 可使用 `--cgroup-path <path>` 检查指定 cgroup v2 路径，省略�
 失败则使用 `recovery_failed`。该诊断不会在 sing-box 运行期间周期执行，也不会改变 map
 或数据面。
 
-探测会针对所选协议、地址族、数据面和 shared 接口。local TC 模式会报告必需的 TC socket-cookie
+探测会针对所选协议、地址族、数据面和 shared 接口。local socket assignment 模式会报告必需的 TC socket-cookie
 helper 以及可选的 cgroup socket-cookie hook。添加 `--process-tracking` 可检查可选的
 socket-address 进程追踪和 socket-release 清理能力。启动时会判断进程 cgroup 是否独占，能挂载时使用内核登记，否则启用用户态
 cookie 登记路径。命令还会加载并立即关闭这些选项实际选择的 eBPF 对象，在不挂载程序的
