@@ -229,6 +229,13 @@ Enables interception of traffic arriving from configured downstream interfaces.
 Ethernet framing; use `socket_assign` for raw-IP, PPP/PPPoE and supported tunnel
 links. Local and shared data planes are selected independently.
 
+`socket_assign` and local `tc` use a private network namespace for **both TCP
+and UDP**, including transparent UDP reply sockets. Neither protocol rewrites
+IP addresses or ports. Proxy outbound dialing, local cgroup listeners and
+`packet_rewrite` stay on their existing paths. This isolates listeners from
+host NAT state and occupied host ports. It requires netns/veth support and
+permission to create and enter a namespace; see [kernel requirements](../../manual/misc/ebpf-kernel-requirements.md).
+
 ### shared.dns_mode
 
 Uses the same values as `local.dns_mode`. `respect_policy` applies source CIDR
