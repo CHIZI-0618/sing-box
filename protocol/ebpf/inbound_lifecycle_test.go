@@ -3,14 +3,53 @@
 package ebpf
 
 import (
+	"context"
 	"errors"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 )
+
+type retrySharedRuntime struct {
+	testSharedKernelRuntime
+	attempts int
+}
+
+func (r *retrySharedRuntime) Close() error {
+	r.attempts++
+	if r.attempts == 1 {
+		return errors.New("injected detach failure")
+	}
+	r.closed = true
+	return nil
+}
+
+func TestSharedCloseRetainsRetryOwner(t *testing.T) {
+	i := &Inbound{ctx: context.Background(), udpTimeout: time.Minute}
+	i.udpNat = newUDPNATService(i, i.preparePacketConnection, time.Minute)
+	s := newSharedRewrite(i, option.EBPFSharedOptions{})
+	r := &retrySharedRuntime{}
+	s.setDataPlane(r)
+	i.setSharedRewrite(s)
+	t.Cleanup(func() { _ = i.Close() })
+	if err := i.Close(); err == nil {
+		t.Fatal("injected failure was not propagated")
+	}
+	if i.sharedRewriteInstance() != s {
+		t.Fatal("lost retry owner")
+	}
+	if err := i.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if r.attempts != 2 || !r.closed || i.sharedRewriteInstance() != nil {
+		t.Fatalf("cleanup did not retry: attempts=%d closed=%v", r.attempts, r.closed)
+	}
+}
 
 func TestNeedsLPMPolicyUsesCompiledEntries(t *testing.T) {
 	inbound := &Inbound{

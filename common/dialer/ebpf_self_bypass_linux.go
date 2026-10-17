@@ -75,33 +75,53 @@ func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager
 
 type selfBypassConn struct {
 	net.Conn
-	cleanup func()
-	rawConn syscall.RawConn
+	cleanup   func()
+	rawConn   syscall.RawConn
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *selfBypassConn) Close() error {
-	if c.cleanup != nil {
-		c.cleanup()
-	}
-	return c.Conn.Close()
+	c.closeOnce.Do(func() {
+		if c.cleanup != nil {
+			c.cleanup()
+		}
+		c.closeErr = c.Conn.Close()
+	})
+	return c.closeErr
 }
 
 func (c *selfBypassConn) SyscallConn() (syscall.RawConn, error) { return c.rawConn, nil }
 
+// Only I/O may unwrap this adapter. The original owner must still close the
+// wrapper to unregister the cookie before the socket FD is released.
+func (c *selfBypassConn) Upstream() any           { return c.Conn }
+func (c *selfBypassConn) ReaderReplaceable() bool { return true }
+func (c *selfBypassConn) WriterReplaceable() bool { return true }
+
 type selfBypassPacketConn struct {
 	net.PacketConn
-	cleanup func()
-	rawConn syscall.RawConn
+	cleanup   func()
+	rawConn   syscall.RawConn
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *selfBypassPacketConn) Close() error {
-	if c.cleanup != nil {
-		c.cleanup()
-	}
-	return c.PacketConn.Close()
+	c.closeOnce.Do(func() {
+		if c.cleanup != nil {
+			c.cleanup()
+		}
+		c.closeErr = c.PacketConn.Close()
+	})
+	return c.closeErr
 }
 
 func (c *selfBypassPacketConn) SyscallConn() (syscall.RawConn, error) { return c.rawConn, nil }
+
+func (c *selfBypassPacketConn) Upstream() any           { return c.PacketConn }
+func (c *selfBypassPacketConn) ReaderReplaceable() bool { return true }
+func (c *selfBypassPacketConn) WriterReplaceable() bool { return true }
 
 // EBPFSelfBypassCleanup returns an idempotent cleanup callback for a socket
 // registered by AppendEBPFSelfBypass. External socket owners should invoke it
@@ -176,14 +196,11 @@ func AppendEBPFSelfBypass(networkManager adapter.NetworkManager, controlFunc con
 	provider, loaded := networkManager.(interface {
 		EBPFSelfBypass() *commonEBPF.SelfBypass
 	})
-	if !loaded {
+	if !loaded || provider.EBPFSelfBypass() == nil {
 		return controlFunc
 	}
+	tracker := provider.EBPFSelfBypass()
 	selfBypassFunc := func(_ string, _ string, rawConn syscall.RawConn) error {
-		tracker := provider.EBPFSelfBypass()
-		if tracker == nil {
-			return nil
-		}
 		return tracker.RegisterSocket(rawConn)
 	}
 	return control.Append(controlFunc, selfBypassFunc)

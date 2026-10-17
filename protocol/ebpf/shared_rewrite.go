@@ -182,6 +182,7 @@ func (s *sharedRewrite) Close() error {
 			if closeErr == nil {
 				closeErr = E.New("shared packet-rewrite runtime remained open after close")
 			}
+			return closeErr
 		}
 	}
 	listenerErr := s.closeListeners()
