@@ -25,6 +25,57 @@ func TestCompileActionPolicyKeepsDestinationSemanticsInSync(t *testing.T) {
 	}
 }
 
+func TestSharedSourceDefaultPreservesIncludePolicy(t *testing.T) {
+	for _, test := range []struct {
+		cidrs, macs int
+		want        commonEBPF.Decision
+	}{
+		{0, 0, commonEBPF.DecisionIntercept},
+		{1, 0, commonEBPF.DecisionPass},
+		{0, 1, commonEBPF.DecisionPass},
+		{1, 1, commonEBPF.DecisionPass},
+	} {
+		if got := sharedSourceDefault(test.cidrs, test.macs); got != test.want {
+			t.Fatalf("CIDRs=%d MACs=%d: default=%v, want %v", test.cidrs, test.macs, got, test.want)
+		}
+	}
+}
+
+func TestPrivateBypassOptionsRemainIndependent(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		for _, shared := range []bool{false, true} {
+			inbound := &Inbound{
+				localPolicy:         localUIDPolicy{BypassPrivateAddress: local},
+				sharedBypassPrivate: shared,
+				enableTCP:           true,
+				enableUDP:           true,
+			}
+			if _, err := inbound.compileActionPolicy(); err != nil {
+				t.Fatal(err)
+			}
+			for _, scope := range []struct {
+				enabled   bool
+				decisions []commonEBPF.CIDRDecision
+			}{{local, inbound.localInitialDestinations}, {shared, inbound.sharedInitialDestinations}} {
+				if !scope.enabled {
+					if len(scope.decisions) != 0 {
+						t.Fatalf("disabled private bypass emitted rules: %+v", scope.decisions)
+					}
+					continue
+				}
+				if len(scope.decisions) != len(eBPFPrivateDestinationPrefixes) {
+					t.Fatal("private bypass lost address ranges")
+				}
+				for index, prefix := range eBPFPrivateDestinationPrefixes {
+					if scope.decisions[index] != (commonEBPF.CIDRDecision{Prefix: prefix, Action: commonEBPF.DecisionPass}) {
+						t.Fatalf("private range %v lost its pass action", prefix)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestCompileProcessUIDPolicySubtractsExcludedRanges(t *testing.T) {
 	inbound := &Inbound{
 		localPolicy: localUIDPolicy{

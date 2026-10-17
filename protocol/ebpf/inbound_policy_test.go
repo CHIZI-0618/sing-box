@@ -71,9 +71,8 @@ func (e errString) Error() string { return string(e) }
 func newLoopbackTestTCBackend(t *testing.T) *commonEBPF.TCBackend {
 	t.Helper()
 	policy, err := commonEBPF.CompileActionPolicy(commonEBPF.ActionPolicy{
-		EnableTCP: true,
-		Local:     commonEBPF.ActionScope{Default: commonEBPF.DecisionIntercept},
-		Shared:    commonEBPF.ActionScope{Default: commonEBPF.DecisionIntercept},
+		Local:  commonEBPF.ActionScope{Default: commonEBPF.DecisionIntercept},
+		Shared: commonEBPF.ActionScope{Default: commonEBPF.DecisionIntercept},
 	})
 	if err != nil {
 		t.Fatalf("compile policy: %v", err)

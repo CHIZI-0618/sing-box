@@ -117,8 +117,6 @@ var eBPFPrivateDestinationPrefixes = []netip.Prefix{
 
 func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 	policy := commonEBPF.ActionPolicy{
-		EnableTCP: i.enableTCP,
-		EnableUDP: i.enableUDP,
 		Local: commonEBPF.ActionScope{
 			Default: commonEBPF.DecisionIntercept,
 		},
@@ -142,6 +140,7 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 	appendDestinationPolicy(&policy.Local, i.localPolicy.BypassPrivateAddress, i.localBypassPort, i.localDNSMode,
 		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.localBypassExclude, i.enableTCP, i.enableUDP)
 
+	policy.Shared.Default = sharedSourceDefault(len(i.sharedOptions.IncludeSourceCIDR), len(i.sharedIncludeMAC))
 	for _, prefix := range i.sharedOptions.IncludeSourceCIDR {
 		policy.Shared.SourceCIDR = append(policy.Shared.SourceCIDR, commonEBPF.CIDRDecision{
 			Prefix: prefix, Action: commonEBPF.DecisionIntercept,
@@ -167,6 +166,13 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
 	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
 	return commonEBPF.CompileActionPolicy(policy)
+}
+
+func sharedSourceDefault(includeCIDRs, includeMACs int) commonEBPF.Decision {
+	if includeCIDRs > 0 || includeMACs > 0 {
+		return commonEBPF.DecisionPass
+	}
+	return commonEBPF.DecisionIntercept
 }
 
 func destinationPassDecisions(decisions []commonEBPF.CIDRDecision) []commonEBPF.CIDRDecision {
