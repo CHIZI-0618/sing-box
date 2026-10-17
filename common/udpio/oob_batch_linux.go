@@ -31,6 +31,7 @@ type oobPacketBatchReadWaiter struct {
 	readN    int
 	oobSize  int
 	readFunc func(fd uintptr) bool
+	returned []*buf.Buffer
 	buffers  []*buf.Buffer
 	oobs     [][]byte
 	control  [][]byte
@@ -59,6 +60,7 @@ func (w *oobPacketBatchReadWaiter) InitializeReadWaiter(options N.ReadWaitOption
 	}
 	w.options = options
 	w.buffers = make([]*buf.Buffer, options.BatchSize)
+	w.returned = make([]*buf.Buffer, options.BatchSize)
 	w.oobs = make([][]byte, options.BatchSize)
 	w.control = make([][]byte, options.BatchSize)
 	w.sources = make([]M.Socksaddr, options.BatchSize)
@@ -95,11 +97,9 @@ func (w *oobPacketBatchReadWaiter) InitializeReadWaiter(options N.ReadWaitOption
 			case syscall.EINTR:
 				continue
 			case syscall.EAGAIN:
-				w.releaseBuffers()
 				return false
 			default:
 				if errno == syscall.EWOULDBLOCK {
-					w.releaseBuffers()
 					return false
 				}
 				w.readErr = os.NewSyscallError("recvmmsg", errno)
@@ -142,12 +142,12 @@ func (w *oobPacketBatchReadWaiter) WaitReadOOBPackets() (buffers []*buf.Buffer, 
 		}
 		return nil, nil, nil, E.Cause(w.readErr, "raw read")
 	}
-	buffers = make([]*buf.Buffer, w.readN)
-	sources = make([]M.Socksaddr, w.readN)
+	clear(w.returned)
+	buffers = w.returned[:w.readN]
+	sources = w.sources[:w.readN]
 	for index := 0; index < w.readN; index++ {
 		buffers[index] = w.buffers[index]
 		w.buffers[index] = nil
-		sources[index] = w.sources[index]
 	}
 	oobs = w.oobs[:w.readN]
 	w.readN = 0

@@ -214,3 +214,53 @@ func containsPacketInfo(oob []byte, level int, messageType int) bool {
 	}
 	return false
 }
+func TestOOBBatchBufferOwnershipAcrossReads(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	reader, ok := NewOOBPacketBatchReadWaiter(receiver, 256)
+	if !ok {
+		t.Fatal("no batch reader")
+	}
+	reader.InitializeReadWaiter(N.ReadWaitOptions{BatchSize: 2})
+	if err = receiver.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	target := receiver.LocalAddr().(*net.UDPAddr).AddrPort()
+	if _, err = sender.WriteToUDPAddrPort([]byte("first"), target); err != nil {
+		t.Fatal(err)
+	}
+	first, _, _, err := reader.WaitReadOOBPackets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := append([]*buf.Buffer(nil), first...)
+	defer buf.ReleaseMulti(retained)
+
+	if _, err = sender.WriteToUDPAddrPort([]byte("second"), target); err != nil {
+		t.Fatal(err)
+	}
+	second, _, _, err := reader.WaitReadOOBPackets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer buf.ReleaseMulti(second)
+	if len(retained) != 1 || len(second) != 1 || retained[0] == second[0] {
+		t.Fatal("caller-owned buffers were reused")
+	}
+	if string(retained[0].Bytes()) != "first" || string(second[0].Bytes()) != "second" {
+		t.Fatal("next read changed a retained payload")
+	}
+	// Reinitialization releases only pending internal buffers.
+	reader.InitializeReadWaiter(N.ReadWaitOptions{BatchSize: 1})
+	if string(retained[0].Bytes()) != "first" || string(second[0].Bytes()) != "second" {
+		t.Fatal("reinitialization released caller-owned buffers")
+	}
+}
