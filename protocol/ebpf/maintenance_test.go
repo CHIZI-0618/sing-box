@@ -3,10 +3,39 @@
 package ebpf
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 )
+
+func TestTCMaintenanceCoalescesEventsAndContinuesPartialScans(t *testing.T) {
+	now := time.Unix(1, 0)
+	var schedule tcMaintenanceSchedule
+	if schedule.delay(now) != 0 || schedule.finish(now, true, false, nil) != 0 {
+		t.Fatal("normal completed sweep should wait for activity or watchdog")
+	}
+	for n := 1; n < 50; n++ {
+		elapsed := time.Duration(n) * 100 * time.Millisecond
+		if got := schedule.delay(now.Add(elapsed)); got != tcAssignmentMaintenanceCooldown-elapsed {
+			t.Fatalf("wake %d postponed deadline: %v", n, got)
+		}
+	}
+	now = now.Add(tcAssignmentMaintenanceCooldown)
+	if schedule.delay(now) != 0 {
+		t.Fatal("pending event was not released")
+	}
+	if got := schedule.finish(now, false, false, nil); got != tcAssignmentMaintenanceContinue {
+		t.Fatalf("partial scan delay = %v", got)
+	}
+	if got := schedule.finish(now, true, true, nil); got != tcAssignmentPressureCooldown {
+		t.Fatalf("pressure delay = %v", got)
+	}
+	if schedule.finish(now, false, true, errors.New("scan failed")) != 0 || schedule.delay(now) != tcAssignmentMaintenanceCooldown {
+		t.Fatal("scan failure must not cause a short-delay retry loop")
+	}
+}
 
 func TestTCAssignmentPressureHysteresis(t *testing.T) {
 	usage := commonEBPF.MapUsage{Entries: 70, Capacity: 100}
