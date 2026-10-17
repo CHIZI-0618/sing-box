@@ -213,7 +213,7 @@ func (i *Inbound) sweepTCAssignmentMaintenance() (bool, error) {
 		i.interfaceWarnings.reconcile.warn(i.logger, "sweep TC eBPF assignments: ", err)
 		return true, err
 	}
-	if !result.Complete {
+	if !result.Complete || !result.UsageKnown || !result.ReturnUsageKnown {
 		return false, nil
 	}
 	// Both maps share the worker, but a nearly-full return map must not be
@@ -247,6 +247,19 @@ func updateTCAssignmentPressure(active bool, belowExitRounds uint32, usage commo
 }
 
 func (i *Inbound) recordTCAssignmentSweep(result commonEBPF.TCAssignmentSweepResult) {
+	i.tcReturnSweepScanned.Add(uint64(result.ReturnScanned))
+	i.tcReturnSweepRemoved.Add(uint64(result.ReturnRemoved))
+	i.tcAssignmentSweepUsageKnown.Store(result.UsageKnown)
+	i.tcReturnSweepUsageKnown.Store(result.ReturnUsageKnown)
+	i.tcAssignmentSweepFailureMap.Store(result.FailureMap)
+	if result.UsageKnown {
+		i.tcAssignmentSweepEntries.Store(uint64(result.Usage.Entries))
+		i.tcAssignmentSweepCapacity.Store(uint64(result.Usage.Capacity))
+	}
+	if result.ReturnUsageKnown {
+		i.tcReturnSweepEntries.Store(uint64(result.ReturnUsage.Entries))
+		i.tcReturnSweepCapacity.Store(uint64(result.ReturnUsage.Capacity))
+	}
 	i.tcAssignmentSweepScanned.Add(uint64(result.Scanned))
 	i.tcAssignmentSweepRemoved.Add(uint64(result.Removed))
 	i.tcAssignmentSweepRuns.Add(1)
@@ -255,8 +268,6 @@ func (i *Inbound) recordTCAssignmentSweep(result commonEBPF.TCAssignmentSweepRes
 	i.tcAssignmentSweepLastAt.Store(time.Now().UnixNano())
 	if result.Complete && result.Failure == "" {
 		i.tcAssignmentSweepPartialAt.Store(0)
-		i.tcAssignmentSweepEntries.Store(uint64(result.Usage.Entries))
-		i.tcAssignmentSweepCapacity.Store(uint64(result.Usage.Capacity))
 	} else {
 		i.tcAssignmentSweepPartial.Add(1)
 		if i.tcAssignmentSweepPartialAt.Load() == 0 {

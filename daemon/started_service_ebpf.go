@@ -6,11 +6,9 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-func (s *StartedService) GetEBPFDiagnostics(_ context.Context, _ *emptypb.Empty) (*EBPFDiagnosticsResponse, error) {
+func (s *StartedService) GetEBPFDiagnostics(_ context.Context, request *EBPFDiagnosticsRequest) (*EBPFDiagnosticsResponse, error) {
 	s.serviceAccess.RLock()
 	defer s.serviceAccess.RUnlock()
 	if s.serviceStatus.Status != ServiceStatus_STARTED || s.instance == nil {
@@ -28,10 +26,12 @@ func (s *StartedService) GetEBPFDiagnostics(_ context.Context, _ *emptypb.Empty)
 		if !loaded {
 			continue
 		}
-		response.Inbounds = append(response.Inbounds, marshalEBPFDiagnostics(provider.EBPFDiagnostics()))
-		if response.KernelRuntime == nil {
-			response.KernelRuntime = marshalEBPFKernelRuntime(provider.EBPFKernelRuntime())
+		entry := marshalEBPFDiagnostics(provider.EBPFDiagnostics())
+		if request.GetDeep() {
+			entry.KernelRuntime = marshalEBPFKernelRuntime(provider.EBPFKernelRuntime())
+			response.KernelRuntime = mergeEBPFKernelRuntime(response.KernelRuntime, entry.KernelRuntime)
 		}
+		response.Inbounds = append(response.Inbounds, entry)
 	}
 	return response, nil
 }
@@ -114,6 +114,13 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 		TcLastHealthCheckAt:           optionalUnixMillis(source.TCLastHealthCheckAt),
 		TcLastReconcileAt:             optionalUnixMillis(source.TCLastReconcileAt),
 		TcNetworkGeneration:           source.TCNetworkGeneration,
+		TcReturnSweepEntries:          source.TCReturnSweepEntries,
+		TcReturnSweepCapacity:         source.TCReturnSweepCapacity,
+		TcReturnSweepScanned:          source.TCReturnSweepScanned,
+		TcReturnSweepRemoved:          source.TCReturnSweepRemoved,
+		TcAssignmentSweepUsageKnown:   source.TCAssignmentSweepUsageKnown,
+		TcReturnSweepUsageKnown:       source.TCReturnSweepUsageKnown,
+		TcAssignmentSweepFailureMap:   source.TCAssignmentSweepFailureMap,
 		TcAssignmentSweepEntries:      source.TCAssignmentSweepEntries,
 		TcAssignmentSweepCapacity:     source.TCAssignmentSweepCapacity,
 		TcAssignmentSweepPressure:     source.TCAssignmentSweepPressure,
@@ -213,4 +220,44 @@ func optionalUnixMillis(value *time.Time) *int64 {
 	}
 	milliseconds := value.UnixMilli()
 	return &milliseconds
+}
+
+func mergeEBPFKernelRuntime(aggregate, current *EBPFKernelRuntimeDiagnostics) *EBPFKernelRuntimeDiagnostics {
+	if aggregate == nil {
+		aggregate = &EBPFKernelRuntimeDiagnostics{ObservedAt: current.ObservedAt, MapOccupancy: &EBPFMapOccupancyDiagnostics{Status: "pass"}}
+	}
+	aggregate.ObservedAt = max(aggregate.ObservedAt, current.ObservedAt)
+	programs := make(map[uint32]bool)
+	for _, program := range aggregate.Programs {
+		programs[program.Id] = true
+	}
+	for _, program := range current.Programs {
+		if !programs[program.Id] {
+			aggregate.Programs = append(aggregate.Programs, program)
+			programs[program.Id] = true
+		}
+	}
+	maps := make(map[uint32]bool)
+	for _, item := range aggregate.MapOccupancy.Maps {
+		maps[item.Id] = true
+	}
+	if current.MapOccupancy != nil {
+		for _, item := range current.MapOccupancy.Maps {
+			if !maps[item.Id] {
+				aggregate.MapOccupancy.Maps = append(aggregate.MapOccupancy.Maps, item)
+				maps[item.Id] = true
+			}
+		}
+		if current.MapOccupancy.Error != "" {
+			aggregate.MapOccupancy.Error = current.MapOccupancy.Error
+		}
+		rank := map[string]int{"pass": 0, "unknown": 1, "warning": 2, "degraded": 3}
+		if rank[current.MapOccupancy.Status] > rank[aggregate.MapOccupancy.Status] {
+			aggregate.MapOccupancy.Status = current.MapOccupancy.Status
+		}
+	}
+	if current.ProgramsError != "" {
+		aggregate.ProgramsError = current.ProgramsError
+	}
+	return aggregate
 }

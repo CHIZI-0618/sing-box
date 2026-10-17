@@ -151,6 +151,13 @@ type EBPFDiagnostics struct {
 	TCLastHealthCheckAt           *time.Time `json:"tc_last_health_check_at,omitempty"`
 	TCLastReconcileAt             *time.Time `json:"tc_last_reconcile_at,omitempty"`
 	TCNetworkGeneration           uint64     `json:"tc_network_generation,omitempty"`
+	TCReturnSweepEntries          uint64     `json:"tc_return_sweep_entries"`
+	TCReturnSweepCapacity         uint64     `json:"tc_return_sweep_capacity"`
+	TCReturnSweepScanned          uint64     `json:"tc_return_sweep_scanned"`
+	TCReturnSweepRemoved          uint64     `json:"tc_return_sweep_removed"`
+	TCAssignmentSweepUsageKnown   bool       `json:"tc_assignment_sweep_usage_known"`
+	TCReturnSweepUsageKnown       bool       `json:"tc_return_sweep_usage_known"`
+	TCAssignmentSweepFailureMap   string     `json:"tc_assignment_sweep_failure_map"`
 	TCAssignmentSweepScanned      uint64     `json:"tc_assignment_sweep_scanned,omitempty"`
 	TCAssignmentSweepRemoved      uint64     `json:"tc_assignment_sweep_removed,omitempty"`
 	TCAssignmentSweepComplete     bool       `json:"tc_assignment_sweep_complete"`
@@ -401,6 +408,13 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCLastHealthCheckAt:           diagnostics.TCLastHealthCheckAt,
 		TCLastReconcileAt:             diagnostics.TCLastReconcileAt,
 		TCNetworkGeneration:           diagnostics.TCNetworkGeneration,
+		TCReturnSweepEntries:          diagnostics.TCReturnSweepEntries,
+		TCReturnSweepCapacity:         diagnostics.TCReturnSweepCapacity,
+		TCReturnSweepScanned:          diagnostics.TCReturnSweepScanned,
+		TCReturnSweepRemoved:          diagnostics.TCReturnSweepRemoved,
+		TCAssignmentSweepUsageKnown:   diagnostics.TCAssignmentSweepUsageKnown,
+		TCReturnSweepUsageKnown:       diagnostics.TCReturnSweepUsageKnown,
+		TCAssignmentSweepFailureMap:   diagnostics.TCAssignmentSweepFailureMap,
 		TCAssignmentSweepScanned:      diagnostics.TCAssignmentSweepScanned,
 		TCAssignmentSweepRemoved:      diagnostics.TCAssignmentSweepRemoved,
 		TCAssignmentSweepComplete:     diagnostics.TCAssignmentSweepComplete,
@@ -500,10 +514,27 @@ func (i *Inbound) EBPFKernelRuntime() adapter.EBPFKernelRuntimeDiagnostics {
 	now := time.Now()
 	i.kernelRuntimeAPIAccess.Lock()
 	defer i.kernelRuntimeAPIAccess.Unlock()
-	if !i.kernelRuntimeAPIAt.IsZero() && now.Sub(i.kernelRuntimeAPIAt) < ebpfDiagnosticsAPICacheTTL {
+	if !i.kernelRuntimeAPIAt.IsZero() && now.Sub(i.kernelRuntimeAPIAt) < 5*time.Second {
 		return i.kernelRuntimeAPIValue
 	}
-	diagnostics := kernelRuntimeForAPI(now, commonEBPF.InspectRuntimeState())
+	// Snapshot handles while lifecycle ownership is stable, then enumerate only
+	// those IDs outside the lifecycle lock.
+	i.lifecycleAccess.Lock()
+	owners := []commonEBPF.RuntimeResources{
+		i.cgroupBackendInstance().RuntimeResources(),
+		i.tcBackend().RuntimeResources(),
+		i.selfBypass.RuntimeResources(),
+	}
+	if tracker, ok := i.processTracker.(interface {
+		RuntimeResources() commonEBPF.RuntimeResources
+	}); ok {
+		owners = append(owners, tracker.RuntimeResources())
+	}
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		owners = append(owners, shared.sharedBackendInstance().RuntimeResources())
+	}
+	i.lifecycleAccess.Unlock()
+	diagnostics := kernelRuntimeForAPI(now, commonEBPF.InspectRuntimeResources(owners...))
 	i.kernelRuntimeAPIAt = now
 	i.kernelRuntimeAPIValue = diagnostics
 	return diagnostics
@@ -697,6 +728,13 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	diagnostics.TCAssignmentSweepRemoved = i.tcAssignmentSweepRemoved.Load()
 	diagnostics.TCAssignmentSweepComplete = i.tcAssignmentSweepComplete.Load()
 	diagnostics.TCAssignmentSweepEntries = i.tcAssignmentSweepEntries.Load()
+	diagnostics.TCReturnSweepEntries = i.tcReturnSweepEntries.Load()
+	diagnostics.TCReturnSweepCapacity = i.tcReturnSweepCapacity.Load()
+	diagnostics.TCReturnSweepScanned = i.tcReturnSweepScanned.Load()
+	diagnostics.TCReturnSweepRemoved = i.tcReturnSweepRemoved.Load()
+	diagnostics.TCAssignmentSweepUsageKnown = i.tcAssignmentSweepUsageKnown.Load()
+	diagnostics.TCReturnSweepUsageKnown = i.tcReturnSweepUsageKnown.Load()
+	diagnostics.TCAssignmentSweepFailureMap, _ = i.tcAssignmentSweepFailureMap.Load().(string)
 	diagnostics.TCAssignmentSweepCapacity = i.tcAssignmentSweepCapacity.Load()
 	diagnostics.TCAssignmentSweepPressure = i.tcAssignmentSweepPressure.Load()
 	diagnostics.TCAssignmentSweepRuns = i.tcAssignmentSweepRuns.Load()
