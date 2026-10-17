@@ -11,6 +11,9 @@ import (
 // package's concrete resource types.
 type tcRuntime = kernelRuntime.TCRuntime
 type tcRuntimeConfig = kernelRuntime.TCRuntimeConfig
+type tcNamespace = kernelRuntime.TCNamespace
+
+var newTCNamespace = kernelRuntime.NewTCNamespace
 
 func newTCRuntime(backend *commonEBPF.TCBackend, config tcRuntimeConfig) (tcRuntime, error) {
 	config.Backend = backend

@@ -78,6 +78,7 @@ type EBPFRuntimeDiagnostics struct {
 	TCListenerLookupMode          string
 	TCAttachmentMode              string
 	TCDeliveryInterface           string
+	TCNetworkNamespace            string
 	TCDeliveryInterfaceIndex      int
 	TCRoutingMark                 uint32
 	TCRoutingTable                int
@@ -183,6 +184,9 @@ type EBPFCounters struct {
 	TCSocketLookupFailures        uint64
 	TCSKAssignFailures            uint64
 	TCAssignmentUpdateFailures    uint64
+	TCReturnUpdateFailures        uint64
+	TCReturnConflicts             uint64
+	TCReturnLookupFailures        uint64
 	TCLocalFragmentPasses         uint64
 	TCSharedFragmentPasses        uint64
 	TokenReservationFailures      uint64

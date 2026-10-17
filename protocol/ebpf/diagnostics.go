@@ -138,6 +138,7 @@ type EBPFDiagnostics struct {
 	TCListenerLookupMode          string     `json:"tc_listener_lookup_mode,omitempty"`
 	TCAttachmentMode              string     `json:"tc_attachment_mode,omitempty"`
 	TCDeliveryInterface           string     `json:"tc_delivery_interface,omitempty"`
+	TCNetworkNamespace            string     `json:"tc_network_namespace,omitempty"`
 	TCDeliveryInterfaceIndex      int        `json:"tc_delivery_interface_index,omitempty"`
 	TCRoutingMark                 uint32     `json:"tc_routing_mark,omitempty"`
 	TCRoutingTable                int        `json:"tc_routing_table,omitempty"`
@@ -387,6 +388,7 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCListenerLookupMode:          diagnostics.TCListenerLookupMode,
 		TCAttachmentMode:              diagnostics.TCAttachmentMode,
 		TCDeliveryInterface:           diagnostics.TCDeliveryInterface,
+		TCNetworkNamespace:            diagnostics.TCNetworkNamespace,
 		TCDeliveryInterfaceIndex:      diagnostics.TCDeliveryInterfaceIndex,
 		TCRoutingMark:                 diagnostics.TCRoutingMark,
 		TCRoutingTable:                diagnostics.TCRoutingTable,
@@ -466,6 +468,9 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 			TCSocketLookupFailures:        diagnostics.Counters.TCSocketLookupFailures,
 			TCSKAssignFailures:            diagnostics.Counters.TCSKAssignFailures,
 			TCAssignmentUpdateFailures:    diagnostics.Counters.TCAssignmentUpdateFailures,
+			TCReturnUpdateFailures:        diagnostics.Counters.TCReturnUpdateFailures,
+			TCReturnConflicts:             diagnostics.Counters.TCReturnConflicts,
+			TCReturnLookupFailures:        diagnostics.Counters.TCReturnLookupFailures,
 			TCLocalFragmentPasses:         diagnostics.Counters.TCLocalFragmentPasses,
 			TCSharedFragmentPasses:        diagnostics.Counters.TCSharedFragmentPasses,
 			TokenReservationFailures:      diagnostics.Counters.TokenReservationFailures,
@@ -601,6 +606,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		diagnostics.TCListenerLookupMode = tc.ListenerLookupMode
 		diagnostics.TCAttachmentMode = tc.AttachmentMode
 		diagnostics.TCDeliveryInterface = tc.NetworkInfo.DeliveryInterface
+		diagnostics.TCNetworkNamespace = tc.NetworkInfo.Namespace
 		diagnostics.TCDeliveryInterfaceIndex = tc.NetworkInfo.DeliveryInterfaceIndex
 		diagnostics.TCRoutingMark = tc.NetworkInfo.RoutingMark
 		diagnostics.TCRoutingTable = tc.NetworkInfo.RoutingTable
@@ -826,6 +832,9 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 			diagnostics.Counters.TCSocketLookupFailures = stats.SocketLookupFailures
 			diagnostics.Counters.TCSKAssignFailures = stats.SKAssignFailures
 			diagnostics.Counters.TCAssignmentUpdateFailures = stats.AssignmentUpdateFailures
+			diagnostics.Counters.TCReturnUpdateFailures = stats.ReturnUpdateFailures
+			diagnostics.Counters.TCReturnConflicts = stats.ReturnConflicts
+			diagnostics.Counters.TCReturnLookupFailures = stats.ReturnLookupFailures
 			diagnostics.Counters.TCLocalFragmentPasses = stats.LocalFragmentPasses
 			diagnostics.Counters.TCSharedFragmentPasses = stats.SharedFragmentPasses
 		}
@@ -977,6 +986,9 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 		lines = append(lines, fmt.Sprintf("Waiting interfaces: %s", strings.Join(d.WaitingInterfaces, ", ")))
 	}
 	if d.TCBackendMode != "" {
+		if d.TCNetworkNamespace != "" {
+			lines = append(lines, "TC socket namespace: "+d.TCNetworkNamespace)
+		}
 		lines = append(lines, fmt.Sprintf(
 			"TC runtime: backend=%s listener=%s attachment=%s delivery=%s#%d mark=%d table=%d priority=%d attachments=%d retired_attachments=%d retired_deliveries=%d health=%s generation=%d",
 			d.TCBackendMode, d.TCListenerLookupMode, d.TCAttachmentMode,
@@ -1027,10 +1039,11 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 		d.UDPReplySockets.Count, d.UDPReplySockets.Peak, d.UDPReplySockets.Evicted, d.UDPReplySockets.CapacityRejected,
 	))
 	lines = append(lines, fmt.Sprintf(
-		"Counters: assignment_lookup_failures=%d tc_socket_lookup_failures=%d tc_sk_assign_failures=%d tc_assignment_update_failures=%d tc_local_fragment_passes=%d tc_shared_fragment_passes=%d token_reservation_failures=%d rewrite_failures=%d "+
+		"Counters: assignment_lookup_failures=%d tc_socket_lookup_failures=%d tc_sk_assign_failures=%d tc_assignment_update_failures=%d tc_return_update_failures=%d tc_return_conflicts=%d tc_return_lookup_failures=%d tc_local_fragment_passes=%d tc_shared_fragment_passes=%d token_reservation_failures=%d rewrite_failures=%d "+
 			"shared_ingress_fragment_passes=%d shared_egress_fragment_passes=%d "+
 			"shared_reconcile_failures=%d recovery_attempts=%d recovery_successes=%d recovery_failures=%d",
 		d.Counters.AssignmentLookupFailures, d.Counters.TCSocketLookupFailures, d.Counters.TCSKAssignFailures, d.Counters.TCAssignmentUpdateFailures,
+		d.Counters.TCReturnUpdateFailures, d.Counters.TCReturnConflicts, d.Counters.TCReturnLookupFailures,
 		d.Counters.TCLocalFragmentPasses, d.Counters.TCSharedFragmentPasses,
 		d.Counters.TokenReservationFailures, d.Counters.RewriteFailures,
 		d.Counters.SharedIngressFragmentPasses, d.Counters.SharedEgressFragmentPasses,

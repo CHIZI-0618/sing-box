@@ -916,6 +916,7 @@ message EBPFInboundDiagnostics {
   uint64 cgroupRecoveryQueueOverflows = 69;
   optional int64 cgroupRecoveryQueueOverflowAt = 70;
   string tcAssignmentSweepFailure = 71;
+  string tcNetworkNamespace = 72;
 }
 
 message EBPFAttachmentDiagnostics {
@@ -967,6 +968,9 @@ message EBPFCounters {
   uint64 fakeIPICMPReplies = 17;
   uint64 fakeIPICMPPassThrough = 18;
   uint64 fakeIPICMPRewriteFailureDrops = 19;
+  uint64 tcReturnUpdateFailures = 20;
+  uint64 tcReturnConflicts = 21;
+  uint64 tcReturnLookupFailures = 22;
 }
 
 message EBPFUDPNATDiagnostics {

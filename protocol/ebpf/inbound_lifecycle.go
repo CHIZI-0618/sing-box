@@ -85,12 +85,15 @@ func (i *Inbound) startInbound() error {
 	if sharedSocketAssignEnabled {
 		tcSharedInterfaces = sharedInterfaces
 	}
-	if i.localEnabled || sharedSocketAssignEnabled {
+	if localTCEnabled || sharedSocketAssignEnabled {
 		if err := i.startTCListeners(); err != nil {
 			return err
 		}
 	}
 	if i.localCgroupEnabled() {
+		if err := i.listeners.start(i.enableTCP, i.enableUDP, true, i.localIPv6, i.newListener); err != nil {
+			return err
+		}
 		if err := i.prepareCgroupBackend(); err != nil {
 			return err
 		}
@@ -108,7 +111,8 @@ func (i *Inbound) startInbound() error {
 		}
 	}
 	backendConfig := commonEBPF.TCConfig{
-		ListenerPort:     i.listeners.selectedPort(),
+		Isolated:         true,
+		ListenerPort:     i.tcListeners.selectedPort(),
 		EnableLocal:      localTCEnabled,
 		EnableShared:     sharedSocketAssignEnabled,
 		EnableIPv4:       true,
@@ -146,7 +150,7 @@ func (i *Inbound) startInbound() error {
 		return err
 	}
 	if backend != nil {
-		if err = i.listeners.registerTCTCPListeners(backend); err != nil {
+		if err = i.tcListeners.registerTCTCPListeners(backend); err != nil {
 			i.setTCDataPlane(newUnstartedTCRuntime(backend))
 			return E.Errors(err, i.closeTCDataPlane())
 		}
@@ -155,6 +159,7 @@ func (i *Inbound) startInbound() error {
 	if backend != nil {
 		tcIPv6Enabled := localTCEnabled && i.localIPv6 || sharedSocketAssignEnabled && i.sharedIPv6
 		dataPlane, err = newTCRuntime(backend, tcRuntimeConfig{
+			Namespace:             i.tcNamespace,
 			LocalEnabled:          localTCEnabled,
 			IPv6Enabled:           tcIPv6Enabled,
 			LocalInterface:        localInterface,
@@ -289,7 +294,9 @@ func (i *Inbound) startInbound() error {
 			}
 			return strings.Join(attachments, ", ")
 		}(), "]",
-		", listeners=[", i.listeners.String(), "]",
+		", cgroup_listeners=[", i.listeners.String(), "]",
+		", tc_listeners=[", i.tcListeners.String(), "]",
+		", tc_namespace=", tcNetworkInfo.Namespace,
 		", local_uid_include=", formatUIDRanges(i.localPolicy.IncludeUID),
 		", local_uid_exclude=", formatUIDRanges(i.localPolicy.ExcludeUID),
 		", shared_rewrite_listeners=[", func() string {
@@ -549,6 +556,15 @@ func (i *Inbound) closeResources() error {
 	i.udpReplySockets.stopSweeper()
 	udpReplySocketErr := i.udpReplySockets.close()
 	dataPlaneErr := i.closeTakenTCDataPlane(dataPlane)
+	namespaceErr := error(nil)
+	if i.tcBackend() == nil {
+		i.tcNamespaceAccess.Lock()
+		if i.tcNamespace != nil {
+			namespaceErr = i.tcNamespace.Close()
+			i.tcNamespace = nil
+		}
+		i.tcNamespaceAccess.Unlock()
+	}
 	routeErr := i.removeLocalRoutes()
 	selfBypassErr := error(nil)
 	if i.selfBypass != nil {
@@ -572,7 +588,7 @@ func (i *Inbound) closeResources() error {
 	if i.processTrackerRollback != nil {
 		i.processTrackerRollback, processTrackerRollbackErr = closeProcessTrackerOwner(i.processTrackerRollback)
 	}
-	return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, cgroupErr, routeErr, processTrackerErr, processTrackerRollbackErr, selfBypassErr)
+	return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, namespaceErr, cgroupErr, routeErr, processTrackerErr, processTrackerRollbackErr, selfBypassErr)
 }
 
 func closeProcessTrackerOwner(tracker processTrackerOwner) (processTrackerOwner, error) {

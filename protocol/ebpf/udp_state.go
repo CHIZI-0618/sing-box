@@ -13,6 +13,7 @@ import (
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	"github.com/sagernet/sing/common/bufio"
+	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 
 	"golang.org/x/net/ipv4"
@@ -97,6 +98,7 @@ type udpRedirectBinding struct {
 	tcAssignmentKeyInterfaceIndex uint32
 	tcAssignmentKeyValid          bool
 	tcAssignment                  commonEBPF.TCAssignment
+	tcReturn                      commonEBPF.TCReturnHandle
 }
 
 type tcAssignmentCleanup struct {
@@ -108,6 +110,7 @@ type tcAssignmentCleanup struct {
 type udpSessionCleanup struct {
 	cgroupRedirects []netip.Addr
 	tcAssignments   []tcAssignmentCleanup
+	tcReturns       []commonEBPF.TCReturnHandle
 }
 
 func (t *udpClientTable) load(key udpSessionKey) (*udpClientState, bool) {
@@ -299,7 +302,12 @@ func (t *udpClientTable) setDirectAssignmentBinding(
 		state.sourceMAC = append(state.sourceMAC[:0], sourceMAC...)
 	}
 	state.socketCookie = assignment.SocketCookie
+	previous := state.bindings[destination]
+	if previous.replyAlias {
+		state.replyAliasCount--
+	}
 	state.bindings[destination] = udpRedirectBinding{
+		tcReturn:                      previous.tcReturn,
 		tcAssignmentKeyInterfaceIndex: assignmentKeyInterfaceIndex,
 		tcAssignmentKeyValid:          true,
 		tcAssignment:                  assignment,
@@ -351,7 +359,11 @@ func (t *udpClientTable) deleteWithCleanup(key udpSessionKey, expected *udpClien
 		redirects = append(redirects, address)
 	}
 	assignments := make([]tcAssignmentCleanup, 0, len(expected.bindings))
+	var returns []commonEBPF.TCReturnHandle
 	for destination, binding := range expected.bindings {
+		if binding.tcReturn.IsValid() {
+			returns = append(returns, binding.tcReturn)
+		}
 		if binding.tcAssignmentKeyValid {
 			assignments = append(assignments, tcAssignmentCleanup{
 				destination:       destination,
@@ -374,7 +386,59 @@ func (t *udpClientTable) deleteWithCleanup(key udpSessionKey, expected *udpClien
 		}
 	}
 	t.redirectAccess.Unlock()
-	return udpSessionCleanup{cgroupRedirects: redirects, tcAssignments: assignments}
+	return udpSessionCleanup{cgroupRedirects: redirects, tcAssignments: assignments, tcReturns: returns}
+}
+
+// Retain once per destination, never once per packet. Taking the state lock
+// also serializes this acquisition with session close and reply-alias creation.
+func (s *udpClientState) retainTCReturn(backend *commonEBPF.TCBackend, client, destination netip.AddrPort) error {
+	s.access.Lock()
+	defer s.access.Unlock()
+	if s.closed {
+		return E.New("TC UDP session is closed")
+	}
+	binding, loaded := s.bindings[destination]
+	if !loaded {
+		return E.New("TC UDP assignment binding is missing")
+	}
+	if binding.tcReturn.IsValid() {
+		return nil
+	}
+	handle, err := backend.AcquireReturnRoute(commonEBPF.ProtocolUDP, client, destination)
+	if err != nil {
+		return err
+	}
+	binding.tcReturn = handle
+	s.bindings[destination] = binding
+	return nil
+}
+
+func (s *udpClientState) retainTCReplyReturn(backend *commonEBPF.TCBackend, destination netip.AddrPort) error {
+	s.access.Lock()
+	defer s.access.Unlock()
+	if s.closed {
+		return E.New("TC UDP session is closed")
+	}
+	binding, loaded := s.bindings[destination]
+	if !loaded {
+		return E.New("TC UDP reply binding is missing")
+	}
+	if binding.tcReturn.IsValid() {
+		return nil
+	}
+	for originalDestination, original := range s.bindings {
+		if originalDestination.Addr().Is4() != destination.Addr().Is4() || !original.tcReturn.IsValid() {
+			continue
+		}
+		handle, err := backend.AcquireReplyRoute(original.tcReturn, destination)
+		if err != nil {
+			return err
+		}
+		binding.tcReturn = handle
+		s.bindings[destination] = binding
+		return nil
+	}
+	return E.New("TC UDP reply has no retained return route")
 }
 
 func (s *udpClientState) isCgroupDataPlane() bool {

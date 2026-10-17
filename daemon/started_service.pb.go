@@ -7863,6 +7863,7 @@ type EBPFInboundDiagnostics struct {
 	CgroupRecoveryQueueOverflows  uint64                         `protobuf:"varint,69,opt,name=cgroupRecoveryQueueOverflows,proto3" json:"cgroupRecoveryQueueOverflows,omitempty"`
 	CgroupRecoveryQueueOverflowAt *int64                         `protobuf:"varint,70,opt,name=cgroupRecoveryQueueOverflowAt,proto3,oneof" json:"cgroupRecoveryQueueOverflowAt,omitempty"`
 	TcAssignmentSweepFailure      string                         `protobuf:"bytes,71,opt,name=tcAssignmentSweepFailure,proto3" json:"tcAssignmentSweepFailure,omitempty"`
+	TcNetworkNamespace            string                         `protobuf:"bytes,72,opt,name=tcNetworkNamespace,proto3" json:"tcNetworkNamespace,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -8345,6 +8346,13 @@ func (x *EBPFInboundDiagnostics) GetTcAssignmentSweepFailure() string {
 	return ""
 }
 
+func (x *EBPFInboundDiagnostics) GetTcNetworkNamespace() string {
+	if x != nil {
+		return x.TcNetworkNamespace
+	}
+	return ""
+}
+
 type EBPFAttachmentDiagnostics struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InterfaceName  string                 `protobuf:"bytes,1,opt,name=interfaceName,proto3" json:"interfaceName,omitempty"`
@@ -8652,6 +8660,9 @@ type EBPFCounters struct {
 	FakeIPICMPReplies             uint64                 `protobuf:"varint,17,opt,name=fakeIPICMPReplies,proto3" json:"fakeIPICMPReplies,omitempty"`
 	FakeIPICMPPassThrough         uint64                 `protobuf:"varint,18,opt,name=fakeIPICMPPassThrough,proto3" json:"fakeIPICMPPassThrough,omitempty"`
 	FakeIPICMPRewriteFailureDrops uint64                 `protobuf:"varint,19,opt,name=fakeIPICMPRewriteFailureDrops,proto3" json:"fakeIPICMPRewriteFailureDrops,omitempty"`
+	TcReturnUpdateFailures        uint64                 `protobuf:"varint,20,opt,name=tcReturnUpdateFailures,proto3" json:"tcReturnUpdateFailures,omitempty"`
+	TcReturnConflicts             uint64                 `protobuf:"varint,21,opt,name=tcReturnConflicts,proto3" json:"tcReturnConflicts,omitempty"`
+	TcReturnLookupFailures        uint64                 `protobuf:"varint,22,opt,name=tcReturnLookupFailures,proto3" json:"tcReturnLookupFailures,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -8801,6 +8812,27 @@ func (x *EBPFCounters) GetFakeIPICMPPassThrough() uint64 {
 func (x *EBPFCounters) GetFakeIPICMPRewriteFailureDrops() uint64 {
 	if x != nil {
 		return x.FakeIPICMPRewriteFailureDrops
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcReturnUpdateFailures() uint64 {
+	if x != nil {
+		return x.TcReturnUpdateFailures
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcReturnConflicts() uint64 {
+	if x != nil {
+		return x.TcReturnConflicts
+	}
+	return 0
+}
+
+func (x *EBPFCounters) GetTcReturnLookupFailures() uint64 {
+	if x != nil {
+		return x.TcReturnLookupFailures
 	}
 	return 0
 }
@@ -9638,7 +9670,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
 	"\bpressure\x18\v \x01(\tR\bpressure\x12\x1a\n" +
-	"\bcategory\x18\f \x01(\tR\bcategory\"\xcd\x1b\n" +
+	"\bcategory\x18\f \x01(\tR\bcategory\"\xfd\x1b\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9706,7 +9738,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x1atcAssignmentSweepPartialAt\x18D \x01(\x03H\x06R\x1atcAssignmentSweepPartialAt\x88\x01\x01\x12B\n" +
 	"\x1ccgroupRecoveryQueueOverflows\x18E \x01(\x04R\x1ccgroupRecoveryQueueOverflows\x12I\n" +
 	"\x1dcgroupRecoveryQueueOverflowAt\x18F \x01(\x03H\aR\x1dcgroupRecoveryQueueOverflowAt\x88\x01\x01\x12:\n" +
-	"\x18tcAssignmentSweepFailure\x18G \x01(\tR\x18tcAssignmentSweepFailureB\x0e\n" +
+	"\x18tcAssignmentSweepFailure\x18G \x01(\tR\x18tcAssignmentSweepFailure\x12.\n" +
+	"\x12tcNetworkNamespace\x18H \x01(\tR\x12tcNetworkNamespaceB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
@@ -9743,7 +9776,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x05count\x18\x01 \x01(\x03R\x05count\x12\x12\n" +
 	"\x04peak\x18\x02 \x01(\x03R\x04peak\x12\x18\n" +
 	"\aevicted\x18\x03 \x01(\x03R\aevicted\x12*\n" +
-	"\x10capacityRejected\x18\x04 \x01(\x03R\x10capacityRejected\"\xbe\a\n" +
+	"\x10capacityRejected\x18\x04 \x01(\x03R\x10capacityRejected\"\xdc\b\n" +
 	"\fEBPFCounters\x12:\n" +
 	"\x18assignmentLookupFailures\x18\x01 \x01(\x04R\x18assignmentLookupFailures\x126\n" +
 	"\x16tcSocketLookupFailures\x18\x02 \x01(\x04R\x16tcSocketLookupFailures\x12.\n" +
@@ -9761,7 +9794,10 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x10recoveryFailures\x18\x10 \x01(\x04R\x10recoveryFailures\x12,\n" +
 	"\x11fakeIPICMPReplies\x18\x11 \x01(\x04R\x11fakeIPICMPReplies\x124\n" +
 	"\x15fakeIPICMPPassThrough\x18\x12 \x01(\x04R\x15fakeIPICMPPassThrough\x12D\n" +
-	"\x1dfakeIPICMPRewriteFailureDrops\x18\x13 \x01(\x04R\x1dfakeIPICMPRewriteFailureDropsJ\x04\b\t\x10\n" +
+	"\x1dfakeIPICMPRewriteFailureDrops\x18\x13 \x01(\x04R\x1dfakeIPICMPRewriteFailureDrops\x126\n" +
+	"\x16tcReturnUpdateFailures\x18\x14 \x01(\x04R\x16tcReturnUpdateFailures\x12,\n" +
+	"\x11tcReturnConflicts\x18\x15 \x01(\x04R\x11tcReturnConflicts\x126\n" +
+	"\x16tcReturnLookupFailures\x18\x16 \x01(\x04R\x16tcReturnLookupFailuresJ\x04\b\t\x10\n" +
 	"J\x04\b\n" +
 	"\x10\v\"\xa1\x03\n" +
 	"\x15EBPFUDPNATDiagnostics\x12&\n" +

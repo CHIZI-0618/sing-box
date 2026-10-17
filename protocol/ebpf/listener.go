@@ -34,15 +34,26 @@ func (i *Inbound) newInternalListener(
 	ipv6Listener bool,
 	port uint16,
 ) *listener.Listener {
+	return i.newInternalListenerInNamespace(handler, network, ipv6Listener, port, "")
+}
+
+func (i *Inbound) newInternalListenerInNamespace(handler internalListenerHandler, network string, ipv6Listener bool, port uint16, namespace string) *listener.Listener {
 	listenAddress := netip.IPv4Unspecified()
 	if ipv6Listener {
 		listenAddress = netip.IPv6Unspecified()
+	}
+	if namespace != "" && network == N.NetworkUDP {
+		listenAddress = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+		if ipv6Listener {
+			listenAddress = netip.IPv6Loopback()
+		}
 	}
 	return listener.New(listener.Options{
 		Context: i.ctx,
 		Logger:  i.logger,
 		Network: []string{network},
 		Listen: option.ListenOptions{
+			NetNs:      namespace,
 			Listen:     common.Ptr(badoption.Addr(listenAddress)),
 			ListenPort: port,
 			// Keep the same explicit opt-in semantics as other inbound
@@ -65,12 +76,23 @@ func (i *Inbound) newListener(network string, ipv6Listener bool, port uint16) *l
 }
 
 func (i *Inbound) startTCListeners() error {
-	return i.listeners.start(
+	i.tcNamespaceAccess.Lock()
+	defer i.tcNamespaceAccess.Unlock()
+	if i.tcNamespace == nil {
+		var err error
+		i.tcNamespace, err = newTCNamespace()
+		if err != nil {
+			return err
+		}
+	}
+	return i.tcListeners.start(
 		i.enableTCP,
 		i.enableUDP,
 		true,
 		i.localIPv6 || i.sharedIPv6,
-		i.newListener,
+		func(network string, ipv6 bool, port uint16) *listener.Listener {
+			return i.newInternalListenerInNamespace(tcListenerHandler{i}, network, ipv6, port, i.tcNamespace.Path())
+		},
 	)
 }
 
