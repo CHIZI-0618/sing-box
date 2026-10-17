@@ -88,11 +88,15 @@ backport cannot use `socket_assign`. netns/veth do not raise this helper floor,
 but version 5.7 or later does not prove that the selected programs, permissions,
 or routing work. Optional TCX requires newer kernel capabilities.
 
-`cgroup` and `packet_rewrite` are compatibility-oriented paths. CI targets 5.4
-for these paths and 5.10/6.6 for the complete paths. This matrix is not a minimum
-version promise for all vendor kernels, and skipped tests do not establish
-support. Validate the selected objects, attachment, and real traffic on the
-deployment kernel.
+`cgroup` and `packet_rewrite` are compatibility-oriented paths. The library CI
+adds a restricted 4.19.325 profile: local cgroup and shared `packet_rewrite`
+TCP/UDP, with IPv4/IPv6 round trips. That stable patch level backports the cgroup
+UDP recvmsg hooks introduced in mainline 5.2; do not assume every older 4.19
+patch level or vendor kernel has them. The 5.4 profile covers cgroup TCP/UDP
+(connected and unconnected UDP), packet rewrite and real reply delivery;
+5.10/6.6 cover the complete paths. Required 4.19/5.4 tests fail rather than skip.
+This matrix is not a minimum-version promise for all vendor kernels. Validate
+the selected objects, attachment, and real traffic on the deployment kernel.
 
 ## Kernel configuration
 

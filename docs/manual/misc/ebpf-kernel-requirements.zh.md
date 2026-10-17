@@ -69,9 +69,13 @@ fingerprint、SELinux 拒绝日志、实际挂载/清理路径和接口帧类型
 `socket_assign`。netns/veth 本身不会进一步抬高这一 helper 门槛；但 5.7 或更新版本
 也不代表所选程序、权限和路由一定可用。可选 TCX 需要更晚的内核能力。
 
-`cgroup` 与 `packet_rewrite` 是兼容性优先路径；CI 以 5.4 为兼容路径验证目标，
-以 5.10、6.6 验证完整路径。该矩阵不是对所有厂商内核的最低版本承诺，
-也不以测试跳过代表支持。部署仍以所选对象加载、挂载和真实流量验证为准。
+`cgroup` 与 `packet_rewrite` 是兼容性优先路径。库的 CI 增加受限的 4.19.325 配置：
+local cgroup 和 shared `packet_rewrite` 均测试 TCP/UDP，验证 IPv4/IPv6 双向流量。
+该稳定补丁版本已回移主线 5.2 引入的 cgroup UDP recvmsg hook，但不能假设所有更早的
+4.19 补丁版本或厂商内核都具备它。5.4 配置覆盖 cgroup TCP/UDP（包括 connected
+和 unconnected UDP）、packet rewrite 及真实回包；5.10、6.6 验证完整路径。
+4.19/5.4 的必选测试遇到跳过会失败。该矩阵不是对所有厂商内核的最低版本承诺，
+部署仍以所选对象加载、挂载和真实流量验证为准。
 
 ## 内核配置
 
