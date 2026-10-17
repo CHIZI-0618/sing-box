@@ -228,18 +228,7 @@ func (t *udpClientTable) clientShard(key udpSessionKey) *udpClientShard {
 // not a cryptographic hash, so a party able to choose destination addresses
 // specifically to collide under it could still concentrate them onto one
 // shard. This function only changes how inputs are distributed across
-// shards; it does not change what happens once a shard fills. Of this
-// function's two callers, only udpReplySocketPool enforces a per-shard
-// capacity at all (udpReplySocketShardCapacity, with capacity-triggered
-// eviction and rejection in get()) -- the client tables
-// (udpClientTable/sharedUDPClientTable) have no capacity bound on a shard's
-// map and grow with however many sessions are actually active. For the
-// reply socket pool specifically: its usable total capacity before any
-// single destination pattern hits a capacity rejection on its own shard
-// still depends on how evenly that traffic happens to hash, not simply on
-// udpClientShardCount * udpReplySocketShardCapacity -- that product is the
-// pool's absolute ceiling under perfectly even placement, not a promised
-// floor for every traffic shape.
+// shards. Reply socket capacity is global, independent of shard distribution.
 func shardIndexForAddrPort(addrPort netip.AddrPort, shardCount int) int {
 	const offset64 = 14695981039346656037
 	const prime64 = 1099511628211

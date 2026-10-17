@@ -43,7 +43,7 @@ func TestAddFakeIPICMPCountersSumsEnabledBackends(t *testing.T) {
 func TestDiagnosticsFakeIPICMPCountersZeroWhenDisabled(t *testing.T) {
 	backend := newLoopbackTestTCBackend(t)
 
-	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.tcDataPlane = newUnstartedTCRuntime(backend)
 
 	counters := inbound.Diagnostics().Counters

@@ -19,7 +19,6 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 )
 
@@ -123,71 +122,9 @@ type Inbound struct {
 	lifecycleAccess           sync.Mutex
 	interfaceMonitor          tcInterfaceMonitor
 
-	bypassRuleSetAccess       sync.Mutex
-	bypassRuleSet             []adapter.RuleSet
-	bypassRuleSetCallbacks    []*list.Element[adapter.RuleSetUpdateCallback]
-	bypassRuleSetStarted      bool
-	bypassRuleSetPolicy       []commonEBPF.CIDRDecision
-	bypassRuleSetNeedsRetry   bool
-	bypassRuleSetInconsistent bool
-	// bypassRuleSetExpectedPolicy is the content applyBypassCIDRPolicyLocked
-	// most recently attempted, successful or not -- see
-	// bypassRuleSetExpectedVersion's doc comment below for why a version
-	// number needs its own content to compare each new attempt against,
-	// distinct from bypassRuleSetPolicy (the last CONFIRMED content).
-	bypassRuleSetExpectedPolicy []commonEBPF.CIDRDecision
-	// bypassRuleSetPolicyVersion is the compiled bypass_rule_set policy's own
-	// content-based version: it advances only when a newly compiled policy
-	// actually differs (by value, via reflect.DeepEqual) from the one
-	// currently in effect, so it answers "which policy generation is this",
-	// not "how many times has an apply been attempted" -- retrying the same
-	// compiled content after a failure does not advance it. It is committed
-	// only alongside bypassRuleSetPolicy itself, on a fully successful apply
-	// -- so together they name the policy this inbound has actually
-	// confirmed applying, the "last successfully applied" state.
-	//
-	// bypassRuleSetExpectedVersion is the different thing a diagnostics
-	// reader needs while a retry is outstanding: the version of the most
-	// recently ATTEMPTED policy, updated unconditionally on every call to
-	// applyBypassCIDRPolicyLocked regardless of whether that attempt
-	// succeeded -- the "what we are currently trying to converge to"
-	// state. While bypassRuleSetNeedsRetry is true,
-	// bypassRuleSetExpectedVersion names the target a later retry is
-	// chasing; bypassRuleSetPolicyVersion still names whatever was last
-	// actually confirmed, which lags behind it by construction. The two
-	// coincide exactly when nothing is currently pending: that is what
-	// "caught up" means here, not any particular field's value in
-	// isolation.
-	//
-	// bypassRuleSetRetryCount is scoped precisely to retries:
-	// retryBypassRuleSetIfNeededLocked is the only place that increments
-	// it, so it counts scheduler-driven retries of a previously-failed
-	// apply specifically, not the original attempt and not a fresh apply
-	// triggered by rule-set content actually changing.
-	//
-	// The three backend fields below record, per backend, its own
-	// confirmed position in the policy version sequence (i.e. relative to
-	// bypassRuleSetPolicyVersion, not bypassRuleSetExpectedVersion) -- see
-	// bypassRuleSetBackendVersion's doc comment for what "confirmed" means
-	// and does not mean once a compensating revert has failed.
-	bypassRuleSetPolicyVersion         uint64
-	bypassRuleSetExpectedVersion       uint64
-	bypassRuleSetRetryCount            uint64
-	bypassRuleSetTC                    bypassRuleSetBackendVersion
-	bypassRuleSetCgroup                bypassRuleSetBackendVersion
-	bypassRuleSetShared                bypassRuleSetBackendVersion
-	sharedBypassRuleSet                []adapter.RuleSet
-	sharedBypassRuleSetCallbacks       []*list.Element[adapter.RuleSetUpdateCallback]
-	sharedBypassRuleSetStarted         bool
-	sharedBypassRuleSetPolicy          []commonEBPF.CIDRDecision
-	sharedBypassRuleSetNeedsRetry      bool
-	sharedBypassRuleSetInconsistent    bool
-	sharedBypassRuleSetExpectedPolicy  []commonEBPF.CIDRDecision
-	sharedBypassRuleSetPolicyVersion   uint64
-	sharedBypassRuleSetExpectedVersion uint64
-	sharedBypassRuleSetRetryCount      uint64
-	sharedBypassRuleSetTC              bypassRuleSetBackendVersion
-	sharedBypassRuleSetShared          bypassRuleSetBackendVersion
+	bypassRuleSetAccess sync.Mutex
+	localBypassRules    bypassRuleSetState
+	sharedBypassRules   bypassRuleSetState
 
 	udpClientTable                udpClientTable
 	udpReplySockets               udpReplySocketPool
@@ -228,8 +165,11 @@ type Inbound struct {
 	kernelRuntimeAPIValue  adapter.EBPFKernelRuntimeDiagnostics
 }
 
-func (i *Inbound) localTCEnabled() bool {
-	return i.localEnabled && i.localDataPlane == localDataPlaneTC
+func (i *Inbound) localSocketAssignEnabled() bool {
+	return i.localEnabled && i.localDataPlane == localDataPlaneSocketAssign
+}
+func (i *Inbound) socketAssignIPv6Enabled() bool {
+	return i.localSocketAssignEnabled() && i.localIPv6 || i.sharedSocketAssignEnabled() && i.sharedIPv6
 }
 func (i *Inbound) localCgroupEnabled() bool {
 	return i.localEnabled && i.localDataPlane == localDataPlaneCgroup
@@ -294,11 +234,11 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
-	localBypassExclude, err := normalizeBypassExclude("local.bypass_exclude", options.Local.BypassExclude)
+	localBypassExclude, err := normalizeCIDRs("local.bypass_exclude", options.Local.BypassExclude)
 	if err != nil {
 		return nil, err
 	}
-	sharedBypassExclude, err := normalizeBypassExclude("shared.bypass_exclude", options.Shared.BypassExclude)
+	sharedBypassExclude, err := normalizeCIDRs("shared.bypass_exclude", options.Shared.BypassExclude)
 	if err != nil {
 		return nil, err
 	}
@@ -417,10 +357,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 		return nil
 	}
-	if err = loadRuleSets("local", &inbound.bypassRuleSet, options.Local.BypassRuleSet); err != nil {
+	if err = loadRuleSets("local", &inbound.localBypassRules.ruleSets, options.Local.BypassRuleSet); err != nil {
 		return nil, err
 	}
-	if err = loadRuleSets("shared", &inbound.sharedBypassRuleSet, options.Shared.BypassRuleSet); err != nil {
+	if err = loadRuleSets("shared", &inbound.sharedBypassRules.ruleSets, options.Shared.BypassRuleSet); err != nil {
 		return nil, err
 	}
 	udpTimeout := C.UDPTimeout
@@ -432,7 +372,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	inbound.udpTimeout = udpTimeout
 	inbound.udpFragment = options.UDPFragment != nil && *options.UDPFragment
-	inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
+	if inbound.enableUDP && (inbound.localEnabled || inbound.sharedSocketAssignEnabled()) {
+		inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
+	}
 	return inbound, nil
 }
 

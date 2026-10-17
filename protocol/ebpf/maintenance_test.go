@@ -12,7 +12,7 @@ import (
 
 func TestTCMaintenanceCoalescesEventsAndContinuesPartialScans(t *testing.T) {
 	now := time.Unix(1, 0)
-	var schedule tcMaintenanceSchedule
+	var schedule maintenanceSchedule
 	if schedule.delay(now) != 0 || schedule.finish(now, true, false, nil) != 0 {
 		t.Fatal("normal completed sweep should wait for activity or watchdog")
 	}
@@ -32,8 +32,11 @@ func TestTCMaintenanceCoalescesEventsAndContinuesPartialScans(t *testing.T) {
 	if got := schedule.finish(now, true, true, nil); got != tcAssignmentPressureCooldown {
 		t.Fatalf("pressure delay = %v", got)
 	}
-	if schedule.finish(now, false, true, errors.New("scan failed")) != 0 || schedule.delay(now) != tcAssignmentMaintenanceCooldown {
+	if schedule.finish(now, false, true, errors.New("scan failed")) != tcAssignmentMaintenanceCooldown || schedule.delay(now) != tcAssignmentMaintenanceCooldown {
 		t.Fatal("scan failure must not cause a short-delay retry loop")
+	}
+	if schedule.finish(now, false, true, errors.New("scan failed")) != 2*tcAssignmentMaintenanceCooldown {
+		t.Fatal("repeated failure must back off")
 	}
 }
 

@@ -52,7 +52,7 @@ func newSharedRewrite(inbound *Inbound, options option.EBPFSharedOptions) *share
 	}
 	mapCapacity := effectiveSharedPacketRewriteMapCapacity(
 		defaultMapCapacity,
-		len(inbound.sharedBypassRuleSet) > 0 ||
+		len(inbound.sharedBypassRules.ruleSets) > 0 ||
 			len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 			len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0,
 	)
@@ -62,7 +62,9 @@ func newSharedRewrite(inbound *Inbound, options option.EBPFSharedOptions) *share
 		mapCapacity: mapCapacity,
 		tcPriority:  inbound.tcPriority,
 	}
-	shared.udpNat = newUDPNATService(shared, shared.preparePacketConnection, inbound.udpTimeout)
+	if inbound.enableUDP {
+		shared.udpNat = newUDPNATService(shared, shared.preparePacketConnection, inbound.udpTimeout)
+	}
 	return shared
 }
 
@@ -100,8 +102,7 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedPacketRewriteBackend, e
 	if s.inbound.sharedRewriteIPv6Enabled() {
 		redirectIPv6 = s.inbound.redirectIPv6Prefix
 	}
-	cgroupBackend := s.inbound.cgroupBackendInstance()
-	backend, err := ECommon.PrepareSharedPacketRewrite(cgroupBackend, ECommon.SharedPacketRewriteConfig{
+	backend, err := ECommon.PrepareSharedPacketRewrite(ECommon.SharedPacketRewriteConfig{
 		ListenerPort:  s.listeners.selectedPort(),
 		EnableTCP:     s.inbound.enableTCP,
 		EnableUDP:     s.inbound.enableUDP,
@@ -118,7 +119,7 @@ func (s *sharedRewrite) prepareBackend() (*ECommon.SharedPacketRewriteBackend, e
 	s.inbound.bypassRuleSetAccess.Lock()
 	initialPolicy, policyErr := s.inbound.combineDestinationDecisions(
 		s.inbound.sharedInitialDestinations,
-		s.inbound.sharedBypassRuleSetPolicy,
+		s.inbound.sharedBypassRules.policy,
 	)
 	if policyErr == nil {
 		_, err = backend.UpdateDestinationDecisions(initialPolicy)
@@ -271,10 +272,17 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 	defer tcTicker.Stop()
 	var tcContinuation <-chan time.Time
 	var tcTimer *time.Timer
-	var tcSchedule tcMaintenanceSchedule
+	var tcSchedule maintenanceSchedule
+	// Independent jobs share scheduling semantics, never one another's state.
+	var flowSchedule maintenanceSchedule
+	var flowTimer *time.Timer
+	var flowContinuation <-chan time.Time
 	defer func() {
 		if tcTimer != nil {
 			tcTimer.Stop()
+		}
+		if flowTimer != nil {
+			flowTimer.Stop()
 		}
 	}()
 	tcMaintenancePending := false
@@ -341,10 +349,16 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			tcMaintenancePending = true
 		case <-tcTicker.C:
 			tcMaintenancePending = true
+			// Kernel-only allocations do not appear in KnownFlowUsage and may
+			// never produce a userspace wake. Keep a bounded orphan watchdog.
+			sweepRequested = flowContinuation == nil
 		case <-tcContinuation:
 			tcContinuation = nil
 			tcMaintenancePending = true
 		case <-releaseTimerChannel:
+		case <-flowContinuation:
+			flowContinuation = nil
+			sweepRequested = true
 		}
 		if tcMaintenancePending {
 			s.inbound.maintainTCAssignments(&tcSchedule, &tcTimer, &tcContinuation)
@@ -354,6 +368,14 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			continue
 		}
 		now := time.Now()
+		if sweepRequested {
+			if delay := flowSchedule.delay(now); delay > 0 {
+				if flowContinuation == nil {
+					resetMaintenanceTimer(&flowTimer, &flowContinuation, delay)
+				}
+				sweepRequested = false
+			}
+		}
 		if !sweepRequested {
 			_, flushErr := backend.FlushReleasedTCPFlows(now, sharedFlowReleaseFlushBudget)
 			if flushErr != nil {
@@ -391,7 +413,7 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 		} else {
 			scanInProgress = !result.Complete
 			if !result.Complete {
-				backend.RequestMaintenance()
+				resetMaintenanceTimer(&flowTimer, &flowContinuation, flowSchedule.finish(time.Now(), false, pressure, nil))
 				continue
 			}
 			entered, exited := false, false
@@ -416,6 +438,9 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 					"/", result.Usage.Capacity,
 				)
 			}
+		}
+		if delay := flowSchedule.finish(time.Now(), result.Complete, pressure, err); delay > 0 {
+			resetMaintenanceTimer(&flowTimer, &flowContinuation, delay)
 		}
 	}
 }

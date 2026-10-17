@@ -44,7 +44,7 @@ var commandEBPFStatus = &cobra.Command{
 
 func init() {
 	commandEBPFStatus.Flags().StringVar(&commandEBPFStatusMode, "mode", "all", "Data path to inspect: all, local, or shared")
-	commandEBPFStatus.Flags().StringVar(&commandEBPFStatusLocal, "local-data-plane", "", "Local data plane: tc or cgroup (empty uses --mode)")
+	commandEBPFStatus.Flags().StringVar(&commandEBPFStatusLocal, "local-data-plane", "", "Local data plane: socket_assign or cgroup (empty uses --mode)")
 	commandEBPFStatus.Flags().StringVar(&commandEBPFStatusShared, "shared-data-plane", "", "Shared data plane: socket_assign or packet_rewrite (empty uses --mode)")
 	commandEBPFStatus.Flags().StringSliceVar(&commandEBPFStatusNetwork, "network", []string{"tcp", "udp"}, "Protocols to inspect: tcp, udp, or tcp,udp")
 	commandEBPFStatus.Flags().StringVar(&commandEBPFStatusInterface, "interface", "", "Configured shared interface")

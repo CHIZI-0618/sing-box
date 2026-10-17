@@ -64,8 +64,8 @@ func normalizeSharedDataPlane(options option.EBPFSharedOptions) (string, error) 
 }
 
 const (
-	localDataPlaneTC     = "tc"
-	localDataPlaneCgroup = "cgroup"
+	localDataPlaneSocketAssign = "socket_assign"
+	localDataPlaneCgroup       = "cgroup"
 )
 
 func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, error) {
@@ -73,7 +73,7 @@ func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, e
 	if dataPlane == "" {
 		dataPlane = localDataPlaneCgroup
 	}
-	if dataPlane != localDataPlaneTC && dataPlane != localDataPlaneCgroup {
+	if dataPlane != localDataPlaneSocketAssign && dataPlane != localDataPlaneCgroup {
 		return "", "", E.New("unknown local.data_plane: ", dataPlane)
 	}
 	if dataPlane != localDataPlaneCgroup && options.CgroupPath != "" {
@@ -168,7 +168,7 @@ func normalizeFakeIPICMP(mode string) (bool, error) {
 // configuration that can never do anything, is what "确认某种模式无法安全支持时，
 // 应在显式开启时返回配置或能力错误" asks for.
 //
-// Every path with a TC attachment can host the responder: local.data_plane=tc
+// Every path with a TC attachment can host the responder: local.data_plane=socket_assign
 // and shared.data_plane=socket_assign both attach through commonEBPF.TCBackend,
 // while shared.data_plane=packet_rewrite attaches through
 // commonEBPF.SharedPacketRewriteBackend. Both library backends receive the
@@ -189,7 +189,7 @@ func validateFakeIPICMP(
 	if !fakeIPIPv4.IsValid() && !fakeIPIPv6.IsValid() {
 		return E.New("fakeip_icmp=reply requires a FakeIP range to be configured (dns fakeip transport)")
 	}
-	hasLocalTC := localEnabled && localDataPlane == localDataPlaneTC
+	hasLocalTC := localEnabled && localDataPlane == localDataPlaneSocketAssign
 	hasSharedAttachment := sharedEnabled && (sharedDataPlane == sharedDataPlaneSocketAssign || sharedDataPlane == sharedDataPlanePacketRewrite)
 	if hasLocalTC || hasSharedAttachment {
 		return nil
@@ -197,10 +197,10 @@ func validateFakeIPICMP(
 	if localEnabled && localDataPlane == localDataPlaneCgroup && !sharedEnabled {
 		return E.New(
 			"fakeip_icmp=reply is not supported with local.data_plane=cgroup and no shared interception enabled: ",
-			"cgroup's connect()/sendmsg() hooks cannot see or answer ICMP; switch to local.data_plane=tc, or enable shared interception",
+			"cgroup's connect()/sendmsg() hooks cannot see or answer ICMP; switch to local.data_plane=socket_assign, or enable shared interception",
 		)
 	}
-	return E.New("fakeip_icmp=reply requires local.data_plane=tc or shared interception (either shared.data_plane) to be enabled")
+	return E.New("fakeip_icmp=reply requires local.data_plane=socket_assign or shared interception (either shared.data_plane) to be enabled")
 }
 
 func normalizeDNSMode(mode string) (string, error) {
@@ -328,23 +328,23 @@ func normalizeSharedOptions(options option.EBPFSharedOptions) (option.EBPFShared
 	}
 	options.Interface = interfaces
 	var err error
-	options.IncludeSourceCIDR, err = normalizeSourceCIDR("include_source_cidr", options.IncludeSourceCIDR)
+	options.IncludeSourceCIDR, err = normalizeCIDRs("shared.include_source_cidr", options.IncludeSourceCIDR)
 	if err != nil {
 		return option.EBPFSharedOptions{}, err
 	}
-	options.ExcludeSourceCIDR, err = normalizeSourceCIDR("exclude_source_cidr", options.ExcludeSourceCIDR)
+	options.ExcludeSourceCIDR, err = normalizeCIDRs("shared.exclude_source_cidr", options.ExcludeSourceCIDR)
 	if err != nil {
 		return option.EBPFSharedOptions{}, err
 	}
 	return options, nil
 }
 
-func normalizeSourceCIDR(name string, prefixes []netip.Prefix) (badoption.Listable[netip.Prefix], error) {
-	normalized := make(badoption.Listable[netip.Prefix], 0, len(prefixes))
+func normalizeCIDRs(name string, prefixes []netip.Prefix) (badoption.Listable[netip.Prefix], error) {
+	var normalized badoption.Listable[netip.Prefix]
 	seen := make(map[netip.Prefix]struct{}, len(prefixes))
 	for _, prefix := range prefixes {
 		if !prefix.IsValid() {
-			return nil, E.New("invalid shared.", name)
+			return nil, E.New("invalid ", name, " prefix")
 		}
 		prefix = prefix.Masked()
 		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
@@ -357,46 +357,6 @@ func normalizeSourceCIDR(name string, prefixes []netip.Prefix) (badoption.Listab
 		normalized = append(normalized, prefix)
 	}
 	return normalized, nil
-}
-
-// normalizeBypassExclude masks and validates bypass_exclude prefixes. The
-// backend force-intercept slot holds a single prefix per address family, so
-// bypass_exclude accepts at most one IPv4 and one IPv6 prefix. These prefixes
-// are force-intercepted ahead of every bypass decision (private-address, port,
-// DNS, UID), so a VPN/CGNAT tail such as Tailscale's 100.64.0.0/10 can still
-// reach a proxy even when bypass_private_address would otherwise pass it in
-// kernel.
-
-//nolint:lll
-func normalizeBypassExclude(name string, prefixes []netip.Prefix) ([]netip.Prefix, error) {
-	if len(prefixes) == 0 {
-		return nil, nil
-	}
-	result := make([]netip.Prefix, 0, len(prefixes))
-	seenIPv4 := netip.Prefix{}
-	seenIPv6 := netip.Prefix{}
-	for _, prefix := range prefixes {
-		if !prefix.IsValid() {
-			return nil, E.New("invalid ", name, " prefix")
-		}
-		prefix = prefix.Masked()
-		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
-			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96).Masked()
-		}
-		if prefix.Addr().Is4() {
-			if seenIPv4.IsValid() {
-				return nil, E.New(name, " accepts at most one IPv4 prefix; got both ", seenIPv4, " and ", prefix)
-			}
-			seenIPv4 = prefix
-		} else {
-			if seenIPv6.IsValid() {
-				return nil, E.New(name, " accepts at most one IPv6 prefix; got both ", seenIPv6, " and ", prefix)
-			}
-			seenIPv6 = prefix
-		}
-		result = append(result, prefix)
-	}
-	return result, nil
 }
 
 func parseSharedMACAddresses(name string, addresses []string) ([]commonEBPF.MACAddress, error) {
