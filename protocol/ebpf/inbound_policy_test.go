@@ -92,6 +92,19 @@ func newLoopbackTestTCBackend(t *testing.T) *commonEBPF.TCBackend {
 	return backend
 }
 
+// Rollback tests deliberately exercise multiple mechanism owners. Production
+// targets are selected by scope and never include an inactive mechanism.
+func applyTestPolicyBackends(i *Inbound, policy []commonEBPF.CIDRDecision) error {
+	var targets []bypassPolicyBackend
+	if backend := i.tcBackend(); backend != nil {
+		targets = append(targets, bypassPolicyBackend{"TC", backend.UpdateLocalDestinationDecisions, backend.RequiresRebuild, &i.localBypassRules.tc})
+	}
+	if backend := i.cgroupBackendInstance(); backend != nil {
+		targets = append(targets, bypassPolicyBackend{"cgroup", backend.UpdateDestinationDecisions, backend.RequiresRebuild, &i.localBypassRules.cgroup})
+	}
+	return i.applyRuleSetPolicyToBackends(&i.localBypassRules, "local.bypass_rule_set", policy, targets)
+}
+
 func bypassPolicyFor(t *testing.T, prefixes ...netip.Prefix) []commonEBPF.CIDRDecision {
 	t.Helper()
 	policy := make([]commonEBPF.CIDRDecision, 0, len(prefixes))
@@ -128,7 +141,7 @@ func TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails(t *testi
 	previous := bypassPolicyFor(t, netip.MustParsePrefix("10.0.0.0/8"))
 	next := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
-	inbound := &Inbound{}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 	inbound.localBypassRules.policy = previous
@@ -137,7 +150,7 @@ func TestApplyBypassCIDRPolicyRevertsAnEarlierBackendWhenALaterOneFails(t *testi
 	inbound.localBypassRules.expectedVersion = 5
 	inbound.localBypassRules.tc = bypassRuleSetBackendVersion{version: 5, known: true}
 
-	err := inbound.applyBypassCIDRPolicyLocked(next)
+	err := applyTestPolicyBackends(inbound, next)
 	if err == nil {
 		t.Fatal("apply succeeded despite the cgroup backend being permanently unusable")
 	}
@@ -192,7 +205,7 @@ func TestApplyBypassCIDRPolicyLeavesBackendVersionOnFailedRevert(t *testing.T) {
 	previous := oversizedBypassPolicy(t)
 	next := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
-	inbound := &Inbound{}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.logger = log.NewNOPFactory().Logger()
 	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
@@ -202,7 +215,7 @@ func TestApplyBypassCIDRPolicyLeavesBackendVersionOnFailedRevert(t *testing.T) {
 	inbound.localBypassRules.expectedVersion = 5
 	inbound.localBypassRules.tc = bypassRuleSetBackendVersion{version: 5, known: true}
 
-	err := inbound.applyBypassCIDRPolicyLocked(next)
+	err := applyTestPolicyBackends(inbound, next)
 	if err == nil {
 		t.Fatal("apply succeeded despite the cgroup backend being permanently unusable")
 	}
@@ -239,10 +252,10 @@ func TestApplyBypassCIDRPolicyVersionUnchangedForIdenticalContent(t *testing.T) 
 	tc := newLoopbackTestTCBackend(t)
 	policy := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
-	inbound := &Inbound{}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 
-	if err := inbound.applyBypassCIDRPolicyLocked(policy); err != nil {
+	if err := applyTestPolicyBackends(inbound, policy); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	firstVersion := inbound.localBypassRules.policyVersion
@@ -250,7 +263,7 @@ func TestApplyBypassCIDRPolicyVersionUnchangedForIdenticalContent(t *testing.T) 
 		t.Fatal("bypassRuleSetPolicyVersion did not advance on the very first apply")
 	}
 
-	if err := inbound.applyBypassCIDRPolicyLocked(policy); err != nil {
+	if err := applyTestPolicyBackends(inbound, policy); err != nil {
 		t.Fatalf("second, identical apply: %v", err)
 	}
 	if inbound.localBypassRules.policyVersion != firstVersion {
@@ -261,7 +274,7 @@ func TestApplyBypassCIDRPolicyVersionUnchangedForIdenticalContent(t *testing.T) 
 	}
 
 	changed := bypassPolicyFor(t, netip.MustParsePrefix("10.0.0.0/8"))
-	if err := inbound.applyBypassCIDRPolicyLocked(changed); err != nil {
+	if err := applyTestPolicyBackends(inbound, changed); err != nil {
 		t.Fatalf("third apply with different content: %v", err)
 	}
 	if inbound.localBypassRules.policyVersion != firstVersion+1 {
@@ -283,7 +296,7 @@ func TestApplyBypassCIDRPolicyVersionUnchangedForIdenticalContent(t *testing.T) 
 func TestBypassRuleSetRetryCountOnlyCountsSchedulerRetries(t *testing.T) {
 	tc := newLoopbackTestTCBackend(t)
 
-	inbound := &Inbound{}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.logger = log.NewNOPFactory().Logger()
 	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.localBypassRules.started = true
@@ -338,13 +351,13 @@ func TestApplyBypassCIDRPolicySucceedsAcrossRealBackends(t *testing.T) {
 	tc := newLoopbackTestTCBackend(t)
 	next := bypassPolicyFor(t, netip.MustParsePrefix("192.168.0.0/16"))
 
-	inbound := &Inbound{}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.localBypassRules.policyVersion = 5
 	inbound.localBypassRules.expectedVersion = 5
 	inbound.localBypassRules.tc = bypassRuleSetBackendVersion{version: 5, known: true}
 
-	if err := inbound.applyBypassCIDRPolicyLocked(next); err != nil {
+	if err := applyTestPolicyBackends(inbound, next); err != nil {
 		t.Fatalf("apply with only a healthy TC backend: %v", err)
 	}
 	if !reflect.DeepEqual(inbound.localBypassRules.policy, next) {
@@ -378,13 +391,13 @@ func TestApplyBypassCIDRPolicySucceedsAcrossRealBackends(t *testing.T) {
 // attempt.
 func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *testing.T) {
 	tc := newLoopbackTestTCBackend(t)
-	inbound := &Inbound{}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign}
 	inbound.logger = log.NewNOPFactory().Logger()
 	inbound.tcDataPlane = newUnstartedTCRuntime(tc)
 	inbound.setCgroupBackend(&commonEBPF.CgroupBackend{}) // zero value: never usable
 
 	first := bypassPolicyFor(t, netip.MustParsePrefix("10.0.0.0/8"))
-	if err := inbound.applyBypassCIDRPolicyLocked(first); err == nil {
+	if err := applyTestPolicyBackends(inbound, first); err == nil {
 		t.Fatal("apply succeeded despite the cgroup backend being permanently unusable")
 	}
 	if inbound.localBypassRules.expectedVersion != 1 {
@@ -403,7 +416,7 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 	// the expected version again right away, proving a retry firing after
 	// this point would chase this newer content, not the first attempt's.
 	second := bypassPolicyFor(t, netip.MustParsePrefix("172.16.0.0/12"))
-	if err := inbound.applyBypassCIDRPolicyLocked(second); err == nil {
+	if err := applyTestPolicyBackends(inbound, second); err == nil {
 		t.Fatal("apply succeeded despite the cgroup backend being permanently unusable")
 	}
 	if inbound.localBypassRules.expectedVersion != 2 {
@@ -423,7 +436,7 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 	// latest content, not the first, now-superseded one, and must catch
 	// bypassRuleSetPolicyVersion up to bypassRuleSetExpectedVersion exactly.
 	inbound.setCgroupBackend(nil)
-	if err := inbound.applyBypassCIDRPolicyLocked(second); err != nil {
+	if err := applyTestPolicyBackends(inbound, second); err != nil {
 		t.Fatalf("retry of the latest expected content: %v", err)
 	}
 	if inbound.localBypassRules.policyVersion != inbound.localBypassRules.expectedVersion {
@@ -451,7 +464,7 @@ func TestBypassRuleSetExpectedVersionTracksTheLatestAttemptEvenOnFailure(t *test
 // would otherwise sit unnoticed for up to ten minutes, not the seconds
 // -scale exponential backoff every other TC failure in this package gets.
 func TestUpdateBypassRuleSetWakesTheSchedulerOnFailure(t *testing.T) {
-	inbound := &Inbound{localBypassRules: bypassRuleSetState{started: true}}
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneSocketAssign, localBypassRules: bypassRuleSetState{started: true}}
 	inbound.logger = log.NewNOPFactory().Logger()
 	inbound.tcDataPlane = newUnstartedTCRuntime(&commonEBPF.TCBackend{}) // zero value: never usable
 	inbound.interfaceMonitor.network = &testNetworkUpdateMonitor{}

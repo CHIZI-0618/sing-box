@@ -46,19 +46,19 @@ type bypassCIDRAppliedBackend struct {
 func (i *Inbound) policyBackends(shared bool) []bypassPolicyBackend {
 	var targets []bypassPolicyBackend
 	if shared {
-		if backend := i.tcBackend(); backend != nil {
+		if backend := i.tcBackend(); i.sharedSocketAssignEnabled() && backend != nil {
 			targets = append(targets, bypassPolicyBackend{"TC", backend.UpdateSharedDestinationDecisions, backend.RequiresRebuild, &i.sharedBypassRules.tc})
 		}
-		if runtime := i.sharedRewriteInstance(); runtime != nil {
+		if runtime := i.sharedRewriteInstance(); i.sharedRewriteEnabled() && runtime != nil {
 			if backend := runtime.sharedBackendInstance(); backend != nil {
 				targets = append(targets, bypassPolicyBackend{"packet_rewrite", backend.UpdateDestinationDecisions, backend.RequiresRebuild, &i.sharedBypassRules.shared})
 			}
 		}
 	} else {
-		if backend := i.tcBackend(); backend != nil {
+		if backend := i.tcBackend(); i.localSocketAssignEnabled() && backend != nil {
 			targets = append(targets, bypassPolicyBackend{"TC", backend.UpdateLocalDestinationDecisions, backend.RequiresRebuild, &i.localBypassRules.tc})
 		}
-		if backend := i.cgroupBackendInstance(); backend != nil {
+		if backend := i.cgroupBackendInstance(); i.localCgroupEnabled() && backend != nil {
 			targets = append(targets, bypassPolicyBackend{"cgroup", backend.UpdateDestinationDecisions, backend.RequiresRebuild, &i.localBypassRules.cgroup})
 		}
 	}
@@ -217,12 +217,16 @@ func (i *Inbound) applySharedBypassCIDRPolicyLocked(policy []commonEBPF.CIDRDeci
 }
 func (i *Inbound) applyRuleSetPolicyLocked(shared bool, policy []commonEBPF.CIDRDecision) error {
 	state, name, _ := i.ruleSetScope(shared)
+	return i.applyRuleSetPolicyToBackends(state, name, policy, i.policyBackends(shared))
+}
+
+func (i *Inbound) applyRuleSetPolicyToBackends(state *bypassRuleSetState, name string, policy []commonEBPF.CIDRDecision, targets []bypassPolicyBackend) error {
 	if !reflect.DeepEqual(state.expectedPolicy, policy) {
 		state.expectedVersion++
 	}
 	state.expectedPolicy = policy
 	var applied []bypassCIDRAppliedBackend
-	for _, backend := range i.policyBackends(shared) {
+	for _, backend := range targets {
 		if _, err := backend.apply(policy); err != nil {
 			if backend.requiresRebuild() {
 				backend.state.known = false
