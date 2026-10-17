@@ -37,7 +37,7 @@ func TestLegacyTCNameRequiresMigration(t *testing.T) {
 }
 
 func TestLocalPolicyDoesNotUpdateSharedRewrite(t *testing.T) {
-	i := &Inbound{}
+	i := &Inbound{sharedEnabled: true, sharedDataPlane: sharedDataPlanePacketRewrite}
 	i.setSharedRewrite(&sharedRewrite{dataPlane: &testSharedKernelRuntime{backend: &commonEBPF.SharedPacketRewriteBackend{}}})
 	// A closed shared backend must not participate in a local transaction.
 	if err := i.applyBypassCIDRPolicyLocked(nil); err != nil {
@@ -60,5 +60,42 @@ func TestUnusedUDPNATIsInert(t *testing.T) {
 	}
 	if service.diagnostics().ActiveSessions != 0 {
 		t.Fatal("nil service reports sessions")
+	}
+}
+
+func TestPolicyTargetsFollowSelectedScope(t *testing.T) {
+	for _, local := range []string{localDataPlaneCgroup, localDataPlaneSocketAssign} {
+		for _, shared := range []string{sharedDataPlanePacketRewrite, sharedDataPlaneSocketAssign} {
+			for _, localEnabled := range []bool{false, true} {
+				for _, sharedEnabled := range []bool{false, true} {
+					i := &Inbound{localEnabled: localEnabled, localDataPlane: local, sharedEnabled: sharedEnabled, sharedDataPlane: shared}
+					i.tcDataPlane = newUnstartedTCRuntime(&commonEBPF.TCBackend{})
+					i.setCgroupBackend(&commonEBPF.CgroupBackend{})
+					i.setSharedRewrite(&sharedRewrite{dataPlane: &testSharedKernelRuntime{backend: &commonEBPF.SharedPacketRewriteBackend{}}})
+					for _, scope := range []bool{false, true} {
+						targets := i.policyBackends(scope)
+						enabled, want := localEnabled, "cgroup"
+						if local == localDataPlaneSocketAssign {
+							want = "TC"
+						}
+						if scope {
+							enabled, want = sharedEnabled, "packet_rewrite"
+							if shared == sharedDataPlaneSocketAssign {
+								want = "TC"
+							}
+						}
+						if !enabled {
+							if len(targets) != 0 {
+								t.Fatal("disabled scope has policy targets")
+							}
+							continue
+						}
+						if len(targets) != 1 || targets[0].name != want {
+							t.Fatalf("local=%s shared=%s scope=%v: targets=%v, want %s", local, shared, scope, targets, want)
+						}
+					}
+				}
+			}
+		}
 	}
 }
