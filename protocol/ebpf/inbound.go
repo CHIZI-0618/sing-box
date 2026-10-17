@@ -78,6 +78,9 @@ type Inbound struct {
 	processInfoCache          *processInfoCache
 	usePlatformProcessFinder  bool
 	listeners                 internalListenerSet
+	tcListeners               internalListenerSet
+	tcNamespace               *tcNamespace
+	tcNamespaceAccess         sync.RWMutex
 	udpNat                    *udpNATService
 	tcDataPlane               tcRuntime
 	udpTimeout                time.Duration

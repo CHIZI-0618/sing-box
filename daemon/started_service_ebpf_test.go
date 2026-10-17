@@ -112,7 +112,9 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 				SharedExpected:  21,
 				Converged:       false,
 			},
-			Counters: adapter.EBPFCounters{TCSharedFragmentPasses: 9},
+			TCNetworkNamespace: "/proc/42/fd/7",
+			Counters: adapter.EBPFCounters{TCSharedFragmentPasses: 9,
+				TCReturnUpdateFailures: 2, TCReturnConflicts: 3, TCReturnLookupFailures: 4},
 			UDPNAT: adapter.EBPFUDPNATDiagnostics{
 				ActiveSessions:           3,
 				CreatedSessions:          7,
@@ -179,6 +181,10 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 		diagnostics.PolicyEpoch.LocalExpected != 12 || diagnostics.PolicyEpoch.SharedConfirmed != 21 ||
 		diagnostics.PolicyEpoch.SharedExpected != 21 || diagnostics.PolicyEpoch.Converged {
 		t.Fatalf("policy epoch diagnostics = %+v", diagnostics.PolicyEpoch)
+	}
+	if diagnostics.TcNetworkNamespace != "/proc/42/fd/7" || diagnostics.Counters.TcReturnUpdateFailures != 2 ||
+		diagnostics.Counters.TcReturnConflicts != 3 || diagnostics.Counters.TcReturnLookupFailures != 4 {
+		t.Fatalf("isolated TC diagnostics = %+v", diagnostics)
 	}
 	if response.KernelRuntime == nil || len(response.KernelRuntime.Programs) != 1 ||
 		response.KernelRuntime.Programs[0].Id != 42 || response.KernelRuntime.MapOccupancy == nil ||

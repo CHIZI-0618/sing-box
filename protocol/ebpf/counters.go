@@ -26,6 +26,9 @@ type EBPFCounters struct {
 	TCSocketLookupFailures     uint64 `json:"tc_socket_lookup_failures"`
 	TCSKAssignFailures         uint64 `json:"tc_sk_assign_failures"`
 	TCAssignmentUpdateFailures uint64 `json:"tc_assignment_update_failures"`
+	TCReturnUpdateFailures     uint64 `json:"tc_return_update_failures"`
+	TCReturnConflicts          uint64 `json:"tc_return_conflicts"`
+	TCReturnLookupFailures     uint64 `json:"tc_return_lookup_failures"`
 	TCLocalFragmentPasses      uint64 `json:"tc_local_fragment_passes"`
 	TCSharedFragmentPasses     uint64 `json:"tc_shared_fragment_passes"`
 	// Native packet-rewrite counters are zero when that backend is disabled.
