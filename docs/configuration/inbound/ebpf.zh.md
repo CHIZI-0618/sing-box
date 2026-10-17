@@ -95,7 +95,7 @@ hook，无法响应本机 ICMP；local `socket_assign` 和两种 shared 数据�
 
 `cgroup` 与 `packet_rewrite` 面向兼容性；`socket_assign` 面向较高内核能力，
 仍属实验性路径，TCP **和** UDP 都在私有网络命名空间中保持原始 tuple。
-旧配置中的 local `socket_assign` 必须改为 `socket_assign`，不保留别名。
+旧配置中的 local `tc` 必须改为 `socket_assign`，不保留别名。
 
 | Local | Shared | 使用的机制 |
 | --- | --- | --- |
