@@ -23,6 +23,20 @@ type captureLogger struct {
 	infoMessages  []string
 }
 
+func TestStructuredEBPFEventIsJSON(t *testing.T) {
+	message := ebpfStructuredEvent("tc_runtime", map[string]any{
+		"network": "tcp,udp",
+		"count":   2,
+	})
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(message), &decoded); err != nil {
+		t.Fatalf("structured event is not JSON: %v", err)
+	}
+	if decoded["event"] != "tc_runtime" || decoded["network"] != "tcp,udp" {
+		t.Fatalf("unexpected structured event: %v", decoded)
+	}
+}
+
 func (l *captureLogger) Trace(args ...any) {}
 func (l *captureLogger) Debug(args ...any) {
 	var builder strings.Builder
@@ -33,7 +47,15 @@ func (l *captureLogger) Debug(args ...any) {
 	}
 	l.debugMessages = append(l.debugMessages, builder.String())
 }
-func (l *captureLogger) Info(args ...any)  { l.infoMessages = append(l.infoMessages, "called") }
+func (l *captureLogger) Info(args ...any) {
+	var builder strings.Builder
+	for _, arg := range args {
+		if text, ok := arg.(string); ok {
+			builder.WriteString(text)
+		}
+	}
+	l.infoMessages = append(l.infoMessages, builder.String())
+}
 func (l *captureLogger) Warn(args ...any)  {}
 func (l *captureLogger) Error(args ...any) {}
 func (l *captureLogger) Fatal(args ...any) {}
@@ -473,7 +495,7 @@ func TestDiagnosticsWriteTextIncludesTheKeyFields(t *testing.T) {
 }
 
 // TestLogStartupSummaryNamesEachRequiredFact checks enabled paths, mounts,
-// waiting interfaces, and FakeIP coverage in the single Debug line.
+// waiting interfaces, and FakeIP coverage in the single Info line.
 func TestLogStartupSummaryNamesEachRequiredFact(t *testing.T) {
 	logger := &captureLogger{}
 	inbound := &Inbound{
@@ -484,11 +506,11 @@ func TestLogStartupSummaryNamesEachRequiredFact(t *testing.T) {
 	}
 	inbound.logStartupSummary()
 
-	if len(logger.debugMessages) != 1 || len(logger.infoMessages) != 0 {
-		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=1 Info=0", len(logger.debugMessages), len(logger.infoMessages))
+	if len(logger.debugMessages) != 0 || len(logger.infoMessages) != 1 {
+		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=0 Info=1", len(logger.debugMessages), len(logger.infoMessages))
 	}
-	message := logger.debugMessages[0]
-	for _, want := range []string{"local=socket_assign", "waiting_for_interface=[local]", "fakeip_icmp=[enabled, not yet covering any attachment]"} {
+	message := logger.infoMessages[0]
+	for _, want := range []string{`"event":"inbound_start"`, `"state":"waiting_for_interface"`, `"configured_paths":["local=socket_assign"]`, `"waiting_paths":["local"]`, `"fakeip_icmp":"enabled, not yet covering any attachment"`} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("summary %q missing %q", message, want)
 		}
@@ -517,11 +539,11 @@ func TestLogStartupSummaryReportsAnActualAttachmentAndItsFakeIPICMPCoverage(t *t
 	}
 	inbound.logStartupSummary()
 
-	if len(logger.debugMessages) != 1 || len(logger.infoMessages) != 0 {
-		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=1 Info=0", len(logger.debugMessages), len(logger.infoMessages))
+	if len(logger.debugMessages) != 0 || len(logger.infoMessages) != 1 {
+		t.Fatalf("log calls: Debug=%d Info=%d, want Debug=0 Info=1", len(logger.debugMessages), len(logger.infoMessages))
 	}
-	message := logger.debugMessages[0]
-	for _, want := range []string{"mounts=[eth0(local,tcx)]", "waiting_for_interface=[none]", "fakeip_icmp=[eth0(local)]"} {
+	message := logger.infoMessages[0]
+	for _, want := range []string{`"active_attachments":[{"interface":"eth0"`, `"mechanism":"tcx"`, `"waiting_paths":[]`, `"fakeip_icmp":"eth0(local)"`} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("summary %q missing %q", message, want)
 		}

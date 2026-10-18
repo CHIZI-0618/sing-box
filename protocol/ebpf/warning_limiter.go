@@ -19,6 +19,32 @@ type warningLimiter struct {
 	lastAt      time.Time
 }
 
+// stateTracker suppresses repeated messages for a condition whose state has
+// not changed. It is intentionally separate from warningLimiter: a warning
+// limiter emits periodic reminders, while a topology state transition should
+// normally emit one warning and one recovery event only.
+type stateTracker struct {
+	access sync.Mutex
+	state  string
+}
+
+func (t *stateTracker) transition(state string) (previous string, changed bool) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	previous = t.state
+	if previous == state {
+		return previous, false
+	}
+	t.state = state
+	return previous, true
+}
+
+func (t *stateTracker) reset() {
+	t.access.Lock()
+	t.state = ""
+	t.access.Unlock()
+}
+
 func (l *warningLimiter) allow(now time.Time) (bool, uint64) {
 	l.access.Lock()
 	defer l.access.Unlock()
@@ -105,11 +131,12 @@ type udpWarningLimiters struct {
 }
 
 type interfaceWarningLimiters struct {
-	inventory        warningLimiter
-	defaultInterface warningLimiter
-	topology         warningLimiter
-	infrastructure   warningLimiter
-	hostPolicy       warningLimiter
-	reconcile        warningLimiter
-	fakeIPICMPRoute  warningLimiter
+	inventory             warningLimiter
+	defaultInterface      warningLimiter
+	defaultInterfaceState stateTracker
+	topology              warningLimiter
+	infrastructure        warningLimiter
+	hostPolicy            warningLimiter
+	reconcile             warningLimiter
+	fakeIPICMPRoute       warningLimiter
 }

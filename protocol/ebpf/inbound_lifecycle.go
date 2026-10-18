@@ -4,11 +4,10 @@ package ebpf
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"runtime"
-	"strconv"
-	"strings"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	"github.com/sagernet/sing-box/adapter"
@@ -49,6 +48,7 @@ func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (i *Inbound) startInbound() error {
+	i.interfaceWarnings.defaultInterfaceState.reset()
 	if err := i.closeTCDataPlane(); err != nil {
 		return E.Cause(err, "reclaim previous TC data plane")
 	}
@@ -76,9 +76,6 @@ func (i *Inbound) startInbound() error {
 	sharedRewriteEnabled := i.sharedRewriteEnabled()
 	if localSocketAssignEnabled {
 		localInterface = defaultInterface
-		if localInterface == "" {
-			i.logger.Warn("default interface unavailable; local TC eBPF interception is paused")
-		}
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
 	tcSharedInterfaces := []string(nil)
@@ -208,22 +205,10 @@ func (i *Inbound) startInbound() error {
 	} else if i.enableUDP {
 		network = "udp"
 	}
+	if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
+		i.logCgroupRuntime(network, cgroupBackend)
+	}
 	if dataPlane == nil && i.sharedRewriteInstance() == nil {
-		cgroupBackend := i.cgroupBackendInstance()
-		i.logger.Debug(
-			"eBPF cgroup active: network=", network,
-			", cgroup=", cgroupBackend.CgroupPath(),
-			", ipv6=", i.cgroupIPv6Enabled(),
-			", listeners=[", i.listeners.String(), "]",
-			", udp_cleanup=", cgroupBackend.UDPCleanupMode(),
-			", udp_time=", cgroupBackend.UDPTimeMode(),
-			", udp_storage=", cgroupBackend.UDPStorageMode(),
-			", userspace_udp_cleanup=", cgroupBackend.UDPUserspaceCleanupMode(),
-			", local_uid_include=", formatUIDRanges(i.localPolicy.IncludeUID),
-			", local_uid_exclude=", formatUIDRanges(i.localPolicy.ExcludeUID),
-			", self_bypass=", i.selfBypassMode(),
-			", process_tracking=", i.processTrackingMode(),
-		)
 		i.logStartupSummary()
 		return nil
 	}
@@ -231,115 +216,111 @@ func (i *Inbound) startInbound() error {
 	if dataPlane != nil {
 		tcNetworkInfo = dataPlane.NetworkInfo()
 	}
-	i.logger.Debug(
-		"eBPF TC active: local_data_plane=", func() string {
+	tcFields := map[string]any{
+		"local_data_plane": func() string {
 			if !i.localEnabled {
 				return "off"
 			}
 			return i.localDataPlane
 		}(),
-		", local_cgroup=", func() string {
-			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
-				return cgroupBackend.CgroupPath()
-			}
-			return ""
-		}(),
-		", local_cgroup_udp_time=", func() string {
-			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
-				return cgroupBackend.UDPTimeMode()
-			}
-			return "disabled"
-		}(),
-		", local_cgroup_udp_cleanup=", func() string {
-			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
-				return cgroupBackend.UDPCleanupMode()
-			}
-			return "disabled"
-		}(),
-		", local_cgroup_udp_storage=", func() string {
-			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
-				return cgroupBackend.UDPStorageMode()
-			}
-			return "disabled"
-		}(),
-		", local_cgroup_userspace_udp_cleanup=", func() string {
-			if cgroupBackend := i.cgroupBackendInstance(); cgroupBackend != nil {
-				return cgroupBackend.UDPUserspaceCleanupMode()
-			}
-			return "deadline"
-		}(),
-		", shared_data_plane=", func() string {
+		"shared_data_plane": func() string {
 			if !i.sharedEnabled {
 				return "off"
 			}
 			return i.sharedDataPlane
 		}(),
-		", network=", network,
-		", local_ipv6=", i.localIPv6,
-		", shared_ipv6=", i.sharedIPv6,
-		", default_interface=", defaultInterface,
-		", local_interface=", localInterface,
-		", shared_interfaces=[", strings.Join(i.sharedOptions.Interface, ", "), "]",
-		", attachments=[", func() string {
-			var attachments []string
-			if dataPlane != nil {
-				attachments = append(attachments, dataPlane.AttachmentDescriptions()...)
-			}
-			if shared := i.sharedRewriteInstance(); shared != nil {
-				if sharedDataPlane := shared.dataPlaneInstance(); sharedDataPlane != nil {
-					attachments = append(attachments, sharedDataPlane.AttachmentDescriptions()...)
-				}
-			}
-			return strings.Join(attachments, ", ")
-		}(), "]",
-		", cgroup_listeners=[", i.listeners.String(), "]",
-		", tc_listeners=[", i.tcListeners.String(), "]",
-		", tc_namespace=", tcNetworkInfo.Namespace,
-		", local_uid_include=", formatUIDRanges(i.localPolicy.IncludeUID),
-		", local_uid_exclude=", formatUIDRanges(i.localPolicy.ExcludeUID),
-		", shared_rewrite_listeners=[", func() string {
-			shared := i.sharedRewriteInstance()
-			if shared == nil {
-				return ""
-			}
-			return shared.listeners.String()
-		}(), "]",
-		", tcp_listener_lookup=", func() string {
-			if backend == nil {
-				return "none"
-			}
-			return backend.TCPListenerLookupMode()
-		}(),
-		", delivery_interface=", func() string {
-			return tcNetworkInfo.DeliveryInterface
-		}(),
-		", routing_mark=", func() string {
-			if tcNetworkInfo.RoutingMark == 0 {
-				return ""
-			}
-			return "0x" + strconv.FormatUint(uint64(tcNetworkInfo.RoutingMark), 16)
-		}(),
-		", routing_table=", func() string {
-			if tcNetworkInfo.RoutingTable == 0 {
-				return ""
-			}
-			return strconv.Itoa(tcNetworkInfo.RoutingTable)
-		}(),
-		", routing_priority=", func() string {
-			if tcNetworkInfo.RoutingPriority == 0 {
-				return ""
-			}
-			return strconv.Itoa(tcNetworkInfo.RoutingPriority)
-		}(),
-		", self_bypass=", i.selfBypassMode(),
-		", process_tracking=", i.processTrackingMode(),
-		", tc_priority=", i.tcPriority,
-	)
+		"network":          network,
+		"local_ipv6":       i.localIPv6,
+		"shared_ipv6":      i.sharedIPv6,
+		"self_bypass":      i.selfBypassMode(),
+		"process_tracking": i.processTrackingMode(),
+		"tc_priority":      i.tcPriority,
+	}
+	if defaultInterface != "" {
+		tcFields["default_interface"] = defaultInterface
+	}
+	if localInterface != "" {
+		tcFields["local_interface"] = localInterface
+	}
+	if len(i.sharedOptions.Interface) > 0 {
+		tcFields["shared_interfaces"] = i.sharedOptions.Interface
+	}
+	if listeners := i.tcListeners.String(); listeners != "" {
+		tcFields["tc_listeners"] = listeners
+	}
+	var attachments []commonEBPF.AttachmentInfo
+	if dataPlane != nil {
+		attachments = append(attachments, dataPlane.AttachmentDiagnostics()...)
+	}
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		if sharedDataPlane := shared.dataPlaneInstance(); sharedDataPlane != nil {
+			attachments = append(attachments, sharedDataPlane.AttachmentDiagnostics()...)
+		}
+	}
+	if len(attachments) > 0 {
+		tcFields["attachments"] = attachments
+	}
+	if shared := i.sharedRewriteInstance(); shared != nil {
+		if listeners := shared.listeners.String(); listeners != "" {
+			tcFields["shared_rewrite_listeners"] = listeners
+		}
+	}
+	if backend != nil {
+		tcFields["tcp_listener_lookup"] = backend.TCPListenerLookupMode()
+	}
+	if tcNetworkInfo.Namespace != "" {
+		tcFields["tc_namespace"] = "owned"
+	}
+	if tcNetworkInfo.DeliveryInterface != "" {
+		tcFields["delivery_interface"] = tcNetworkInfo.DeliveryInterface
+	}
+	if tcNetworkInfo.RoutingMark != 0 {
+		tcFields["routing_mark"] = fmt.Sprintf("0x%x", tcNetworkInfo.RoutingMark)
+	}
+	if tcNetworkInfo.RoutingTable != 0 {
+		tcFields["routing_table"] = tcNetworkInfo.RoutingTable
+	}
+	if tcNetworkInfo.RoutingPriority != 0 {
+		tcFields["routing_priority"] = tcNetworkInfo.RoutingPriority
+	}
+	i.logger.Debug("eBPF ", ebpfStructuredEvent("tc_runtime", tcFields))
 	if i.enableUDP && (i.localSocketAssignEnabled() || i.sharedSocketAssignEnabled()) {
 		i.udpReplySockets.startSweeper(i.ctx)
 	}
 	i.logStartupSummary()
 	return nil
+}
+
+// logCgroupRuntime records only cgroup-specific state. Keeping this separate
+// from tc_runtime makes hybrid configurations readable and avoids repeating
+// the same fields for every attached TC interface.
+func (i *Inbound) logCgroupRuntime(network string, backend *commonEBPF.CgroupBackend) {
+	if backend == nil {
+		return
+	}
+	fields := map[string]any{
+		"network":               network,
+		"ipv6":                  i.cgroupIPv6Enabled(),
+		"udp_cleanup":           backend.UDPCleanupMode(),
+		"udp_time":              backend.UDPTimeMode(),
+		"udp_storage":           backend.UDPStorageMode(),
+		"userspace_udp_cleanup": backend.UDPUserspaceCleanupMode(),
+		"self_bypass":           i.selfBypassMode(),
+		"process_tracking":      i.processTrackingMode(),
+	}
+	if cgroup := backend.CgroupPath(); cgroup != "" {
+		fields["cgroup"] = cgroup
+	}
+	if listeners := i.listeners.String(); listeners != "" {
+		fields["listeners"] = listeners
+	}
+	if len(i.localPolicy.IncludeUID) > 0 {
+		fields["uid_include"] = formatUIDRanges(i.localPolicy.IncludeUID)
+	}
+	if len(i.localPolicy.ExcludeUID) > 0 {
+		fields["uid_exclude"] = formatUIDRanges(i.localPolicy.ExcludeUID)
+	}
+	i.logger.Debug("eBPF ", ebpfStructuredEvent("cgroup_runtime", fields))
 }
 
 func (i *Inbound) startProcessTracker() error {
