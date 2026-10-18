@@ -7917,6 +7917,7 @@ type EBPFInboundDiagnostics struct {
 	TcAssignmentSweepUsageKnown   bool                           `protobuf:"varint,78,opt,name=tcAssignmentSweepUsageKnown,proto3" json:"tcAssignmentSweepUsageKnown,omitempty"`
 	TcReturnSweepUsageKnown       bool                           `protobuf:"varint,79,opt,name=tcReturnSweepUsageKnown,proto3" json:"tcReturnSweepUsageKnown,omitempty"`
 	TcAssignmentSweepFailureMap   string                         `protobuf:"bytes,80,opt,name=tcAssignmentSweepFailureMap,proto3" json:"tcAssignmentSweepFailureMap,omitempty"`
+	TcRoutingSlot                 int32                          `protobuf:"varint,81,opt,name=tcRoutingSlot,proto3" json:"tcRoutingSlot,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -8462,6 +8463,13 @@ func (x *EBPFInboundDiagnostics) GetTcAssignmentSweepFailureMap() string {
 	return ""
 }
 
+func (x *EBPFInboundDiagnostics) GetTcRoutingSlot() int32 {
+	if x != nil {
+		return x.TcRoutingSlot
+	}
+	return 0
+}
+
 type EBPFAttachmentDiagnostics struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InterfaceName  string                 `protobuf:"bytes,1,opt,name=interfaceName,proto3" json:"interfaceName,omitempty"`
@@ -8470,6 +8478,7 @@ type EBPFAttachmentDiagnostics struct {
 	Framing        string                 `protobuf:"bytes,4,opt,name=framing,proto3" json:"framing,omitempty"`
 	Mechanism      string                 `protobuf:"bytes,5,opt,name=mechanism,proto3" json:"mechanism,omitempty"`
 	IcmpEchoReply  bool                   `protobuf:"varint,6,opt,name=icmpEchoReply,proto3" json:"icmpEchoReply,omitempty"`
+	Slot           int32                  `protobuf:"varint,7,opt,name=slot,proto3" json:"slot,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -8544,6 +8553,13 @@ func (x *EBPFAttachmentDiagnostics) GetIcmpEchoReply() bool {
 		return x.IcmpEchoReply
 	}
 	return false
+}
+
+func (x *EBPFAttachmentDiagnostics) GetSlot() int32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
 }
 
 type EBPFBypassRuleSetBackendState struct {
@@ -9781,7 +9797,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x05error\x18\n" +
 	" \x01(\tR\x05error\x12\x1a\n" +
 	"\bpressure\x18\v \x01(\tR\bpressure\x12\x1a\n" +
-	"\bcategory\x18\f \x01(\tR\bcategory\"\xd9\x1f\n" +
+	"\bcategory\x18\f \x01(\tR\bcategory\"\xff\x1f\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9858,7 +9874,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x14tcReturnSweepRemoved\x18M \x01(\x04R\x14tcReturnSweepRemoved\x12@\n" +
 	"\x1btcAssignmentSweepUsageKnown\x18N \x01(\bR\x1btcAssignmentSweepUsageKnown\x128\n" +
 	"\x17tcReturnSweepUsageKnown\x18O \x01(\bR\x17tcReturnSweepUsageKnown\x12@\n" +
-	"\x1btcAssignmentSweepFailureMap\x18P \x01(\tR\x1btcAssignmentSweepFailureMapB\x0e\n" +
+	"\x1btcAssignmentSweepFailureMap\x18P \x01(\tR\x1btcAssignmentSweepFailureMap\x12$\n" +
+	"\rtcRoutingSlot\x18Q \x01(\x05R\rtcRoutingSlotB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
@@ -9866,14 +9883,15 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x12_tcLastReconcileAtB\x1a\n" +
 	"\x18_tcAssignmentSweepLastAtB\x1d\n" +
 	"\x1b_tcAssignmentSweepPartialAtB \n" +
-	"\x1e_cgroupRecoveryQueueOverflowAtJ\x04\b\x01\x10\x02\"\xdb\x01\n" +
+	"\x1e_cgroupRecoveryQueueOverflowAtJ\x04\b\x01\x10\x02\"\xef\x01\n" +
 	"\x19EBPFAttachmentDiagnostics\x12$\n" +
 	"\rinterfaceName\x18\x01 \x01(\tR\rinterfaceName\x12&\n" +
 	"\x0einterfaceIndex\x18\x02 \x01(\x05R\x0einterfaceIndex\x12\x12\n" +
 	"\x04role\x18\x03 \x01(\tR\x04role\x12\x18\n" +
 	"\aframing\x18\x04 \x01(\tR\aframing\x12\x1c\n" +
 	"\tmechanism\x18\x05 \x01(\tR\tmechanism\x12$\n" +
-	"\ricmpEchoReply\x18\x06 \x01(\bR\ricmpEchoReply\"O\n" +
+	"\ricmpEchoReply\x18\x06 \x01(\bR\ricmpEchoReply\x12\x12\n" +
+	"\x04slot\x18\a \x01(\x05R\x04slot\"O\n" +
 	"\x1dEBPFBypassRuleSetBackendState\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x14\n" +
 	"\x05known\x18\x02 \x01(\bR\x05known\"\x98\x03\n" +

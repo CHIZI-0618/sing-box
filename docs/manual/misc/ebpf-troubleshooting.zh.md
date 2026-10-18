@@ -103,7 +103,7 @@ local/shared 角色和帧格式。网络事件仅在 attachment 或受管
 
 ### 解读 `sing-box api ebpf`
 
-Schema 17 将轻量状态与深度检查分开。用 `sing-box api ebpf --deep` 或 dashboard
+Schema 18 将轻量状态与深度检查分开。用 `sing-box api ebpf --deep` 或 dashboard
 的“深度检查所属 Map”枚举内核资源。每个 inbound 有自己的 `kernelRuntime`，
 顶层仅为去重汇总，不能把它的压力归到所有 inbound。深度快照按需读取，最多缓存 5 秒。
 
@@ -132,10 +132,14 @@ local cgroup 还应记录 API 返回的实际运行字段：`local_cgroup_attach
 
 local socket assignment 或 shared `socket_assign` 启用时，API 还会返回 `tc_*` 运行态字段：实际
 `tcx`/`clsact`/`mixed` 挂载机制、TCP listener 的 `sockmap`/`direct` 查找方式、delivery
-接口及其 ifindex、策略路由 mark/table/priority、活动和待回收资源数量、健康状态、最近
+接口及其 ifindex、策略路由 mark/table/priority 与 TC 路由槽位、活动和待回收资源数量、健康状态、最近
 health check/reconcile 时间以及网络代数。它们来自运行中的资源快照，不是按内核版本推测；
 `tc_network_generation` 在受管网络切换时递增，可用于把切换前后的连接和计数分开分析。
 这些字段不会触发逐包统计、map 全量扫描或新的后台定时器。
+
+当多个 sing-ebpf runtime 共享同一接口时，`attachments[].slot` 和
+`tc_routing_slot` 用于区分实例持有的 TC attachment 与策略路由分配。它们只用于诊断，
+不是稳定的配置值，重启后可能被重新分配。
 
 计数器通常在当前进程或缓存生命周期内累计。应在一个小规模受控测试前后各取快照，
 不要脱离时间窗口解释单个大数值：

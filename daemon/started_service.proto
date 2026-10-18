@@ -930,6 +930,7 @@ message EBPFInboundDiagnostics {
   bool tcAssignmentSweepUsageKnown = 78;
   bool tcReturnSweepUsageKnown = 79;
   string tcAssignmentSweepFailureMap = 80;
+  int32 tcRoutingSlot = 81;
 }
 
 message EBPFAttachmentDiagnostics {
@@ -939,6 +940,7 @@ message EBPFAttachmentDiagnostics {
   string framing = 4;
   string mechanism = 5;
   bool icmpEchoReply = 6;
+  int32 slot = 7;
 }
 
 message EBPFBypassRuleSetBackendState {

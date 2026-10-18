@@ -106,6 +106,7 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 		TcRoutingMark:                 source.TCRoutingMark,
 		TcRoutingTable:                int32(source.TCRoutingTable),
 		TcRoutingPriority:             int32(source.TCRoutingPriority),
+		TcRoutingSlot:                 int32(source.TCRoutingSlot),
 		TcAttachmentCount:             int32(source.TCAttachmentCount),
 		TcRetiredAttachmentCount:      int32(source.TCRetiredAttachmentCount),
 		TcRetiredDeliveryCount:        int32(source.TCRetiredDeliveryCount),
@@ -194,6 +195,7 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 			Framing:        attachment.Framing,
 			Mechanism:      attachment.Mechanism,
 			IcmpEchoReply:  attachment.ICMPEchoReply,
+			Slot:           int32(attachment.Slot),
 		})
 	}
 	return destination
