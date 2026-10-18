@@ -226,8 +226,15 @@ local socket assignment 模式挂载到网络管理器当前的默认接口；sh
 loopback 和无法识别的链路封装。
 
 local attachment 会跟随默认接口变化。配置的 shared 接口存在时会自动挂载，但该接口
-作为当前默认上游期间会停止 shared 接管。链路和路由事件会触发受管 attachment 与网络
-状态的检查和修复；低频漂移检查还会修复未产生相应 netlink 通知的内核状态漂移。
+作为当前默认上游期间会停止 shared 接管。`shared.default_interface` 可为客户端入口与默认
+上游共用同一接口的单接口旁路网关显式保留 shared attachment。链路和路由事件会触发受管
+attachment 与网络状态的检查和修复；低频漂移检查还会修复未产生相应 netlink 通知的内核
+状态漂移。
+
+此模式不会增加 BPF helper 或内核版本要求，但宿主仍须另行提供 IP forwarding、同接口
+防火墙转发，并在需要时配置 NAT。它不会把 Wi-Fi STA 变成热点，也无法绕过 AP 的客户端
+隔离。若热点接口的上游是另一个蜂窝或 Wi-Fi 接口，则即使旧设备仍把热点接口命名为
+`wlan0`，它也只是普通下游接口，不需要此模式。
 
 同一时间一个接口只能由一个 sing-box eBPF 入站管理。已有的无关 `clsact` filter
 会保留，但 sing-box filter handle 或接口锁冲突会阻止启动。

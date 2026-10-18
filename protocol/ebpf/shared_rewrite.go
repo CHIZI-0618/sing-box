@@ -141,6 +141,7 @@ func (s *sharedRewrite) sharedRewriteReady(attachments []string) {
 	s.startFlowJanitor()
 	s.inbound.logger.Debug("eBPF ", ebpfStructuredEvent("shared_active", map[string]any{
 		"attachments":            attachments,
+		"default_interface":      s.inbound.sharedOptions.DefaultInterface,
 		"listener_port":          s.listeners.selectedPort(),
 		"dns_mode":               s.inbound.sharedDNSMode,
 		"ipv6":                   s.inbound.sharedRewriteIPv6Enabled(),

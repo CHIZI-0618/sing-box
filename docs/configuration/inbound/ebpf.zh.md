@@ -223,6 +223,24 @@ local 和 shared 的集合完全独立，本机强制接管前缀不会传播到
 
 启用从所配置下游接口进入的流量接管。
 
+### shared.default_interface
+
+允许配置的 shared 接口在同时成为当前默认上游接口时继续保持挂载，默认 `false`。
+
+单接口旁路网关中，客户端和上游路由器位于同一接口，客户端将网关和 DNS 指向本机，此时应启用
+本选项。shared 路径仍然只处理其他设备进入本机的报文；本机流量仍由 `local` 管理。
+local 与 shared 均使用 `socket_assign` 且接口相同时，runtime 会在同一个 attachment 中合并
+egress 与 ingress 角色；shared `packet_rewrite` 则使用独立持有的 TC filter。两种组合都保持
+local 与 shared 策略相互独立。
+
+本选项不会启用 IP forwarding、同接口防火墙转发、NAT、DHCP、IPv6 路由器通告或热点服务。
+尤其是此模式下被 bypass 的 IPv4 流量通常需要 SNAT/masquerade，才能确保回包仍经过本机，
+并避免客户端被重定向到上游路由器。Wi-Fi AP 也必须允许客户端之间通信。
+
+旧 Android 设备在关闭 Wi-Fi 客户端模式后复用 `wlan0` 作为热点时，默认上游通常已经变为
+蜂窝接口，因此 `wlan0` 仍是普通下游接口，一般不需要开启本选项。使用独立 `wlan2`、
+`wlan3` 等热点接口的新设备同样不需要。
+
 ### shared.data_plane
 
 可选 `packet_rewrite`（默认）或 `socket_assign`。`packet_rewrite` 要求以太网帧；
@@ -244,7 +262,8 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 ==启用 shared 接管时必填==
 
 客户端流量进入本机的下游接口，可配置多个。暂不存在的接口会重试；接口成为当前默认
-上游时暂时排除，恢复下游角色后重新接管。不接受 loopback。
+上游时暂时排除，恢复下游角色后重新接管；启用 `shared.default_interface` 后不执行该排除。
+不接受 loopback。
 
 ### shared.ipv6
 

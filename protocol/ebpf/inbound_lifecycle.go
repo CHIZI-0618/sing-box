@@ -77,7 +77,7 @@ func (i *Inbound) startInbound() error {
 	if localSocketAssignEnabled {
 		localInterface = defaultInterface
 	}
-	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
+	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface, i.sharedOptions.DefaultInterface)
 	tcSharedInterfaces := []string(nil)
 	if sharedSocketAssignEnabled {
 		tcSharedInterfaces = sharedInterfaces
@@ -235,6 +235,9 @@ func (i *Inbound) startInbound() error {
 		"self_bypass":      i.selfBypassMode(),
 		"process_tracking": i.processTrackingMode(),
 		"tc_priority":      i.tcPriority,
+	}
+	if i.sharedEnabled {
+		tcFields["shared_default_interface"] = i.sharedOptions.DefaultInterface
 	}
 	if defaultInterface != "" {
 		tcFields["default_interface"] = defaultInterface

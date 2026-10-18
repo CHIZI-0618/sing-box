@@ -923,7 +923,7 @@ func (i *Inbound) waitingAttachmentDiagnostics(attachments []EBPFAttachmentDiagn
 		add("local", defaultInterface)
 	}
 	if i.sharedEnabled && !attachmentHasRole(attachments, "shared") {
-		configured := activeSharedInterfaces(i.sharedOptions.Interface, i.monitoredDefaultInterfaceName())
+		configured := activeSharedInterfaces(i.sharedOptions.Interface, i.monitoredDefaultInterfaceName(), i.sharedOptions.DefaultInterface)
 		if len(configured) == 0 {
 			add("shared", "configured interface")
 		} else {

@@ -242,6 +242,32 @@ Destination port ranges to bypass, in inclusive `start:end` form.
 
 Enables interception of traffic arriving from configured downstream interfaces.
 
+### shared.default_interface
+
+Allows a configured shared interface to remain attached while it is also the
+current default upstream interface. Disabled by default.
+
+Enable this for a single-interface gateway where clients and the upstream
+router share one interface and clients use this host as their gateway and DNS
+server. The shared path still handles only packets arriving from other devices;
+local traffic remains governed by `local`. When local and shared
+`socket_assign` use the same interface, the runtime combines their egress and
+ingress roles in one attachment. Shared `packet_rewrite` instead uses
+independently owned TC filters. Both combinations retain independent local and
+shared policies.
+
+This option does not enable IP forwarding, same-interface firewall forwarding,
+NAT, DHCP, IPv6 router advertisements, or hotspot services. In particular,
+bypassed IPv4 traffic normally needs SNAT/masquerade in this setup so its
+reply returns through this host and the client is not redirected to the upstream
+router. The Wi-Fi access point must also allow communication between clients.
+
+An Android device that reuses `wlan0` for a hotspot while Wi-Fi client mode is
+off usually does not need this option: its default upstream is then a cellular
+interface and `wlan0` is an ordinary downstream interface. Newer devices that
+use `wlan2`, `wlan3`, or another dedicated hotspot interface do not need it
+either.
+
 ### shared.data_plane
 
 `packet_rewrite` (default) or `socket_assign`. `packet_rewrite` requires
@@ -266,8 +292,8 @@ and MAC selection before intercepting port 53.
 
 Downstream interfaces where client traffic enters. Multiple names are allowed.
 Missing interfaces are retried; an interface is excluded while it is the current
-default upstream and restored when it becomes downstream again. Loopback is not
-accepted.
+default upstream and restored when it becomes downstream again, unless
+`shared.default_interface` is enabled. Loopback is not accepted.
 
 ### shared.ipv6
 
