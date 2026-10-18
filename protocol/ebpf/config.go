@@ -254,7 +254,7 @@ func validateSharedOptions(enabled bool, options option.EBPFSharedOptions) error
 	if enabled {
 		return nil
 	}
-	if options.DataPlane != "" || options.DNSMode != "" || len(options.Interface) > 0 || options.IPv6 != nil || options.BypassPrivateAddress != nil ||
+	if options.DefaultInterface || options.DataPlane != "" || options.DNSMode != "" || len(options.Interface) > 0 || options.IPv6 != nil || options.BypassPrivateAddress != nil ||
 		len(options.BypassExclude) > 0 ||
 		len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 		len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0 ||

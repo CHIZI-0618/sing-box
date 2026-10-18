@@ -228,6 +228,9 @@ func TestValidateScopedOptions(t *testing.T) {
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{BypassPrivateAddress: common.Ptr(false)}); err == nil {
 		t.Fatal("expected shared private-address policy to be rejected without shared mode")
 	}
+	if err := validateSharedOptions(false, option.EBPFSharedOptions{DefaultInterface: true}); err == nil {
+		t.Fatal("expected shared default-interface attachment to be rejected without shared mode")
+	}
 }
 
 func TestNormalizeLocalDataPlane(t *testing.T) {

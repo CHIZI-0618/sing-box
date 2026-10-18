@@ -31,7 +31,10 @@ func availableLocalTCInterface(enabled bool, interfaceName string) (string, erro
 	return kernelRuntime.AvailableLocalTCInterface(enabled, interfaceName)
 }
 
-func activeSharedInterfaces(configured []string, defaultInterface string) []string {
+func activeSharedInterfaces(configured []string, defaultInterface string, includeDefaultInterface bool) []string {
+	if includeDefaultInterface {
+		return slices.Clone(configured)
+	}
 	return slices.DeleteFunc(slices.Clone(configured), func(interfaceName string) bool {
 		return interfaceName == defaultInterface
 	})

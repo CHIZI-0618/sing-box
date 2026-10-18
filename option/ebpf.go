@@ -48,6 +48,7 @@ type EBPFLocalOptions struct {
 
 type EBPFSharedOptions struct {
 	Enabled              *bool                            `json:"enabled,omitempty"`
+	DefaultInterface     bool                             `json:"default_interface,omitempty"`
 	DataPlane            string                           `json:"data_plane,omitempty" enum:"socket_assign,packet_rewrite"`
 	DNSMode              string                           `json:"dns_mode,omitempty" enum:"hijack,respect_policy,off"`
 	Interface            badoption.Listable[string]       `json:"interface,omitempty"`

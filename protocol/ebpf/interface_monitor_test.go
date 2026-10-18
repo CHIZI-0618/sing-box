@@ -18,11 +18,17 @@ import (
 
 func TestActiveSharedInterfaces(t *testing.T) {
 	configured := []string{"wlan0", "rndis0"}
-	if active := activeSharedInterfaces(configured, "wlan0"); !slices.Equal(active, []string{"rndis0"}) {
+	if active := activeSharedInterfaces(configured, "wlan0", false); !slices.Equal(active, []string{"rndis0"}) {
 		t.Fatalf("default upstream was not excluded: %v", active)
 	}
-	if active := activeSharedInterfaces(configured, "rmnet_data2"); !slices.Equal(active, configured) {
+	if active := activeSharedInterfaces(configured, "rmnet_data2", false); !slices.Equal(active, configured) {
 		t.Fatalf("downstream interfaces changed unexpectedly: %v", active)
+	}
+	if active := activeSharedInterfaces(configured, "wlan0", true); !slices.Equal(active, configured) {
+		t.Fatalf("enabled default interface was excluded: %v", active)
+	}
+	if active := activeSharedInterfaces(configured, "rmnet_data2", true); !slices.Equal(active, configured) {
+		t.Fatalf("unconfigured cellular default interface changed shared interfaces: %v", active)
 	}
 	if !slices.Equal(configured, []string{"wlan0", "rndis0"}) {
 		t.Fatalf("configured interfaces were modified: %v", configured)

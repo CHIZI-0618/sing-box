@@ -3624,8 +3624,8 @@
         "data_plane": {
           "type": "string",
           "enum": [
-            "tc",
-            "cgroup"
+            "cgroup",
+            "socket_assign"
           ]
         },
         "cgroup_path": {
@@ -3801,6 +3801,9 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "type": "boolean"
+        },
+        "default_interface": {
           "type": "boolean"
         },
         "data_plane": {
