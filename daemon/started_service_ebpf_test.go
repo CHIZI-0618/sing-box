@@ -83,6 +83,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 			Tag:           "ebpf-in",
 			State:         "recovering",
 			LocalEnabled:  true,
+			TCRoutingSlot: 2,
 			LastError:     "attachment missing",
 			LastErrorAt:   &lastErrorAt,
 			Attachments: []adapter.EBPFAttachmentDiagnostics{{
@@ -90,6 +91,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 				InterfaceIndex: 7,
 				Role:           "local",
 				Mechanism:      "tcx",
+				Slot:           2,
 			}},
 			LocalBypassRuleSet: adapter.EBPFBypassRuleSetDiagnostics{
 				Consistent: true,
@@ -169,7 +171,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 	if diagnostics.LastErrorAt == nil || *diagnostics.LastErrorAt != lastErrorAt.UnixMilli() {
 		t.Fatalf("last error timestamp = %v, want %d", diagnostics.LastErrorAt, lastErrorAt.UnixMilli())
 	}
-	if len(diagnostics.Attachments) != 1 || diagnostics.Attachments[0].InterfaceIndex != 7 {
+	if len(diagnostics.Attachments) != 1 || diagnostics.Attachments[0].InterfaceIndex != 7 || diagnostics.Attachments[0].Slot != 2 {
 		t.Fatalf("attachments = %+v", diagnostics.Attachments)
 	}
 	if state := diagnostics.LocalBypassRuleSet.BackendState["TC"]; state == nil || !state.Known || state.Version != 3 {
@@ -193,7 +195,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 		diagnostics.PolicyEpoch.SharedExpected != 21 || diagnostics.PolicyEpoch.Converged {
 		t.Fatalf("policy epoch diagnostics = %+v", diagnostics.PolicyEpoch)
 	}
-	if diagnostics.TcNetworkNamespace != "/proc/42/fd/7" || diagnostics.Counters.TcReturnUpdateFailures != 2 ||
+	if diagnostics.TcNetworkNamespace != "/proc/42/fd/7" || diagnostics.TcRoutingSlot != 2 || diagnostics.Counters.TcReturnUpdateFailures != 2 ||
 		diagnostics.Counters.TcReturnConflicts != 3 || diagnostics.Counters.TcReturnLookupFailures != 4 {
 		t.Fatalf("isolated TC diagnostics = %+v", diagnostics)
 	}

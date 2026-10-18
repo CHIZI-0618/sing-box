@@ -116,7 +116,7 @@ described below.
 
 ### Interpreting `sing-box api ebpf`
 
-Schema 17 separates lightweight status from deep inspection. Use
+Schema 18 separates lightweight status from deep inspection. Use
 `sing-box api ebpf --deep` or the dashboard's **Inspect owned maps** action.
 Each inbound has its own `kernelRuntime`; the top-level section is a
 de-duplicated union, not an inbound's health. Deep snapshots are request-driven
@@ -152,12 +152,17 @@ kernel and security-policy fallbacks; they are not capability guesses.
 When local socket assignment or shared `socket_assign` is enabled, the API also reports `tc_*`
 runtime fields: the effective `tcx`/`clsact`/`mixed` attachment mechanism,
 `sockmap`/`direct` TCP listener lookup, delivery interface and ifindex, policy
-routing mark/table/priority, active and retired resource counts, health state,
+the routing mark/table/priority and TC routing slot, active and retired resource counts, health state,
 the last health-check/reconcile times, and the network generation. These are
 live resource snapshots rather than kernel-version guesses. The network
 generation increments at the managed network-change boundary so before/after
 captures can separate handover effects. Reading these fields does not add
 per-packet counters, full map scans, or a new background timer.
+
+When more than one sing-ebpf runtime shares an interface, `attachments[].slot`
+and `tc_routing_slot` identify the instance-owned TC attachment and policy
+routing allocation. Treat these slots as diagnostic identity only; they are
+not stable configuration values and may be reclaimed after a restart.
 
 Counter values are cumulative for the current process or cache lifetime. Take a
 snapshot immediately before and after a small controlled test instead of

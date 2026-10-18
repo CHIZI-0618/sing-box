@@ -669,3 +669,5 @@ software.sslmate.com/src/go-pkcs12 v0.4.0 h1:H2g08FrTvSFKUj+D309j1DPfk5APnIdAQAB
 software.sslmate.com/src/go-pkcs12 v0.4.0/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=
 zombiezen.com/go/capnproto2 v2.18.2+incompatible h1:v3BD1zbruvffn7zjJUU5Pn8nZAB11bhZSQC4W+YnnKo=
 zombiezen.com/go/capnproto2 v2.18.2+incompatible/go.mod h1:XO5Pr2SbXgqZwn0m0Ru54QBqpOf4K5AYBO+8LAOBQEQ=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261018085551-7bafd3144e48 h1:4IxFHf2cKy/lq6DktoHKXDb+9ieKnUWrE4aqt2mvToc=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261018085551-7bafd3144e48/go.mod h1:b7rNk/53Y/EgvsjncNRs2G7PDiR3h7XZgryP0bk79bQ=

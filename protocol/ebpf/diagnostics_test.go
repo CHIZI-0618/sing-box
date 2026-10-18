@@ -110,6 +110,7 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 		TCRoutingMark:            1 << 29,
 		TCRoutingTable:           2022,
 		TCRoutingPriority:        10000,
+		TCRoutingSlot:            2,
 		TCAttachmentCount:        2,
 		TCRetiredAttachmentCount: 1,
 		TCRetiredDeliveryCount:   1,
@@ -122,7 +123,7 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 	if diagnostics.SchemaVersion != adapter.EBPFDiagnosticsSchemaVersion || diagnostics.TCBackendMode != "socket_assign" ||
 		diagnostics.TCListenerLookupMode != "sockmap" || diagnostics.TCAttachmentMode != "tcx" ||
 		diagnostics.TCDeliveryInterfaceIndex != 42 || diagnostics.TCAttachmentCount != 2 ||
-		diagnostics.TCNetworkGeneration != 3 || diagnostics.TCLastHealthCheckAt == nil ||
+		diagnostics.TCNetworkGeneration != 3 || diagnostics.TCRoutingSlot != 2 || diagnostics.TCLastHealthCheckAt == nil ||
 		!diagnostics.TCLastHealthCheckAt.Equal(observedHealth) || diagnostics.TCLastReconcileAt == nil ||
 		!diagnostics.TCLastReconcileAt.Equal(observedReconcile) {
 		t.Fatalf("effective TC state was not propagated: %+v", diagnostics)
@@ -130,12 +131,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 17 {
-		t.Fatalf("schema version = %d, want 17 after adding map metadata diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 18 {
+		t.Fatalf("schema version = %d, want 18 after adding slot diagnostics", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 17 {
-		t.Fatalf("diagnostics schema version = %d, want 17", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 18 {
+		t.Fatalf("diagnostics schema version = %d, want 18", diagnostics.SchemaVersion)
 	}
 }
 

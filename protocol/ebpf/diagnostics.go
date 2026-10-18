@@ -143,6 +143,7 @@ type EBPFDiagnostics struct {
 	TCRoutingMark                 uint32     `json:"tc_routing_mark,omitempty"`
 	TCRoutingTable                int        `json:"tc_routing_table,omitempty"`
 	TCRoutingPriority             int        `json:"tc_routing_priority,omitempty"`
+	TCRoutingSlot                 int        `json:"tc_routing_slot,omitempty"`
 	TCAttachmentCount             int        `json:"tc_attachment_count,omitempty"`
 	TCRetiredAttachmentCount      int        `json:"tc_retired_attachment_count,omitempty"`
 	TCRetiredDeliveryCount        int        `json:"tc_retired_delivery_count,omitempty"`
@@ -365,6 +366,7 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 			Framing:        attachment.Framing,
 			Mechanism:      attachment.Mechanism,
 			ICMPEchoReply:  attachment.ICMPEchoReply,
+			Slot:           attachment.Slot,
 		})
 	}
 	return adapter.EBPFRuntimeDiagnostics{
@@ -400,6 +402,7 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		TCRoutingMark:                 diagnostics.TCRoutingMark,
 		TCRoutingTable:                diagnostics.TCRoutingTable,
 		TCRoutingPriority:             diagnostics.TCRoutingPriority,
+		TCRoutingSlot:                 diagnostics.TCRoutingSlot,
 		TCAttachmentCount:             diagnostics.TCAttachmentCount,
 		TCRetiredAttachmentCount:      diagnostics.TCRetiredAttachmentCount,
 		TCRetiredDeliveryCount:        diagnostics.TCRetiredDeliveryCount,
@@ -642,6 +645,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		diagnostics.TCRoutingMark = tc.NetworkInfo.RoutingMark
 		diagnostics.TCRoutingTable = tc.NetworkInfo.RoutingTable
 		diagnostics.TCRoutingPriority = tc.NetworkInfo.RoutingPriority
+		diagnostics.TCRoutingSlot = tc.NetworkInfo.RoutingSlot
 		diagnostics.TCAttachmentCount = tc.AttachmentCount
 		diagnostics.TCRetiredAttachmentCount = tc.RetiredAttachmentCount
 		diagnostics.TCRetiredDeliveryCount = tc.RetiredDeliveryCount
@@ -1028,10 +1032,10 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 			lines = append(lines, "TC socket namespace: "+d.TCNetworkNamespace)
 		}
 		lines = append(lines, fmt.Sprintf(
-			"TC runtime: backend=%s listener=%s attachment=%s delivery=%s#%d mark=%d table=%d priority=%d attachments=%d retired_attachments=%d retired_deliveries=%d health=%s generation=%d",
+			"TC runtime: backend=%s listener=%s attachment=%s delivery=%s#%d mark=%d table=%d priority=%d slot=%d attachments=%d retired_attachments=%d retired_deliveries=%d health=%s generation=%d",
 			d.TCBackendMode, d.TCListenerLookupMode, d.TCAttachmentMode,
 			d.TCDeliveryInterface, d.TCDeliveryInterfaceIndex, d.TCRoutingMark,
-			d.TCRoutingTable, d.TCRoutingPriority, d.TCAttachmentCount,
+			d.TCRoutingTable, d.TCRoutingPriority, d.TCRoutingSlot, d.TCAttachmentCount,
 			d.TCRetiredAttachmentCount, d.TCRetiredDeliveryCount, d.TCHealthStatus,
 			d.TCNetworkGeneration,
 		))
@@ -1047,8 +1051,8 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 				framing = "n/a"
 			}
 			lines = append(lines, fmt.Sprintf(
-				"  %s: role=%s mechanism=%s framing=%s fakeip_icmp=%t",
-				attachment.InterfaceName, attachment.Role, attachment.Mechanism, framing, attachment.ICMPEchoReply,
+				"  %s: role=%s mechanism=%s framing=%s slot=%d fakeip_icmp=%t",
+				attachment.InterfaceName, attachment.Role, attachment.Mechanism, framing, attachment.Slot, attachment.ICMPEchoReply,
 			))
 		}
 	}
