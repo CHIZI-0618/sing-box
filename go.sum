@@ -68,6 +68,10 @@ github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261017120324-d97c4436ff83 h1
 github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261017120324-d97c4436ff83/go.mod h1:b7rNk/53Y/EgvsjncNRs2G7PDiR3h7XZgryP0bk79bQ=
 github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261017130200-aacc6baa2f06 h1:zOBlSufxSZ9JS0RTkhE8urd+6Ni4xhGpMhHe7qrodbo=
 github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261017130200-aacc6baa2f06/go.mod h1:b7rNk/53Y/EgvsjncNRs2G7PDiR3h7XZgryP0bk79bQ=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261018085551-7bafd3144e48 h1:4IxFHf2cKy/lq6DktoHKXDb+9ieKnUWrE4aqt2mvToc=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261018085551-7bafd3144e48/go.mod h1:b7rNk/53Y/EgvsjncNRs2G7PDiR3h7XZgryP0bk79bQ=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.13 h1:Jz8Ypb8Dd5NHjJfVH/QcCcsCFhitXcX5AAMN+hoRKts=
+github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.13/go.mod h1:b7rNk/53Y/EgvsjncNRs2G7PDiR3h7XZgryP0bk79bQ=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=
@@ -669,5 +673,3 @@ software.sslmate.com/src/go-pkcs12 v0.4.0 h1:H2g08FrTvSFKUj+D309j1DPfk5APnIdAQAB
 software.sslmate.com/src/go-pkcs12 v0.4.0/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=
 zombiezen.com/go/capnproto2 v2.18.2+incompatible h1:v3BD1zbruvffn7zjJUU5Pn8nZAB11bhZSQC4W+YnnKo=
 zombiezen.com/go/capnproto2 v2.18.2+incompatible/go.mod h1:XO5Pr2SbXgqZwn0m0Ru54QBqpOf4K5AYBO+8LAOBQEQ=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261018085551-7bafd3144e48 h1:4IxFHf2cKy/lq6DktoHKXDb+9ieKnUWrE4aqt2mvToc=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.12.0.20261018085551-7bafd3144e48/go.mod h1:b7rNk/53Y/EgvsjncNRs2G7PDiR3h7XZgryP0bk79bQ=
