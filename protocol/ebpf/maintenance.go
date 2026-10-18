@@ -230,10 +230,16 @@ func (i *Inbound) sweepTCAssignmentMaintenance() (bool, error) {
 	i.tcAssignmentSweepPressure.Store(active)
 	i.tcAssignmentPressureRounds.Store(rounds)
 	if entered {
-		i.logger.Warn("eBPF TC flow map pressure: state=", pressureUsage.Entries, "/", pressureUsage.Capacity,
-			", max_idle=", tcAssignmentPressureMaxIdle)
+		i.logger.Warn("eBPF ", ebpfStructuredEvent("tc_map_pressure", map[string]any{
+			"entries":  pressureUsage.Entries,
+			"capacity": pressureUsage.Capacity,
+			"max_idle": tcAssignmentPressureMaxIdle.String(),
+		}))
 	} else if exited {
-		i.logger.Info("eBPF TC flow map pressure cleared: state=", pressureUsage.Entries, "/", pressureUsage.Capacity)
+		i.logger.Info("eBPF ", ebpfStructuredEvent("tc_map_pressure_cleared", map[string]any{
+			"entries":  pressureUsage.Entries,
+			"capacity": pressureUsage.Capacity,
+		}))
 	}
 	return true, nil
 }

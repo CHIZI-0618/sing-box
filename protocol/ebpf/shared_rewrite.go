@@ -6,7 +6,6 @@ import (
 	"context"
 	"net/netip"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -89,10 +88,9 @@ func (s *sharedRewrite) Start(interfaceNames []string, hostAddresses []netip.Add
 	}
 	s.startFlowJanitor()
 	if s.sharedBackendInstance() == nil {
-		s.inbound.logger.Debug(
-			"eBPF shared packet-rewrite waiting for downstream interfaces: interfaces=[",
-			strings.Join(s.interfaces, ", "), "]",
-		)
+		s.inbound.logger.Debug("eBPF ", ebpfStructuredEvent("shared_waiting", map[string]any{
+			"interfaces": s.interfaces,
+		}))
 	}
 	return nil
 }
@@ -141,17 +139,17 @@ func (s *sharedRewrite) sharedRewriteReady(attachments []string) {
 		return
 	}
 	s.startFlowJanitor()
-	s.inbound.logger.Debug(
-		"eBPF shared packet-rewrite active: attachments=[", strings.Join(attachments, ", "), "]",
-		", redirect_listener_port=", s.listeners.selectedPort(),
-		", dns_mode=", s.inbound.sharedDNSMode,
-		", ipv6=", s.inbound.sharedRewriteIPv6Enabled(),
-		", bypass_private_address=", s.inbound.sharedBypassPrivate,
-		", source_cidr={include:", len(s.inbound.sharedOptions.IncludeSourceCIDR),
-		", exclude:", len(s.inbound.sharedOptions.ExcludeSourceCIDR), "}",
-		", source_mac={include:", len(s.inbound.sharedIncludeMAC),
-		", exclude:", len(s.inbound.sharedExcludeMAC), "}",
-	)
+	s.inbound.logger.Debug("eBPF ", ebpfStructuredEvent("shared_active", map[string]any{
+		"attachments":            attachments,
+		"listener_port":          s.listeners.selectedPort(),
+		"dns_mode":               s.inbound.sharedDNSMode,
+		"ipv6":                   s.inbound.sharedRewriteIPv6Enabled(),
+		"bypass_private_address": s.inbound.sharedBypassPrivate,
+		"source_cidr_include":    len(s.inbound.sharedOptions.IncludeSourceCIDR),
+		"source_cidr_exclude":    len(s.inbound.sharedOptions.ExcludeSourceCIDR),
+		"source_mac_include":     len(s.inbound.sharedIncludeMAC),
+		"source_mac_exclude":     len(s.inbound.sharedExcludeMAC),
+	}))
 }
 
 func (s *sharedRewrite) startListeners() error {
@@ -427,16 +425,16 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 				belowExitRounds = 0
 			}
 			if entered {
-				s.inbound.logger.Warn(
-					"eBPF shared-network proxy map pressure: state=", result.Usage.Entries,
-					"/", result.Usage.Capacity,
-					", max_idle=", sharedFlowPressureMaxIdle,
-				)
+				s.inbound.logger.Warn("eBPF ", ebpfStructuredEvent("shared_map_pressure", map[string]any{
+					"entries":  result.Usage.Entries,
+					"capacity": result.Usage.Capacity,
+					"max_idle": sharedFlowPressureMaxIdle.String(),
+				}))
 			} else if exited {
-				s.inbound.logger.Info(
-					"eBPF shared-network proxy map pressure cleared: state=", result.Usage.Entries,
-					"/", result.Usage.Capacity,
-				)
+				s.inbound.logger.Info("eBPF ", ebpfStructuredEvent("shared_map_pressure_cleared", map[string]any{
+					"entries":  result.Usage.Entries,
+					"capacity": result.Usage.Capacity,
+				}))
 			}
 		}
 		if delay := flowSchedule.finish(time.Now(), result.Complete, pressure, err); delay > 0 {

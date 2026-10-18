@@ -90,3 +90,16 @@ func TestWarningLimiterLastIsEmptyBeforeAnyWarning(t *testing.T) {
 		t.Fatalf("last() = %q at %v, want empty", message, at)
 	}
 }
+
+func TestStateTrackerOnlyReportsTransitions(t *testing.T) {
+	var tracker stateTracker
+	if previous, changed := tracker.transition("unavailable"); previous != "" || !changed {
+		t.Fatalf("first transition = (%q, %v), want empty/true", previous, changed)
+	}
+	if previous, changed := tracker.transition("unavailable"); previous != "unavailable" || changed {
+		t.Fatalf("repeated state = (%q, %v), want unavailable/false", previous, changed)
+	}
+	if previous, changed := tracker.transition("available"); previous != "unavailable" || !changed {
+		t.Fatalf("recovery transition = (%q, %v), want unavailable/true", previous, changed)
+	}
+}

@@ -95,20 +95,28 @@ log that stops before the fault.
 
 ## Logs and runtime state
 
-A successful startup emits a brief `eBPF inbound started` summary at Debug
-level: enabled paths, each attachment's actual interface and mechanism, any
-path still waiting for an interface, and what `fakeip_icmp` actually covers.
-Debug logging also includes an `eBPF cgroup active` or `eBPF TC active` summary containing the
-selected data planes and their effective runtime paths. TC summaries also include the default interface, attachments,
-internal listeners, routing state, and delivery interface when applicable. Each
-attachment includes its local/shared role and framing. A network event emits a
-Debug entry only when attachments or managed network state are changed; repair
-failures produce rate-limited warnings. Userspace handoff failures produce
-rate-limited Warn or Error entries. BPF packet return paths do not emit
-per-packet logs. Interface lifecycle handling is event-driven with a
-low-frequency drift check for silent kernel-state changes. Shared
-`packet_rewrite` runs bounded maintenance when flow events, release deadlines,
-or map pressure require it. These tasks do not emit periodic status records.
+A successful startup emits a brief Info summary as a JSON event, for example
+`eBPF {"event":"inbound_start","state":"waiting_for_interface",...}`.
+The state is derived
+from live diagnostics (`normal`, `waiting_for_interface`, `recovering`, or
+`needs_attention`); configured paths are not assumed to be active. A missing
+default interface produces one state-transition warning, followed by an Info
+entry when the interface returns, rather than repeated warnings on every
+reconcile pass.
+
+Debug logging includes the detailed `eBPF {"event":"tc_runtime",...}` or
+`eBPF {"event":"cgroup_runtime",...}` JSON event: selected data planes,
+effective paths, listeners, routing state, and delivery interface when
+applicable. Attachment changes are emitted at Info as a
+`{"event":"tc_attachments_changed",...}` event with both the previous and
+current attachment sets and the network generation.
+Each attachment includes its local/shared role and framing. Repair failures
+produce rate-limited warnings. Userspace handoff failures produce rate-limited
+Warn or Error entries. BPF packet return paths do not emit per-packet logs.
+Interface lifecycle handling is event-driven with a low-frequency drift check
+for silent kernel-state changes. Shared `packet_rewrite` runs bounded
+maintenance when flow events, release deadlines, or map pressure require it.
+These tasks do not emit periodic status records.
 
 If the log reports an assignment or UDP original-destination failure, retain
 the complete log around the first error and collect the TC attachment state
@@ -262,7 +270,8 @@ tc -details qdisc show
 tc -statistics -details filter show
 ```
 
-Also retain the startup `eBPF TC active` summary. Do not manually remove the
+Also retain the startup Info state summary and the `tc_runtime` JSON event.
+Do not manually remove the
 internal veth or managed TC filters while sing-box is running.
 
 For local `socket_assign` interception, compare the packet counts on the default-interface

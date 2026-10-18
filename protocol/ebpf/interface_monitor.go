@@ -5,7 +5,6 @@ package ebpf
 import (
 	"context"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +60,13 @@ func (i *Inbound) InterfaceUpdated(ctx context.Context) {
 			i.interfaceWarnings.reconcile.warn(i.logger, "reset cgroup eBPF network state after network change: ", err)
 		}
 	}
+}
+
+func (i *Inbound) currentNetworkGeneration() uint64 {
+	i.diagnostics.access.Lock()
+	generation := i.networkGeneration
+	i.diagnostics.access.Unlock()
+	return generation
 }
 
 func (i *Inbound) startTCInterfaceMonitor() error {
@@ -628,6 +634,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 	if ctx.Err() != nil {
 		return
 	}
+	networkGeneration := i.currentNetworkGeneration()
 	defer i.recordTCReconcile()
 	i.lifecycleAccess.Lock()
 	defer i.lifecycleAccess.Unlock()
@@ -649,7 +656,24 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		return
 	}
 	if localSocketAssignEnabled && localInterface == "" {
-		i.interfaceWarnings.defaultInterface.warn(i.logger, "default interface unavailable; retaining previous local TC attachment")
+		message := []any{"eBPF TC local path waiting for default interface; retaining current attachment state"}
+		i.interfaceWarnings.defaultInterface.record(time.Now(), message...)
+		if _, changed := i.interfaceWarnings.defaultInterfaceState.transition("unavailable"); changed {
+			i.logger.Warn("eBPF ", ebpfStructuredEvent("tc_local_waiting", map[string]any{
+				"state":  "waiting_for_interface",
+				"reason": "default_interface_unavailable",
+			}))
+		}
+	} else if localSocketAssignEnabled {
+		previous, changed := i.interfaceWarnings.defaultInterfaceState.transition("available")
+		if changed && previous == "unavailable" {
+			i.logger.Info("eBPF ", ebpfStructuredEvent("tc_local_restored", map[string]any{
+				"default_interface": localInterface,
+				"state":             "available",
+			}))
+		}
+	} else {
+		i.interfaceWarnings.defaultInterfaceState.transition("not_configured")
 	}
 	sharedInterfaces := activeSharedInterfaces(i.sharedOptions.Interface, defaultInterface)
 	tcSharedInterfaces := sharedInterfaces
@@ -662,7 +686,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		sharedDataPlane = shared.dataPlaneInstance()
 	}
 	if sharedDataPlane != nil {
-		previous := sharedDataPlane.AttachmentDescriptions()
+		previous := sharedDataPlane.AttachmentDiagnostics()
 		if err = sharedDataPlane.Reconcile(sharedInterfaces, hostAddresses); err != nil {
 			i.counters.sharedReconcileFailures.Add(1)
 			i.interfaceWarnings.reconcile.warn(i.logger, "refresh shared packet-rewrite interfaces: ", err)
@@ -673,8 +697,11 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 			}
 		} else {
 			outcome.sharedRewrite = tcSharedRewriteSettled
-			if attachments := sharedDataPlane.AttachmentDescriptions(); !slices.Equal(previous, attachments) {
-				i.logger.Debug("eBPF shared packet-rewrite attachments updated: attachments=[", strings.Join(attachments, ", "), "]")
+			if attachments := sharedDataPlane.AttachmentDiagnostics(); !slices.Equal(previous, attachments) {
+				i.logger.Debug("eBPF ", ebpfStructuredEvent("shared_attachments_changed", map[string]any{
+					"previous": previous,
+					"current":  attachments,
+				}))
 			}
 		}
 	} else {
@@ -702,14 +729,16 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 			outcome.general = tcSharedRewriteRecoverable
 		}
 		if infrastructureChanged && infrastructureHealthy {
-			i.logger.Debug("eBPF TC network state restored")
+			i.logger.Info("eBPF ", ebpfStructuredEvent("tc_network_restored", map[string]any{
+				"network_generation": networkGeneration,
+			}))
 		}
 		if outcome.general == tcSharedRewriteUnknown {
 			outcome.general = tcSharedRewriteSettled
 		}
 		return
 	}
-	previousAttachments := i.tcAttachmentDescriptions()
+	previousAttachments := i.tcAttachmentDiagnostics()
 	if err = i.reconcileTCDataPlane(localInterface, tcSharedInterfaces, hostAddresses); err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "refresh TC eBPF interfaces: ", err)
 		outcome.general = tcSharedRewriteRecoverable
@@ -720,13 +749,13 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh cgroup eBPF host addresses: ", err)
 		outcome.general = tcSharedRewriteRecoverable
 	}
-	attachments := i.tcAttachmentDescriptions()
+	attachments := i.tcAttachmentDiagnostics()
 	if !slices.Equal(previousAttachments, attachments) {
-		i.logger.Debug(
-			"eBPF TC attachments updated: attachments=[",
-			strings.Join(attachments, ", "),
-			"]",
-		)
+		i.logger.Info("eBPF ", ebpfStructuredEvent("tc_attachments_changed", map[string]any{
+			"previous":           previousAttachments,
+			"current":            attachments,
+			"network_generation": networkGeneration,
+		}))
 	}
 	if outcome.general == tcSharedRewriteUnknown {
 		outcome.general = tcSharedRewriteSettled

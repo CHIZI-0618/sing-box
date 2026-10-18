@@ -22,6 +22,12 @@ import (
 // has no per-interface attachment of its own.
 type EBPFAttachmentDiagnostics = commonEBPF.AttachmentInfo
 
+type ebpfAttachmentLogSummary struct {
+	Interface string `json:"interface"`
+	Role      string `json:"role"`
+	Mechanism string `json:"mechanism"`
+}
+
 // Runtime states EBPFDiagnostics.State reports. These summarize the fields
 // below into the one value most operators actually want at a glance; the
 // individual fields remain available for anything more specific.
@@ -1104,7 +1110,7 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 }
 
 // logStartupSummary is startInbound's item-9 deliverable: a brief, always-
-// visible (Info, not Debug) statement of which paths are enabled, what each
+// visible Info statement of which paths are enabled, what each
 // actually mounted as (interface and mechanism, not just the configured
 // data plane -- a config can ask for TCX and still land on clsact), which
 // configured paths have no interface to attach to yet, and which
@@ -1113,10 +1119,9 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 // summary can never say something the API diagnostics would disagree
 // with a moment later.
 //
-// This does not replace startInbound's existing Debug-level line: that one
-// is a complete dump meant for deep troubleshooting (routing marks, listener
-// modes, and so on); this one is the handful of facts an operator actually
-// wants to see once, right after startup, at the log level they normally run.
+// The detailed tc_runtime and cgroup_runtime events remain Debug-level and
+// are emitted separately by startInbound. This Info event is intentionally a
+// small lifecycle summary suitable for normal operation logs.
 func (i *Inbound) logStartupSummary() {
 	diagnostics := i.Diagnostics()
 
@@ -1127,30 +1132,26 @@ func (i *Inbound) logStartupSummary() {
 	if diagnostics.SharedEnabled {
 		paths = append(paths, "shared="+diagnostics.SharedDataPlane)
 	}
-	pathsSummary := "none"
-	if len(paths) > 0 {
-		pathsSummary = strings.Join(paths, ", ")
+	if paths == nil {
+		paths = []string{}
 	}
-
-	mountsSummary := "none"
-	if len(diagnostics.Attachments) > 0 {
-		mounts := make([]string, 0, len(diagnostics.Attachments))
-		for _, attachment := range diagnostics.Attachments {
-			mounts = append(mounts, fmt.Sprintf("%s(%s,%s)", attachment.InterfaceName, attachment.Role, attachment.Mechanism))
-		}
-		mountsSummary = strings.Join(mounts, ", ")
+	activeAttachments := make([]ebpfAttachmentLogSummary, 0, len(diagnostics.Attachments))
+	for _, attachment := range diagnostics.Attachments {
+		activeAttachments = append(activeAttachments, ebpfAttachmentLogSummary{
+			Interface: attachment.InterfaceName,
+			Role:      attachment.Role,
+			Mechanism: attachment.Mechanism,
+		})
 	}
 
 	waiting := diagnostics.WaitingRoles
-	waitingSummary := "none"
-	if len(waiting) > 0 {
-		waitingSummary = strings.Join(waiting, ", ")
+	if waiting == nil {
+		waiting = []string{}
 	}
-	waitingInterfacesSummary := "none"
-	if len(diagnostics.WaitingInterfaces) > 0 {
-		waitingInterfacesSummary = strings.Join(diagnostics.WaitingInterfaces, ", ")
+	waitingInterfaces := diagnostics.WaitingInterfaces
+	if waitingInterfaces == nil {
+		waitingInterfaces = []string{}
 	}
-
 	fakeIPICMPSummary := "off"
 	if diagnostics.FakeIPICMPReply {
 		covered := make([]string, 0, len(diagnostics.Attachments))
@@ -1165,9 +1166,12 @@ func (i *Inbound) logStartupSummary() {
 		}
 	}
 
-	i.logger.Debug(
-		"eBPF inbound started: paths=[", pathsSummary, "] mounts=[", mountsSummary,
-		"] waiting_for_interface=[", waitingSummary, "] waiting_interfaces=[", waitingInterfacesSummary,
-		"] fakeip_icmp=[", fakeIPICMPSummary, "]",
-	)
+	i.logger.Info("eBPF ", ebpfStructuredEvent("inbound_start", map[string]any{
+		"state":              diagnostics.State,
+		"configured_paths":   paths,
+		"active_attachments": activeAttachments,
+		"waiting_paths":      waiting,
+		"waiting_interfaces": waitingInterfaces,
+		"fakeip_icmp":        fakeIPICMPSummary,
+	}))
 }

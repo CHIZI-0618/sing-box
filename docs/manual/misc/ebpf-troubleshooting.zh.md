@@ -85,18 +85,23 @@ dmesg -T > dmesg-after-reboot.txt
 
 ## 日志与运行状态
 
-启动成功后会在 Debug 级别输出一条简要的 `eBPF inbound started` 摘要：启用的路径、
-每个 attachment 实际挂载的接口与机制、仍在等待接口的路径，以及 `fakeip_icmp`
-实际覆盖的范围。Debug 日志还会输出 `eBPF cgroup active` 或 `eBPF TC active`
-摘要，其中包括选中的
-数据面及实际运行路径。TC 摘要还会按需列出默认接口、
-attachment、内部监听器、路由状态和 delivery 接口，每个 attachment 会标明
-local/shared 角色和帧格式。网络事件仅在 attachment 或受管
-网络状态发生变化时输出 Debug 日志，修复失败会输出限频的 Warn 日志。用户态 handoff
-异常会输出限频后的 Warn 或 Error 日志；BPF 报文返回路径不输出逐包日志。接口生命周期
-主要由事件驱动，并使用低频漂移检查修复没有产生相应通知的内核状态变化。shared
-`packet_rewrite` 会在 flow 事件、释放期限或 map 压力需要时执行有界维护；这些任务
-不会定期输出状态日志。
+启动成功后会在 Info 级别输出一条简要 JSON 事件，例如
+`eBPF {"event":"inbound_start","state":"waiting_for_interface",...}`。
+其中状态直接来自
+运行时诊断（`normal`、`waiting_for_interface`、`recovering`、
+`needs_attention`），配置启用的路径不代表已经实际挂载。默认接口暂时不可用时，
+只在状态进入等待时输出一次警告；接口恢复时输出一条 Info，不会在每次
+reconcile 中重复刷屏。
+
+Debug 日志还会输出详细的 `eBPF {"event":"tc_runtime",...}` 或
+`eBPF {"event":"cgroup_runtime",...}` JSON 事件，包括选中的数据面、实际路径、
+监听器、路由状态和 delivery 接口。attachment 发生变化时会在 Info 日志中以
+`tc_attachments_changed` 事件同时记录变化前后的 attachment 集合和 network generation。
+每个 attachment 会标明 local/shared 角色和帧格式。修复失败会输出限频的 Warn 日志；用户态
+handoff 异常会输出限频后的 Warn 或 Error 日志；BPF 报文返回路径不输出逐包日志。接口
+生命周期主要由事件驱动，并使用低频漂移检查修复没有产生相应通知的内核状态变化。shared
+`packet_rewrite` 会在 flow 事件、释放期限或 map 压力需要时执行有界维护；这些任务不会
+定期输出状态日志。
 
 如果日志报告 assignment 或 UDP 原目标读取失败，请保留首次错误前后的完整日志，
 并同时采集下文的 TC attachment 信息。
@@ -220,7 +225,7 @@ tc -details qdisc show
 tc -statistics -details filter show
 ```
 
-同时保留启动时的 `eBPF TC active` 摘要。sing-box 运行期间不要手动删除内部 veth
+同时保留启动时的 Info 状态摘要和 `tc_runtime` JSON 事件。sing-box 运行期间不要手动删除内部 veth
 或其管理的 TC filter。
 
 排查 local `socket_assign` 接管时，可对比默认接口 egress filter 和日志所示 delivery 接口
