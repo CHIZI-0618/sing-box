@@ -30,6 +30,7 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 		listenConfig    net.ListenConfig
 		followInterface func(conn syscall.Conn)
 	)
+	listenConfig.Control = control.Append(listenConfig.Control, l.socketControl)
 	if l.listenOptions.BindInterface != "" {
 		var bindFunc control.Func
 		bindFunc, followInterface = l.followBindInterface()
@@ -84,7 +85,9 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 	if followInterface != nil {
 		followInterface(tcpListener.(syscall.Conn))
 	}
-	l.logger.Info("tcp server started at ", tcpListener.Addr())
+	if !l.disableLog {
+		l.logger.Info("tcp server started at ", tcpListener.Addr())
+	}
 	l.tcpListener = tcpListener
 	return tcpListener, err
 }
@@ -122,7 +125,9 @@ func (l *Listener) loopTCPIn() {
 		metadata.Source = M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
 		metadata.OriginDestination = M.SocksaddrFromNet(conn.LocalAddr()).Unwrap()
 		ctx := log.ContextWithNewID(l.ctx)
-		l.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
+		if !l.disableLog {
+			l.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
+		}
 		go l.connHandler.NewConnection(ctx, conn, metadata, nil)
 	}
 }
