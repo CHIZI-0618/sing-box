@@ -57,3 +57,12 @@ func TestSelfBypassWithoutLocalInboundIsInert(t *testing.T) {
 		t.Fatal("no tracker must mean no socket control callback")
 	}
 }
+
+func TestSelfBypassCleanupModeContract(t *testing.T) {
+	if !selfBypassNeedsUserspaceCleanup("userspace_unregister") {
+		t.Fatal("userspace unregister mode must install close cleanup")
+	}
+	if selfBypassNeedsUserspaceCleanup("socket_release") {
+		t.Fatal("kernel release mode must not install duplicate userspace cleanup")
+	}
+}

@@ -28,7 +28,7 @@ func bindEBPFSelfBypassConnLifecycle(networkManager adapter.NetworkManager, conn
 		return conn
 	}
 	tracker := provider.EBPFSelfBypass()
-	if tracker.CleanupMode() != "lru_fallback" {
+	if !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
 		return conn
 	}
 	if lazyConn, loaded := conn.(*slowOpenConn); loaded {
@@ -59,7 +59,7 @@ func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager
 		return conn
 	}
 	tracker := provider.EBPFSelfBypass()
-	if tracker.CleanupMode() != "lru_fallback" {
+	if !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
 		return conn
 	}
 	syscallConn, loaded := conn.(syscall.Conn)
@@ -135,13 +135,17 @@ func EBPFSelfBypassCleanup(networkManager adapter.NetworkManager, rawConn syscal
 		return nil
 	}
 	tracker := provider.EBPFSelfBypass()
-	if tracker == nil || tracker.CleanupMode() != "lru_fallback" {
+	if tracker == nil || !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
 		return nil
 	}
 	var once sync.Once
 	return func() {
 		once.Do(func() { _ = tracker.UnregisterSocket(rawConn) })
 	}
+}
+
+func selfBypassNeedsUserspaceCleanup(cleanupMode string) bool {
+	return cleanupMode == "userspace_unregister"
 }
 
 func PrepareEBPFSelfBypass(networkManager adapter.NetworkManager, inbounds []option.Inbound) error {

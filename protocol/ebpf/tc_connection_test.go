@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -78,6 +79,23 @@ func TestTCPacketWriterBatchesByReplySource(t *testing.T) {
 	}
 	if received["first-a"] != firstSource || received["first-b"] != firstSource || received["second"] != secondSource {
 		t.Fatalf("unexpected batch reply sources: %v", received)
+	}
+}
+
+func TestSelfBypassRegistrationMode(t *testing.T) {
+	tracker, err := commonEBPF.NewSelfBypassWithCapacity(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	inbound := &Inbound{inboundResources: inboundResources{selfBypass: tracker}}
+	if !inbound.selfBypassUsesUserspaceRegistration() {
+		t.Fatal("userspace self-bypass mode must register sockets")
+	}
+	inbound.selfBypassCgroup = true
+	if inbound.selfBypassUsesUserspaceRegistration() {
+		t.Fatal("automatic cgroup marking must not duplicate socket registration")
 	}
 }
 

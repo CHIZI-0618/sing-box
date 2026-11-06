@@ -207,11 +207,25 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 		if configureErr != nil {
 			return configureErr
 		}
-		if i.selfBypass == nil {
+		if !i.selfBypassUsesUserspaceRegistration() {
 			return nil
 		}
 		return i.selfBypass.RegisterSocket(rawConn)
 	}
+}
+
+// selfBypassUsesUserspaceRegistration distinguishes the cgroup fallback that
+// still needs socket-cookie insertion from modes whose cgroup hooks mark the
+// socket themselves. UserspaceRelease deliberately combines userspace
+// registration with a kernel sock_release cleanup hook.
+func (i *Inbound) selfBypassUsesUserspaceRegistration() bool {
+	if i.selfBypass == nil {
+		return false
+	}
+	if !i.selfBypassCgroup {
+		return true
+	}
+	return i.selfBypass.Mode() == commonEBPF.SelfBypassUserspaceRelease
 }
 
 func redirectAddressFromOOB(oob []byte) (netip.Addr, error) {
