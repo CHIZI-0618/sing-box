@@ -5,6 +5,7 @@ package ebpf
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"runtime"
 
@@ -81,104 +82,26 @@ func (i *Inbound) startInbound() error {
 	if sharedSocketAssignEnabled {
 		tcSharedInterfaces = sharedInterfaces
 	}
-	if localSocketAssignEnabled || sharedSocketAssignEnabled {
-		if err := i.startTCListeners(); err != nil {
-			return err
-		}
+	if err := i.startTCListenersIfNeeded(localSocketAssignEnabled, sharedSocketAssignEnabled); err != nil {
+		return err
 	}
-	if i.localCgroupEnabled() {
-		if err := i.listeners.start(i.enableTCP, i.enableUDP, true, i.localIPv6, i.newListener); err != nil {
-			return err
-		}
-		if err := i.prepareCgroupBackend(); err != nil {
-			return err
-		}
-		cgroupBackend := i.cgroupBackendInstance()
-		if err := cgroupBackend.UpdateHostAddresses(hostAddresses); err != nil {
-			return E.Cause(err, "initialize cgroup eBPF host address policy")
-		}
-		if err := cgroupBackend.LoadPrograms(i.listeners.selectedPort()); err != nil {
-			return err
-		}
+	if err := i.startCgroupDataPlane(hostAddresses); err != nil {
+		return err
 	}
 	if i.localCgroupEnabled() || sharedRewriteEnabled {
 		if err := i.setupLocalRoutes(); err != nil {
 			return E.Cause(err, "configure eBPF redirect routes")
 		}
 	}
-	backendConfig := commonEBPF.TCConfig{
-		ListenerPort:      i.tcListeners.selectedPort(),
-		EnableLocal:       localSocketAssignEnabled,
-		EnableShared:      sharedSocketAssignEnabled,
-		EnableIPv4:        true,
-		EnableLocalIPv6:   localSocketAssignEnabled && i.localIPv6,
-		EnableSharedIPv6:  sharedSocketAssignEnabled && i.sharedIPv6,
-		EnableTCP:         i.enableTCP,
-		EnableUDP:         i.enableUDP,
-		Policy:            i.compiledPolicy,
-		SelfBypass:        i.selfBypass,
-		TrackProcess:      i.processTracker != nil,
-		ICMPEchoReply:     i.fakeIPICMPReply,
-		NetworkGeneration: uint32(i.currentNetworkGeneration()),
-	}
-	if backendConfig.NetworkGeneration == 0 {
-		backendConfig.NetworkGeneration = 1
-	}
-	if runtime.GOOS == "android" {
-		backendConfig.AssignmentCapacity = commonEBPF.CompactTCAssignmentCapacity
-	}
-	var backend *commonEBPF.TCBackend
-	if localSocketAssignEnabled || sharedSocketAssignEnabled {
-		backend, err = commonEBPF.PrepareTC(backendConfig)
-	}
-	if err != nil && i.processTracker != nil {
-		trackingErr := err
-		var closeErr error
-		i.processTracker, closeErr = closeProcessTrackerOwner(i.processTracker)
-		if i.processTracker != nil {
-			return E.Errors(trackingErr, E.Cause(closeErr, "cleanup eBPF process tracker"))
-		}
-		trackingErr = E.Errors(trackingErr, closeErr)
-		backendConfig.TrackProcess = false
-		backend, err = commonEBPF.PrepareTC(backendConfig)
-		if err == nil {
-			i.logger.Debug("eBPF cgroup process tracking unavailable; using userspace process search: ", trackingErr)
-		}
-	}
+	backend, dataPlane, err := i.startTCDataPlane(localInterface, tcSharedInterfaces, hostAddresses, localSocketAssignEnabled, sharedSocketAssignEnabled)
 	if err != nil {
 		return err
-	}
-	if backend != nil {
-		if err = i.tcListeners.registerTCTCPListeners(backend); err != nil {
-			i.setTCDataPlane(newUnstartedTCRuntime(backend))
-			return E.Errors(err, i.closeTCDataPlane())
-		}
-	}
-	var dataPlane tcRuntime
-	if backend != nil {
-		tcIPv6Enabled := i.socketAssignIPv6Enabled()
-		dataPlane, err = newTCRuntime(backend, tcRuntimeConfig{
-			Namespace:             i.tcNamespace,
-			IPv6Enabled:           tcIPv6Enabled,
-			LocalInterface:        localInterface,
-			SharedInterfaces:      tcSharedInterfaces,
-			HostAddresses:         hostAddresses,
-			SharedSourceMACPolicy: len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
-			Priority:              i.tcPriority,
-		})
-		i.setTCDataPlane(dataPlane)
-		if err != nil {
-			return err
-		}
-		i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
 	}
 	if err = i.startBypassRuleSets(); err != nil {
 		return E.Cause(err, "initialize TC eBPF bypass_rule_set")
 	}
 	if sharedRewriteEnabled {
-		shared := newSharedRewrite(i, i.sharedOptions)
-		i.setSharedRewrite(shared)
-		if err = shared.Start(sharedInterfaces, hostAddresses); err != nil {
+		if err = i.startSharedRewriteDataPlane(sharedInterfaces, hostAddresses); err != nil {
 			return err
 		}
 	}
@@ -295,6 +218,109 @@ func (i *Inbound) startInbound() error {
 	}
 	i.logStartupSummary()
 	return nil
+}
+
+func (i *Inbound) startTCListenersIfNeeded(localEnabled, sharedEnabled bool) error {
+	if !localEnabled && !sharedEnabled {
+		return nil
+	}
+	return i.startTCListeners()
+}
+
+func (i *Inbound) startCgroupDataPlane(hostAddresses []netip.Addr) error {
+	if !i.localCgroupEnabled() {
+		return nil
+	}
+	if err := i.listeners.start(i.enableTCP, i.enableUDP, true, i.localIPv6, i.newListener); err != nil {
+		return err
+	}
+	if err := i.prepareCgroupBackend(); err != nil {
+		return err
+	}
+	backend := i.cgroupBackendInstance()
+	if err := backend.UpdateHostAddresses(hostAddresses); err != nil {
+		return E.Cause(err, "initialize cgroup eBPF host address policy")
+	}
+	return backend.LoadPrograms(i.listeners.selectedPort())
+}
+
+func (i *Inbound) startTCDataPlane(
+	localInterface string,
+	sharedInterfaces []string,
+	hostAddresses []netip.Addr,
+	localEnabled, sharedEnabled bool,
+) (*commonEBPF.TCBackend, tcRuntime, error) {
+	backendConfig := commonEBPF.TCConfig{
+		ListenerPort:      i.tcListeners.selectedPort(),
+		EnableLocal:       localEnabled,
+		EnableShared:      sharedEnabled,
+		EnableIPv4:        true,
+		EnableLocalIPv6:   localEnabled && i.localIPv6,
+		EnableSharedIPv6:  sharedEnabled && i.sharedIPv6,
+		EnableTCP:         i.enableTCP,
+		EnableUDP:         i.enableUDP,
+		Policy:            i.compiledPolicy,
+		SelfBypass:        i.selfBypass,
+		TrackProcess:      i.processTracker != nil,
+		ICMPEchoReply:     i.fakeIPICMPReply,
+		NetworkGeneration: uint32(i.currentNetworkGeneration()),
+	}
+	if backendConfig.NetworkGeneration == 0 {
+		backendConfig.NetworkGeneration = 1
+	}
+	if runtime.GOOS == "android" {
+		backendConfig.AssignmentCapacity = commonEBPF.CompactTCAssignmentCapacity
+	}
+	var err error
+	var backend *commonEBPF.TCBackend
+	if localEnabled || sharedEnabled {
+		backend, err = commonEBPF.PrepareTC(backendConfig)
+	}
+	if err != nil && i.processTracker != nil {
+		trackingErr := err
+		var closeErr error
+		i.processTracker, closeErr = closeProcessTrackerOwner(i.processTracker)
+		if i.processTracker != nil {
+			return nil, nil, E.Errors(trackingErr, E.Cause(closeErr, "cleanup eBPF process tracker"))
+		}
+		trackingErr = E.Errors(trackingErr, closeErr)
+		backendConfig.TrackProcess = false
+		backend, err = commonEBPF.PrepareTC(backendConfig)
+		if err == nil {
+			i.logger.Debug("eBPF cgroup process tracking unavailable; using userspace process search: ", trackingErr)
+		}
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if backend == nil {
+		return nil, nil, nil
+	}
+	if err = i.tcListeners.registerTCTCPListeners(backend); err != nil {
+		i.setTCDataPlane(newUnstartedTCRuntime(backend))
+		return nil, nil, E.Errors(err, i.closeTCDataPlane())
+	}
+	dataPlane, err := newTCRuntime(backend, tcRuntimeConfig{
+		Namespace:             i.tcNamespace,
+		IPv6Enabled:           i.socketAssignIPv6Enabled(),
+		LocalInterface:        localInterface,
+		SharedInterfaces:      sharedInterfaces,
+		HostAddresses:         hostAddresses,
+		SharedSourceMACPolicy: len(i.sharedIncludeMAC)+len(i.sharedExcludeMAC) > 0,
+		Priority:              i.tcPriority,
+	})
+	i.setTCDataPlane(dataPlane)
+	if err != nil {
+		return nil, nil, err
+	}
+	i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
+	return backend, dataPlane, nil
+}
+
+func (i *Inbound) startSharedRewriteDataPlane(sharedInterfaces []string, hostAddresses []netip.Addr) error {
+	shared := newSharedRewrite(i, i.sharedOptions)
+	i.setSharedRewrite(shared)
+	return shared.Start(sharedInterfaces, hostAddresses)
 }
 
 // logCgroupRuntime records only cgroup-specific state. Keeping this separate
