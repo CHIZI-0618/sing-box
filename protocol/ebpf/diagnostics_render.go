@@ -124,7 +124,13 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 // are emitted separately by startInbound. This Info event is intentionally a
 // small lifecycle summary suitable for normal operation logs.
 func (i *Inbound) logStartupSummary() {
-	diagnostics := i.Diagnostics()
+	i.lifecycleAccess.Lock()
+	defer i.lifecycleAccess.Unlock()
+	i.logStartupSummaryLocked()
+}
+
+func (i *Inbound) logStartupSummaryLocked() {
+	diagnostics := i.diagnosticsLocked()
 
 	paths := make([]string, 0, 2)
 	if diagnostics.LocalEnabled {

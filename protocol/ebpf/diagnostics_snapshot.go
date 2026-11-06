@@ -40,11 +40,16 @@ func (s inboundRuntimeSnapshot) tcBackend() *commonEBPF.TCBackend {
 }
 
 func (i *Inbound) Diagnostics() EBPFDiagnostics {
-	// Keep runtime owners alive while their kernel-backed diagnostics are read.
-	// API callers are independently cached, so this lifecycle lock does not add
-	// a polling wakeup or per-request background work.
 	i.lifecycleAccess.Lock()
 	defer i.lifecycleAccess.Unlock()
+	return i.diagnosticsLocked()
+}
+
+// diagnosticsLocked builds a snapshot while the caller owns lifecycleAccess.
+// Keeping this separate lets startup emit its summary without recursively
+// acquiring the lifecycle lock it already holds.
+func (i *Inbound) diagnosticsLocked() EBPFDiagnostics {
+	// Keep runtime owners alive while their kernel-backed diagnostics are read.
 	runtime := i.runtimeSnapshotLocked()
 	diagnostics := EBPFDiagnostics{
 		SchemaVersion:   adapter.EBPFDiagnosticsSchemaVersion,

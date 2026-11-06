@@ -137,7 +137,7 @@ func (i *Inbound) startInbound() error {
 		i.logCgroupRuntime(network, cgroupBackend)
 	}
 	if dataPlane == nil && i.sharedRewriteInstance() == nil {
-		i.logStartupSummary()
+		i.logStartupSummaryLocked()
 		return nil
 	}
 	tcNetworkInfo := commonEBPF.TCNetworkInfo{}
@@ -218,7 +218,7 @@ func (i *Inbound) startInbound() error {
 	if i.enableUDP && (i.localSocketAssignEnabled() || i.sharedSocketAssignEnabled()) {
 		i.udpReplySockets.startSweeper(i.ctx)
 	}
-	i.logStartupSummary()
+	i.logStartupSummaryLocked()
 	return nil
 }
 
