@@ -57,77 +57,42 @@ func RegisterInbound(registry *inbound.Registry) {
 	inbound.Register[option.EBPFInboundOptions](registry, C.TypeEBPF, NewInbound)
 }
 
-type Inbound struct {
-	inbound.Adapter
-	ctx                       context.Context
-	router                    adapter.Router
-	logger                    log.ContextLogger
-	networkManager            adapter.NetworkManager
-	localEnabled              bool
-	localDataPlane            string
-	cgroupPath                string
-	cgroupBackend             *commonEBPF.CgroupBackend
-	localRoutes               *commonEBPF.LocalRouteSet
-	redirectIPv4Prefix        netip.Prefix
-	redirectIPv6Prefix        netip.Prefix
-	selfBypass                *commonEBPF.SelfBypass
-	selfBypassCgroup          bool
-	processTracker            processTrackerOwner
-	processTrackerRollback    processTrackerOwner
-	processInfoCache          *processInfoCache
-	usePlatformProcessFinder  bool
-	listeners                 internalListenerSet
-	tcListeners               internalListenerSet
-	tcNamespace               *tcNamespace
-	tcNamespaceAccess         sync.RWMutex
-	udpNat                    *udpNATService
-	tcDataPlane               tcRuntime
-	udpTimeout                time.Duration
-	udpFragment               bool
-	enableTCP                 bool
-	enableUDP                 bool
-	localDNSMode              string
-	sharedDNSMode             string
-	localIPv6                 bool
-	localPolicy               localUIDPolicy
-	compiledPolicy            commonEBPF.CompiledPolicy
-	androidUIDOptions         *androidUIDOptions
-	sharedOptions             option.EBPFSharedOptions
-	sharedEnabled             bool
-	sharedDataPlane           string
-	sharedRewrite             *sharedRewrite
-	sharedRewriteAccess       sync.RWMutex
-	sharedIPv6                bool
-	sharedBypassPrivate       bool
-	localBypassPort           []portRange
-	sharedBypassPort          []portRange
-	localBypassExclude        []netip.Prefix
-	sharedBypassExclude       []netip.Prefix
-	tcPriority                uint16
-	networkGeneration         uint64
-	fakeIPIPv4Prefix          netip.Prefix
-	fakeIPIPv6Prefix          netip.Prefix
-	fakeIPICMPReply           bool
-	sharedIncludeMAC          []commonEBPF.MACAddress
-	sharedExcludeMAC          []commonEBPF.MACAddress
-	localInitialDestinations  []commonEBPF.CIDRDecision
-	sharedInitialDestinations []commonEBPF.CIDRDecision
-	tcDataPlaneAccess         sync.RWMutex
-	cgroupBackendAccess       sync.RWMutex
+type inboundResources struct {
+	cgroupBackend          *commonEBPF.CgroupBackend
+	localRoutes            *commonEBPF.LocalRouteSet
+	selfBypass             *commonEBPF.SelfBypass
+	processTracker         processTrackerOwner
+	processTrackerRollback processTrackerOwner
+	processInfoCache       *processInfoCache
+	listeners              internalListenerSet
+	tcListeners            internalListenerSet
+	tcNamespace            *tcNamespace
+	tcNamespaceAccess      sync.RWMutex
+	udpNat                 *udpNATService
+	tcDataPlane            tcRuntime
+	tcDataPlaneAccess      sync.RWMutex
+	cgroupBackendAccess    sync.RWMutex
+	sharedRewrite          *sharedRewrite
+	sharedRewriteAccess    sync.RWMutex
+	udpClientTable         udpClientTable
+	udpReplySockets        udpReplySocketPool
+}
+
+type inboundWorkers struct {
 	cgroupReleaseWait         sync.WaitGroup
 	cgroupRecoveryAccess      sync.Mutex
 	cgroupRecoveryCancel      context.CancelFunc
 	cgroupRecoveryDone        chan struct{}
 	cgroupRecoveryEvents      chan commonEBPF.UDPReleaseEvent
-	lifecycleAccess           sync.Mutex
 	interfaceMonitor          tcInterfaceMonitor
+	tcAssignmentWake          chan struct{}
+	tcAssignmentJanitorAccess sync.Mutex
+	tcAssignmentJanitorCancel context.CancelFunc
+	tcAssignmentJanitorDone   chan struct{}
+}
 
-	bypassRuleSetAccess sync.Mutex
-	localBypassRules    bypassRuleSetState
-	sharedBypassRules   bypassRuleSetState
-
-	udpClientTable                udpClientTable
-	udpReplySockets               udpReplySocketPool
+type inboundDiagnostics struct {
+	networkGeneration             uint64
 	udpWarnings                   udpWarningLimiters
 	tcpWarnings                   warningLimiter
 	policyWarnings                warningLimiter
@@ -156,23 +121,66 @@ type Inbound struct {
 	tcAssignmentSweepFailure      atomic.Value
 	tcAssignmentSweepLastAt       atomic.Int64
 	tcAssignmentSweepPartialAt    atomic.Int64
-	tcAssignmentWake              chan struct{}
-	tcAssignmentJanitorAccess     sync.Mutex
-	tcAssignmentJanitorCancel     context.CancelFunc
-	tcAssignmentJanitorDone       chan struct{}
 	cgroupRecoveryQueueOverflows  atomic.Uint64
 	cgroupRecoveryQueueOverflowAt atomic.Int64
 	// diagnosticsAPICache is request-driven only. API polling can be frequent,
-	// so native per-CPU counter reads are coalesced for a short
-	// window without adding a timer or background wakeup.
+	// so native per-CPU counter reads are coalesced for a short window.
 	diagnosticsAPIAccess sync.Mutex
 	diagnosticsAPIAt     time.Time
 	diagnosticsAPIValue  adapter.EBPFRuntimeDiagnostics
-	// kernelRuntimeAPICache protects the more expensive global program/map
-	// enumeration. It remains request-driven and never starts a timer.
+	// kernelRuntimeAPICache protects expensive global program/map enumeration.
 	kernelRuntimeAPIAccess sync.Mutex
 	kernelRuntimeAPIAt     time.Time
 	kernelRuntimeAPIValue  adapter.EBPFKernelRuntimeDiagnostics
+}
+
+type Inbound struct {
+	inbound.Adapter
+	ctx                       context.Context
+	router                    adapter.Router
+	logger                    log.ContextLogger
+	networkManager            adapter.NetworkManager
+	localEnabled              bool
+	localDataPlane            string
+	cgroupPath                string
+	redirectIPv4Prefix        netip.Prefix
+	redirectIPv6Prefix        netip.Prefix
+	selfBypassCgroup          bool
+	usePlatformProcessFinder  bool
+	udpTimeout                time.Duration
+	udpFragment               bool
+	enableTCP                 bool
+	enableUDP                 bool
+	localDNSMode              string
+	sharedDNSMode             string
+	localIPv6                 bool
+	localPolicy               localUIDPolicy
+	compiledPolicy            commonEBPF.CompiledPolicy
+	androidUIDOptions         *androidUIDOptions
+	sharedOptions             option.EBPFSharedOptions
+	sharedEnabled             bool
+	sharedDataPlane           string
+	sharedIPv6                bool
+	sharedBypassPrivate       bool
+	localBypassPort           []portRange
+	sharedBypassPort          []portRange
+	localBypassExclude        []netip.Prefix
+	sharedBypassExclude       []netip.Prefix
+	tcPriority                uint16
+	fakeIPIPv4Prefix          netip.Prefix
+	fakeIPIPv6Prefix          netip.Prefix
+	fakeIPICMPReply           bool
+	sharedIncludeMAC          []commonEBPF.MACAddress
+	sharedExcludeMAC          []commonEBPF.MACAddress
+	localInitialDestinations  []commonEBPF.CIDRDecision
+	sharedInitialDestinations []commonEBPF.CIDRDecision
+	lifecycleAccess           sync.Mutex
+	bypassRuleSetAccess       sync.Mutex
+	localBypassRules          bypassRuleSetState
+	sharedBypassRules         bypassRuleSetState
+	inboundResources
+	inboundWorkers
+	inboundDiagnostics
 }
 
 func (i *Inbound) localSocketAssignEnabled() bool {
@@ -295,11 +303,13 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			platform := service.FromContext[adapter.PlatformInterface](ctx)
 			return platform != nil && platform.UsePlatformConnectionOwnerFinder()
 		}(),
-		localEnabled:        localEnabled,
-		localDataPlane:      localDataPlane,
-		cgroupPath:          cgroupPath,
-		selfBypass:          selfBypass,
-		processInfoCache:    newProcessInfoCache(),
+		localEnabled:   localEnabled,
+		localDataPlane: localDataPlane,
+		cgroupPath:     cgroupPath,
+		inboundResources: inboundResources{
+			selfBypass:       selfBypass,
+			processInfoCache: newProcessInfoCache(),
+		},
 		enableTCP:           enableTCP,
 		enableUDP:           enableUDP,
 		localDNSMode:        localDNSMode,
@@ -326,7 +336,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		},
 		androidUIDOptions: newAndroidUIDOptions(options.Local),
 		fakeIPICMPReply:   fakeIPICMPReply,
-		tcAssignmentWake:  make(chan struct{}, 1),
+		inboundWorkers: inboundWorkers{
+			tcAssignmentWake: make(chan struct{}, 1),
+		},
 	}
 	if inbound.tcPriority == 0 {
 		inbound.tcPriority = defaultTCPriority

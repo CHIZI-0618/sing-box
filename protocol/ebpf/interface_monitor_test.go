@@ -75,7 +75,7 @@ func TestTCInterfaceMonitorLifecycle(t *testing.T) {
 func TestTCInterfaceNotificationsCoalesce(t *testing.T) {
 	networkMonitor := &testNetworkUpdateMonitor{}
 	updates := make(chan struct{}, 1)
-	inbound := &Inbound{interfaceMonitor: tcInterfaceMonitor{network: networkMonitor, updates: updates}}
+	inbound := &Inbound{inboundWorkers: inboundWorkers{interfaceMonitor: tcInterfaceMonitor{network: networkMonitor, updates: updates}}}
 	inbound.notifyTCInterfaceUpdate()
 	inbound.notifyTCInterfaceUpdate()
 	if len(updates) != 1 {
@@ -96,8 +96,8 @@ func TestNetworkStateResetUsesCoordinatedInterfaceUpdate(t *testing.T) {
 
 	defaultMonitor := &testDefaultInterfaceMonitor{current: &control.Interface{Name: "wlan0", Index: 8}}
 	inbound := &Inbound{
-		networkManager: &testInterfaceNetworkManager{defaultMonitor: defaultMonitor},
-		udpNat:         service,
+		networkManager:   &testInterfaceNetworkManager{defaultMonitor: defaultMonitor},
+		inboundResources: inboundResources{udpNat: service},
 	}
 	source := M.ParseSocksaddr("192.0.2.10:53000")
 	destination := M.ParseSocksaddr("198.51.100.1:443")
