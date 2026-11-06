@@ -97,13 +97,19 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 	binding.control = control.Append(bindFunc, selfBypassControl)
 	binding.listenPacket = func(listenContext context.Context, networkName string, address string) (nettype.PacketConn, error) {
 		listenConfig := net.ListenConfig{
-			Control: control.Append(control.Append(bindFunc, selfBypassControl), control.DisableUDPNetReset()),
+			// Register after ListenPacket succeeds. A control callback runs
+			// before bind and cannot unregister a cookie if bind fails.
+			Control: control.Append(bindFunc, control.DisableUDPNetReset()),
 		}
 		packetConn, err := listenConfig.ListenPacket(listenContext, networkName, address)
 		if err != nil {
 			return nil, err
 		}
 		udpConn := packetConn.(*net.UDPConn)
+		if err = dialer.RegisterEBPFSelfBypassPacketConn(network, udpConn); err != nil {
+			_ = udpConn.Close()
+			return nil, err
+		}
 		rawConn, rawConnErr := udpConn.SyscallConn()
 		if rawConnErr != nil {
 			return udpConn, nil

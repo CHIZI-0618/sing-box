@@ -73,6 +73,28 @@ func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager
 	return &selfBypassPacketConn{PacketConn: conn, cleanup: EBPFSelfBypassCleanup(networkManager, rawConn), rawConn: rawConn}
 }
 
+// RegisterEBPFSelfBypassPacketConn records a successfully created packet
+// socket. Callers must invoke this after ListenPacket succeeds: a
+// net.ListenConfig control callback runs before bind and cannot unregister a
+// cookie when the bind fails.
+func RegisterEBPFSelfBypassPacketConn(networkManager adapter.NetworkManager, conn net.PacketConn) error {
+	provider, loaded := networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if !loaded || provider.EBPFSelfBypass() == nil {
+		return nil
+	}
+	syscallConn, loaded := conn.(syscall.Conn)
+	if !loaded {
+		return nil
+	}
+	rawConn, err := syscallConn.SyscallConn()
+	if err != nil {
+		return err
+	}
+	return provider.EBPFSelfBypass().RegisterSocket(rawConn)
+}
+
 type selfBypassConn struct {
 	net.Conn
 	cleanup   func()

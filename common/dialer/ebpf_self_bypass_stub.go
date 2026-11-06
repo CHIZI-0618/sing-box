@@ -19,6 +19,10 @@ func bindEBPFSelfBypassPacketConnLifecycle(_ adapter.NetworkManager, conn net.Pa
 	return conn
 }
 
+func RegisterEBPFSelfBypassPacketConn(_ adapter.NetworkManager, _ net.PacketConn) error {
+	return nil
+}
+
 func EBPFSelfBypassCleanup(adapter.NetworkManager, syscall.RawConn) func() {
 	return nil
 }
