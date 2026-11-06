@@ -355,9 +355,6 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, func
 		if err != nil {
 			return err
 		}
-		if selfBypass != nil {
-			return selfBypass.RegisterSocket(rawConn)
-		}
 		return nil
 	})
 	i.tcNamespaceAccess.RLock()
@@ -378,11 +375,17 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, func
 	}
 	var cleanup func()
 	if selfBypass != nil {
+		rawConn, rawErr := udpConnection.SyscallConn()
+		if rawErr != nil {
+			_ = packetConnection.Close()
+			return nil, nil, rawErr
+		}
+		if err = selfBypass.RegisterSocket(rawConn); err != nil {
+			_ = packetConnection.Close()
+			return nil, nil, E.Cause(err, "register TC eBPF UDP reply socket")
+		}
 		cleanup = func() {
-			rawConn, err := udpConnection.SyscallConn()
-			if err == nil {
-				_ = selfBypass.UnregisterSocket(rawConn)
-			}
+			_ = selfBypass.UnregisterSocket(rawConn)
 		}
 	}
 	return udpConnection, cleanup, nil

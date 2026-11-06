@@ -233,7 +233,7 @@ func (i *Inbound) startCgroupDataPlane(hostAddresses []netip.Addr) error {
 	if !i.localCgroupEnabled() {
 		return nil
 	}
-	if err := i.listeners.start(i.enableTCP, i.enableUDP, true, i.localIPv6, i.newListener); err != nil {
+	if err := i.listeners.start(i.enableTCP, i.enableUDP, true, i.localIPv6, i.newListener, i.registerListenerSocket); err != nil {
 		return err
 	}
 	if err := i.prepareCgroupBackend(); err != nil {

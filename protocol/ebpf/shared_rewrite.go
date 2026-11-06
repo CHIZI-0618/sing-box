@@ -160,6 +160,7 @@ func (s *sharedRewrite) startListeners() error {
 		s.inbound.redirectIPv4Prefix.IsValid(),
 		s.inbound.sharedRewriteIPv6Enabled(),
 		s.newListener,
+		s.inbound.registerListenerSocket,
 	)
 }
 

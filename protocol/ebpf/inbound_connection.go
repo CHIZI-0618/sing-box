@@ -235,11 +235,47 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 		if configureErr != nil {
 			return configureErr
 		}
-		if !i.selfBypassUsesUserspaceRegistration() {
-			return nil
-		}
-		return i.selfBypass.RegisterSocket(rawConn)
+		// Registration happens after a successful bind. Control runs before
+		// bind, so registering here would leak a cookie when listen fails.
+		return nil
 	}
+}
+
+func (i *Inbound) registerListenerSocket(current *listener.Listener) error {
+	if !i.selfBypassUsesUserspaceRegistration() {
+		return nil
+	}
+	var registerErr error
+	var registered []syscall.RawConn
+	register := func(conn syscall.Conn) {
+		if registerErr != nil {
+			return
+		}
+		rawConn, err := conn.SyscallConn()
+		if err != nil {
+			registerErr = err
+			return
+		}
+		if registerErr = i.selfBypass.RegisterSocket(rawConn); registerErr == nil {
+			registered = append(registered, rawConn)
+		}
+	}
+	if tcpListener := current.TCPListener(); tcpListener != nil {
+		if conn, loaded := tcpListener.(syscall.Conn); loaded {
+			register(conn)
+		} else {
+			return E.New("eBPF TCP listener does not expose syscall.Conn")
+		}
+	}
+	if udpConn := current.UDPConn(); udpConn != nil {
+		register(udpConn)
+	}
+	if registerErr != nil {
+		for index := len(registered) - 1; index >= 0; index-- {
+			registerErr = E.Errors(registerErr, i.selfBypass.UnregisterSocket(registered[index]))
+		}
+	}
+	return registerErr
 }
 
 // selfBypassUsesUserspaceRegistration distinguishes the cgroup fallback that
