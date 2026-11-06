@@ -45,6 +45,7 @@ type NetworkManager struct {
 	hostPort                common.TypedValue[tun.RoutedPort]
 	bridgeInterfaceAccess   sync.Mutex
 	bridgeInterfaces        []string
+	ebpfSelfBypass          ebpfSelfBypassState
 	networkMonitor          tun.NetworkUpdateMonitor
 	interfaceMonitor        tun.DefaultInterfaceMonitor
 	packageManager          tun.PackageManager
