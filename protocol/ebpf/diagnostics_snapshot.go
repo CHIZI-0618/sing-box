@@ -22,9 +22,7 @@ type inboundRuntimeSnapshot struct {
 	networkGeneration uint64
 }
 
-func (i *Inbound) runtimeSnapshot() inboundRuntimeSnapshot {
-	i.lifecycleAccess.Lock()
-	defer i.lifecycleAccess.Unlock()
+func (i *Inbound) runtimeSnapshotLocked() inboundRuntimeSnapshot {
 	return inboundRuntimeSnapshot{
 		selfBypass:        i.selfBypass,
 		cgroupBackend:     i.cgroupBackendInstance(),
@@ -42,7 +40,12 @@ func (s inboundRuntimeSnapshot) tcBackend() *commonEBPF.TCBackend {
 }
 
 func (i *Inbound) Diagnostics() EBPFDiagnostics {
-	runtime := i.runtimeSnapshot()
+	// Keep runtime owners alive while their kernel-backed diagnostics are read.
+	// API callers are independently cached, so this lifecycle lock does not add
+	// a polling wakeup or per-request background work.
+	i.lifecycleAccess.Lock()
+	defer i.lifecycleAccess.Unlock()
+	runtime := i.runtimeSnapshotLocked()
 	diagnostics := EBPFDiagnostics{
 		SchemaVersion:   adapter.EBPFDiagnosticsSchemaVersion,
 		ObservedAt:      time.Now(),
