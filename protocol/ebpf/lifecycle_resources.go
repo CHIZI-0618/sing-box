@@ -168,6 +168,12 @@ func (i *Inbound) takeTCDataPlane() tcRuntime {
 	return dataPlane
 }
 
+func (i *Inbound) tcDataPlaneInstance() tcRuntime {
+	i.tcDataPlaneAccess.RLock()
+	defer i.tcDataPlaneAccess.RUnlock()
+	return i.tcDataPlane
+}
+
 func (i *Inbound) reconcileTCDataPlane(localInterface string, sharedInterfaces []string, hostAddresses []netip.Addr) error {
 	i.tcDataPlaneAccess.RLock()
 	defer i.tcDataPlaneAccess.RUnlock()

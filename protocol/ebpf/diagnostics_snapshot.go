@@ -11,7 +11,38 @@ import (
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 )
 
+// inboundRuntimeSnapshot captures resource owners while the inbound lifecycle
+// lock is held. Diagnostics then observes a stable set of runtime pointers
+// without holding lifecycle locks while querying kernel-backed state.
+type inboundRuntimeSnapshot struct {
+	selfBypass        *commonEBPF.SelfBypass
+	cgroupBackend     *commonEBPF.CgroupBackend
+	tcDataPlane       tcRuntime
+	sharedRewrite     *sharedRewrite
+	networkGeneration uint64
+}
+
+func (i *Inbound) runtimeSnapshot() inboundRuntimeSnapshot {
+	i.lifecycleAccess.Lock()
+	defer i.lifecycleAccess.Unlock()
+	return inboundRuntimeSnapshot{
+		selfBypass:        i.selfBypass,
+		cgroupBackend:     i.cgroupBackendInstance(),
+		tcDataPlane:       i.tcDataPlaneInstance(),
+		sharedRewrite:     i.sharedRewriteInstance(),
+		networkGeneration: i.networkGeneration,
+	}
+}
+
+func (s inboundRuntimeSnapshot) tcBackend() *commonEBPF.TCBackend {
+	if s.tcDataPlane == nil {
+		return nil
+	}
+	return s.tcDataPlane.Backend()
+}
+
 func (i *Inbound) Diagnostics() EBPFDiagnostics {
+	runtime := i.runtimeSnapshot()
 	diagnostics := EBPFDiagnostics{
 		SchemaVersion:   adapter.EBPFDiagnosticsSchemaVersion,
 		ObservedAt:      time.Now(),
@@ -22,12 +53,12 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	}
 	if i.localEnabled {
 		diagnostics.LocalDataPlane = i.localDataPlane
-		if i.selfBypass != nil {
-			diagnostics.LocalSelfBypassMode = i.selfBypass.Mode().String()
-			diagnostics.LocalSelfBypassCleanupMode = i.selfBypass.CleanupMode()
+		if runtime.selfBypass != nil {
+			diagnostics.LocalSelfBypassMode = runtime.selfBypass.Mode().String()
+			diagnostics.LocalSelfBypassCleanupMode = runtime.selfBypass.CleanupMode()
 		}
 	}
-	if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {
+	if backend := runtime.cgroupBackend; backend != nil && !backend.IsClosed() {
 		diagnostics.LocalCgroupAttachMode = backend.AttachMode()
 		diagnostics.LocalUDPCleanupMode = backend.UDPCleanupMode()
 		diagnostics.LocalUDPUserspaceCleanupMode = backend.UDPUserspaceCleanupMode()
@@ -48,9 +79,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		diagnostics.SharedDataPlane = i.sharedDataPlane
 	}
 
-	i.tcDataPlaneAccess.RLock()
-	tcDataPlane := i.tcDataPlane
-	i.tcDataPlaneAccess.RUnlock()
+	tcDataPlane := runtime.tcDataPlane
 	if tcDataPlane != nil {
 		diagnostics.Attachments = append(diagnostics.Attachments, tcDataPlane.AttachmentDiagnostics()...)
 		tc := tcDataPlane.TCDiagnostics()
@@ -76,13 +105,13 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 			diagnostics.TCHealthStatus = "attached"
 		}
 	}
-	if shared := i.sharedRewriteInstance(); shared != nil {
+	if shared := runtime.sharedRewrite; shared != nil {
 		if sharedDataPlane := shared.dataPlaneInstance(); sharedDataPlane != nil {
 			diagnostics.Attachments = append(diagnostics.Attachments, sharedDataPlane.AttachmentDiagnostics()...)
 		}
 	}
 	if i.localCgroupEnabled() {
-		if backend := i.cgroupBackendInstance(); backend != nil && !backend.IsClosed() {
+		if backend := runtime.cgroupBackend; backend != nil && !backend.IsClosed() {
 			diagnostics.Attachments = append(diagnostics.Attachments, EBPFAttachmentDiagnostics{
 				InterfaceName: backend.CgroupPath(),
 				Role:          "local",
@@ -111,7 +140,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		&i.udpWarnings.cleanup,
 		&i.udpWarnings.replySocketCapacity,
 	}
-	if shared := i.sharedRewriteInstance(); shared != nil {
+	if shared := runtime.sharedRewrite; shared != nil {
 		limiters = append(limiters,
 			&shared.tcpWarnings,
 			&shared.janitorWarnings,
@@ -144,7 +173,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		reconcileAt := i.diagnostics.lastReconcileAt
 		diagnostics.TCLastReconcileAt = &reconcileAt
 	}
-	diagnostics.TCNetworkGeneration = i.networkGeneration
+	diagnostics.TCNetworkGeneration = runtime.networkGeneration
 	diagnostics.TCAssignmentSweepScanned = i.tcAssignmentSweepScanned.Load()
 	diagnostics.TCAssignmentSweepRemoved = i.tcAssignmentSweepRemoved.Load()
 	diagnostics.TCAssignmentSweepMissing = i.tcAssignmentSweepMissing.Load()
@@ -213,10 +242,10 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		RetryCount:            i.localBypassRules.retryCount,
 		BackendState:          make(map[string]BypassRuleSetBackendState, 2),
 	}
-	if i.localSocketAssignEnabled() && i.tcBackend() != nil {
+	if i.localSocketAssignEnabled() && runtime.tcBackend() != nil {
 		localState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.localBypassRules.tc.version, Known: i.localBypassRules.tc.known}
 	}
-	if i.cgroupBackendInstance() != nil {
+	if runtime.cgroupBackend != nil {
 		localState.BackendState["cgroup"] = BypassRuleSetBackendState{Version: i.localBypassRules.cgroup.version, Known: i.localBypassRules.cgroup.known}
 	}
 	sharedState := scopedBypassRuleSetDiagnostics{
@@ -227,10 +256,10 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 		RetryCount:            i.sharedBypassRules.retryCount,
 		BackendState:          make(map[string]BypassRuleSetBackendState, 2),
 	}
-	if shared := i.sharedRewriteInstance(); shared != nil && shared.sharedBackendInstance() != nil {
+	if shared := runtime.sharedRewrite; shared != nil && shared.sharedBackendInstance() != nil {
 		sharedState.BackendState["packet_rewrite"] = BypassRuleSetBackendState{Version: i.sharedBypassRules.shared.version, Known: i.sharedBypassRules.shared.known}
 	}
-	if i.sharedSocketAssignEnabled() && i.tcBackend() != nil {
+	if i.sharedSocketAssignEnabled() && runtime.tcBackend() != nil {
 		sharedState.BackendState["TC"] = BypassRuleSetBackendState{Version: i.sharedBypassRules.tc.version, Known: i.sharedBypassRules.tc.known}
 	}
 	diagnostics.LocalBypassRuleSet = localState
@@ -249,11 +278,11 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 
 	diagnostics.UDPSessionCount = i.udpClientTable.count()
 	diagnostics.UDPNAT.add(i.udpNat.diagnostics())
-	if shared := i.sharedRewriteInstance(); shared != nil {
+	if shared := runtime.sharedRewrite; shared != nil {
 		diagnostics.UDPSessionCount += shared.sharedUDPClientTable.count()
 		diagnostics.UDPNAT.add(shared.udpNat.diagnostics())
 	}
-	if backend := i.cgroupBackendInstance(); backend != nil {
+	if backend := runtime.cgroupBackend; backend != nil {
 		if drops, err := backend.UDPReleaseNotificationDrops(); err == nil {
 			diagnostics.UDPNAT.ReleaseNotificationDrops = drops
 		}
@@ -275,7 +304,7 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 
 	diagnostics.Counters = i.counters.snapshot()
 	var sharedRewriteBackend *commonEBPF.SharedPacketRewriteBackend
-	if shared := i.sharedRewriteInstance(); shared != nil {
+	if shared := runtime.sharedRewrite; shared != nil {
 		sharedRewriteBackend = shared.sharedBackendInstance()
 	}
 	if sharedRewriteBackend != nil {
@@ -301,8 +330,8 @@ func (i *Inbound) Diagnostics() EBPFDiagnostics {
 	// shared socket_assign) and by the shared packet-rewrite backend at the
 	// same time -- each loads its own copy of the object -- so their counts
 	// are summed rather than one overwriting the other.
-	addFakeIPICMPCounters(&diagnostics.Counters, i.tcBackend(), sharedRewriteBackend)
-	if tcBackend := i.tcBackend(); tcBackend != nil {
+	addFakeIPICMPCounters(&diagnostics.Counters, runtime.tcBackend(), sharedRewriteBackend)
+	if tcBackend := runtime.tcBackend(); tcBackend != nil {
 		if stats, err := tcBackend.Stats(); err == nil {
 			diagnostics.Counters.TCSocketLookupFailures = stats.SocketLookupFailures
 			diagnostics.Counters.TCSKAssignFailures = stats.SKAssignFailures

@@ -48,6 +48,8 @@ func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (i *Inbound) startInbound() error {
+	i.lifecycleAccess.Lock()
+	defer i.lifecycleAccess.Unlock()
 	i.interfaceWarnings.defaultInterfaceState.reset()
 	if err := i.closeTCDataPlane(); err != nil {
 		return E.Cause(err, "reclaim previous TC data plane")
