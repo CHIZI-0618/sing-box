@@ -177,6 +177,10 @@ func (s *internalListenerSet) start(
 }
 
 func (s *internalListenerSet) close() error {
+	return s.closeWithCleanup(nil)
+}
+
+func (s *internalListenerSet) closeWithCleanup(cleanup func(*listener.Listener) error) error {
 	s.access.Lock()
 	defer s.access.Unlock()
 	listeners := []*listener.Listener{s.tcp4, s.tcp6, s.udp4, s.udp6}
@@ -190,6 +194,9 @@ func (s *internalListenerSet) close() error {
 	var closeErr error
 	for _, current := range listeners {
 		if current != nil {
+			if cleanup != nil {
+				closeErr = E.Errors(closeErr, cleanup(current))
+			}
 			closeErr = E.Errors(closeErr, common.Close(current))
 		}
 	}

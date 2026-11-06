@@ -191,7 +191,7 @@ func (s *sharedRewrite) Close() error {
 }
 
 func (s *sharedRewrite) closeListeners() error {
-	return s.listeners.close()
+	return s.listeners.closeWithCleanup(s.inbound.unregisterListenerSockets)
 }
 
 func (s *sharedRewrite) IsClosed() bool {
