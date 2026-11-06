@@ -18,46 +18,15 @@ func (i *Inbound) cleanupStartFailure() error {
 }
 
 func (i *Inbound) closeResources() error {
-	i.stopTCAssignmentJanitor()
-	monitorErr := i.stopTCInterfaceMonitor()
-	i.stopBypassRuleSets()
-	sharedRewriteErr := error(nil)
-	if shared := i.takeSharedRewrite(); shared != nil {
-		sharedRewriteErr = shared.Close()
-		if !shared.IsClosed() {
-			i.setSharedRewrite(shared)
-			if sharedRewriteErr == nil {
-				sharedRewriteErr = E.New("shared packet-rewrite runtime remained open after close")
-			}
-		}
-	}
+	monitorErr := i.stopInboundWorkers()
+	sharedRewriteErr := i.closeSharedRewriteOwner()
 	dataPlane := i.takeTCDataPlane()
 	disableErr := error(nil)
 	if dataPlane != nil {
 		disableErr = dataPlane.Disable()
 	}
-	cgroupBackend := i.takeCgroupBackend()
-	cgroupErr := error(nil)
-	if cgroupBackend != nil {
-		i.stopCgroupRecoveryScheduler()
-		cgroupErr = cgroupBackend.Close()
-		i.cgroupReleaseWait.Wait()
-		// Close keeps the runtime when a program could not be detached, because a
-		// legacy cgroup attachment is owned by the cgroup rather than by the
-		// program handle: dropping the handles would leave that program attached
-		// with nothing able to detach it. Take the backend back so a later close
-		// can retry the slots that failed.
-		if !cgroupBackend.IsClosed() {
-			i.setCgroupBackend(cgroupBackend)
-			if cgroupErr == nil {
-				cgroupErr = E.New("cgroup eBPF backend remained open after close")
-			}
-		}
-	}
-	listenerErr := i.closeListeners()
-	udpNATErr := i.udpNat.Close()
-	i.udpReplySockets.stopSweeper()
-	udpReplySocketErr := i.udpReplySockets.close()
+	cgroupErr := i.closeCgroupBackendOwner()
+	listenerErr, udpNATErr, udpReplySocketErr := i.closeUDPResources()
 	dataPlaneErr := i.closeTakenTCDataPlane(dataPlane)
 	// Failed detaches retain their owner and dependencies for the next Close.
 	// In particular, removing redirect routes or self-bypass while a hook is
@@ -98,6 +67,56 @@ func (i *Inbound) closeResources() error {
 		i.processTrackerRollback, processTrackerRollbackErr = closeProcessTrackerOwner(i.processTrackerRollback)
 	}
 	return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, namespaceErr, cgroupErr, routeErr, processTrackerErr, processTrackerRollbackErr, selfBypassErr)
+}
+
+func (i *Inbound) stopInboundWorkers() error {
+	i.stopTCAssignmentJanitor()
+	monitorErr := i.stopTCInterfaceMonitor()
+	i.stopBypassRuleSets()
+	return monitorErr
+}
+
+func (i *Inbound) closeSharedRewriteOwner() error {
+	shared := i.takeSharedRewrite()
+	if shared == nil {
+		return nil
+	}
+	closeErr := shared.Close()
+	if !shared.IsClosed() {
+		i.setSharedRewrite(shared)
+		if closeErr == nil {
+			closeErr = E.New("shared packet-rewrite runtime remained open after close")
+		}
+	}
+	return closeErr
+}
+
+func (i *Inbound) closeCgroupBackendOwner() error {
+	backend := i.takeCgroupBackend()
+	if backend == nil {
+		return nil
+	}
+	i.stopCgroupRecoveryScheduler()
+	closeErr := backend.Close()
+	i.cgroupReleaseWait.Wait()
+	// A legacy cgroup attachment belongs to the cgroup rather than the program
+	// handle. Keep the backend owner when detach failed so a later Close can
+	// retry it instead of leaving an attached program with no owner.
+	if !backend.IsClosed() {
+		i.setCgroupBackend(backend)
+		if closeErr == nil {
+			closeErr = E.New("cgroup eBPF backend remained open after close")
+		}
+	}
+	return closeErr
+}
+
+func (i *Inbound) closeUDPResources() (listenerErr, udpNATErr, udpReplySocketErr error) {
+	listenerErr = i.closeListeners()
+	udpNATErr = i.udpNat.Close()
+	i.udpReplySockets.stopSweeper()
+	udpReplySocketErr = i.udpReplySockets.close()
+	return
 }
 
 func closeProcessTrackerOwner(tracker processTrackerOwner) (processTrackerOwner, error) {
