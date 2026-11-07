@@ -78,6 +78,35 @@ func TestNeedsLPMPolicyUsesCompiledEntries(t *testing.T) {
 	}
 }
 
+func TestNeedsLPMPolicySkipsRedundantFakeIPForceIntercept(t *testing.T) {
+	inbound := &Inbound{
+		localEnabled:        true,
+		localDataPlane:      localDataPlaneCgroup,
+		sharedEnabled:       true,
+		sharedDataPlane:     sharedDataPlanePacketRewrite,
+		localDNSMode:        dnsModeHijack,
+		sharedDNSMode:       dnsModeHijack,
+		fakeIPIPv4Prefix:    netip.MustParsePrefix("198.18.0.0/15"),
+		fakeIPIPv6Prefix:    netip.MustParsePrefix("fc00::/18"),
+		localPolicy:         localUIDPolicy{BypassPrivateAddress: false},
+		sharedBypassPrivate: false,
+	}
+	if inbound.needsLPMPolicy() {
+		t.Fatal("default intercept policy must not require a FakeIP LPM update")
+	}
+	if ipv4, ipv6 := inbound.fakeIPPrefixesForScope(false); ipv4.IsValid() || ipv6.IsValid() {
+		t.Fatalf("local FakeIP force prefixes were not omitted: %v, %v", ipv4, ipv6)
+	}
+	if ipv4, ipv6 := inbound.fakeIPPrefixesForScope(true); ipv4.IsValid() || ipv6.IsValid() {
+		t.Fatalf("shared FakeIP force prefixes were not omitted: %v, %v", ipv4, ipv6)
+	}
+
+	inbound.localPolicy.ExcludeUID = []uidRange{{Start: 1000, End: 1000}}
+	if !inbound.needsLPMPolicy() || !inbound.fakeIPForceInterceptRequired(false) {
+		t.Fatal("a local UID pass exception must retain FakeIP force interception")
+	}
+}
+
 type retryProcessTrackerOwner struct {
 	closed   bool
 	attempts int

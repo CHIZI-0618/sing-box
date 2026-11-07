@@ -137,8 +137,9 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 			Start: uid.Start, End: uid.End, Action: commonEBPF.DecisionPass,
 		})
 	}
+	localFakeIPv4, localFakeIPv6 := i.fakeIPPrefixesForScope(false)
 	appendDestinationPolicy(&policy.Local, i.localPolicy.BypassPrivateAddress, i.localBypassPort, i.localDNSMode,
-		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.localBypassExclude, i.enableTCP, i.enableUDP)
+		localFakeIPv4, localFakeIPv6, i.localBypassExclude, i.enableTCP, i.enableUDP)
 
 	policy.Shared.Default = sharedSourceDefault(len(i.sharedOptions.IncludeSourceCIDR), len(i.sharedIncludeMAC))
 	for _, prefix := range i.sharedOptions.IncludeSourceCIDR {
@@ -161,11 +162,51 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 			Address: address, Action: commonEBPF.DecisionPass,
 		})
 	}
+	sharedFakeIPv4, sharedFakeIPv6 := i.fakeIPPrefixesForScope(true)
 	appendDestinationPolicy(&policy.Shared, i.sharedBypassPrivate, i.sharedBypassPort, i.sharedDNSMode,
-		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.sharedBypassExclude, i.enableTCP, i.enableUDP)
+		sharedFakeIPv4, sharedFakeIPv6, i.sharedBypassExclude, i.enableTCP, i.enableUDP)
 	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
 	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
 	return commonEBPF.CompileActionPolicy(policy)
+}
+
+// fakeIPPrefixesForScope keeps FakeIP force-intercept entries only when a
+// lower-priority pass policy could otherwise let them through. A default
+// intercept decision already handles FakeIP without touching an LPM trie.
+// Configured eBPF bypass rule-sets are included even while empty because they
+// may publish pass CIDRs after a runtime refresh.
+func (i *Inbound) fakeIPPrefixesForScope(shared bool) (netip.Prefix, netip.Prefix) {
+	if (shared && !i.sharedEnabled) || (!shared && !i.localEnabled) ||
+		(!i.fakeIPIPv4Prefix.IsValid() && !i.fakeIPIPv6Prefix.IsValid()) ||
+		!i.fakeIPForceInterceptRequired(shared) {
+		return netip.Prefix{}, netip.Prefix{}
+	}
+	return i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix
+}
+
+func (i *Inbound) fakeIPForceInterceptRequired(shared bool) bool {
+	if !i.fakeIPIPv4Prefix.IsValid() && !i.fakeIPIPv6Prefix.IsValid() {
+		return false
+	}
+	if i.fakeIPICMPReply {
+		return true
+	}
+	if shared {
+		return i.sharedBypassPrivate ||
+			len(i.sharedOptions.IncludeSourceCIDR) > 0 ||
+			len(i.sharedOptions.ExcludeSourceCIDR) > 0 ||
+			len(i.sharedIncludeMAC) > 0 ||
+			len(i.sharedExcludeMAC) > 0 ||
+			len(i.sharedBypassPort) > 0 ||
+			i.sharedDNSMode == dnsModeOff ||
+			len(i.sharedBypassRules.ruleSets) > 0
+	}
+	return i.localPolicy.BypassPrivateAddress ||
+		i.localPolicy.IncludeUIDConfigured ||
+		len(i.localPolicy.ExcludeUID) > 0 ||
+		len(i.localBypassPort) > 0 ||
+		i.localDNSMode == dnsModeOff ||
+		len(i.localBypassRules.ruleSets) > 0
 }
 
 func sharedSourceDefault(includeCIDRs, includeMACs int) commonEBPF.Decision {

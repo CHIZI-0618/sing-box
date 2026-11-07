@@ -500,9 +500,12 @@ func (i *Inbound) checkKernelCapabilities() error {
 }
 
 func (i *Inbound) needsLPMPolicy() bool {
-	if i.fakeIPIPv4Prefix.IsValid() || i.fakeIPIPv6Prefix.IsValid() ||
-		(i.localEnabled && (len(i.localBypassExclude) > 0 || i.localPolicy.BypassPrivateAddress)) ||
+	if (i.localEnabled && (len(i.localBypassExclude) > 0 || i.localPolicy.BypassPrivateAddress)) ||
 		(i.sharedEnabled && (len(i.sharedBypassExclude) > 0 || i.sharedBypassPrivate)) {
+		return true
+	}
+	if (i.localEnabled && i.fakeIPForceInterceptRequired(false)) ||
+		(i.sharedEnabled && i.fakeIPForceInterceptRequired(true)) {
 		return true
 	}
 	if (i.localSocketAssignEnabled() || i.localCgroupEnabled()) &&
@@ -513,14 +516,10 @@ func (i *Inbound) needsLPMPolicy() bool {
 		(len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0) {
 		return true
 	}
-	for _, ruleSets := range [][]adapter.RuleSet{i.localBypassRules.ruleSets, i.sharedBypassRules.ruleSets} {
-		for _, ruleSet := range ruleSets {
-			for _, ipSet := range ruleSet.ExtractIPSet() {
-				if len(ipSet.Prefixes()) > 0 {
-					return true
-				}
-			}
-		}
+	// A configured eBPF bypass rule-set can publish CIDRs after a refresh even
+	// when its current snapshot is empty, so reserve the LPM capability up front.
+	if len(i.localBypassRules.ruleSets) > 0 || len(i.sharedBypassRules.ruleSets) > 0 {
+		return true
 	}
 	return false
 }
