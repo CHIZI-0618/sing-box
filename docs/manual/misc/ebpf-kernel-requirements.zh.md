@@ -194,9 +194,16 @@ BTF 中确认存在修复后的 `bpf_lpm_trie_key_u8` 布局。若内核处于�
 确认修复，sing-box 会在执行任何 LPM 更新前拒绝该策略。其他版本继续执行常规的
 运行时 map 和更新能力检查。
 
-只有 UID、应用、源 CIDR 或目标 bypass 策略实际包含条目时才需要这项检查。TC 对象
-仍会创建空的策略 map，但不会写入。精确主机地址策略使用 `HASH` map，不受此问题
-影响。后续动态更新 bypass 策略时也会重复执行同一保护。
+只有最终策略实际包含 UID、应用、源 CIDR 或目标 bypass 条目，或者配置了可能在刷新
+后发布这些条目的 eBPF `local.bypass_rule_set` / `shared.bypass_rule_set` 时，才需要
+这项检查。TC 对象仍会创建空的策略 map，但不会写入。精确主机地址策略使用 `HASH`
+map，不受此问题影响。后续动态更新 bypass 策略时也会重复执行同一保护。
+
+仅配置 FakeIP 前缀本身不一定需要更新 LPM。若 local 或 shared 的默认动作已经是拦截，
+且没有更低优先级的放行策略，sing-box 会省略冗余的 FakeIP 强制拦截条目。若 FakeIP
+需要覆盖 UID/来源放行策略、私网或端口绕过、已配置的 eBPF bypass rule-set，或者启用
+`fakeip_icmp: reply`，仍然需要执行这项检查。路由层的 `rule_set` 是普通路由策略，
+不等同于 eBPF bypass rule-set。
 
 ## 权限
 
