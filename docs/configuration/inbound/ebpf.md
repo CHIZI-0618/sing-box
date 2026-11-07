@@ -81,6 +81,15 @@ for compatibility; duration strings such as `30s` and `5m` are also accepted.
 The value must be at least `5s` and is rounded up to whole seconds for the
 kernel data plane.
 
+### udp_fragment
+
+Allow transparent UDP listeners to fragment oversized datagrams before they
+are returned through the eBPF inbound. The default is `false`. This applies to
+the generated proxy-side UDP reply path; it does not make fragmented packets
+arriving at an interception hook eligible for interception. IPv4 fragments and
+non-atomic IPv6 fragments still bypass when a complete transport tuple is not
+available.
+
 ### tc_priority
 
 TC filter priority from 1 through 65535. Default is `1`. Change it only when
@@ -308,8 +317,8 @@ Bypasses private and special-use destinations. Default is `true`.
 
 Like `local.bypass_exclude`, but for the shared data plane: CIDR prefixes
 that are force-intercepted ahead of every shared bypass decision. Multiple IPv4
-and IPv6 prefixes are accepted; a prefix that overlaps the DNS fake-ip range
-is rejected at startup.
+and IPv6 prefixes are accepted. The set is independent from the FakeIP
+prefixes; overlapping prefixes are resolved by the normal final-action policy.
 
 ### shared.bypass_rule_set
 

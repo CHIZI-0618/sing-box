@@ -75,6 +75,12 @@ UDP 会话超时，默认 `5m`。为兼容旧格式，JSON 数字按秒解释；
 `30s`、`5m` 等 duration 字符串。该值不能小于 `5s`，写入内核数据面时会向上
 取整到整秒。
 
+### udp_fragment
+
+允许透明 UDP listener 在返回超大数据报前进行分片，默认值为 `false`。该选项只作用于
+eBPF 入站生成的代理侧 UDP 回包路径；不会让进入接管 hook 时已经分片的报文重新参与接管。
+当 hook 无法取得完整传输层 tuple 时，IPv4 分片和非 atomic IPv6 分片仍会绕过。
+
 ### tc_priority
 
 TC filter 优先级，范围 1 至 65535，默认 `1`。仅在需要与其他 filter 协调顺序时
@@ -277,8 +283,8 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 ### shared.bypass_exclude
 
 与 `local.bypass_exclude` 相同，但作用于 shared 数据面：这些 CIDR 前缀会在
-所有 shared bypass 决策之前被强制接管。支持配置多个 IPv4 和 IPv6 前缀，与 DNS
-fake-ip 范围重叠的前缀会在启动时报错。
+所有 shared bypass 决策之前被强制接管。支持配置多个 IPv4 和 IPv6 前缀；该集合
+与 FakeIP 前缀独立，重叠时按正常的最终动作策略处理。
 
 ### shared.bypass_rule_set
 

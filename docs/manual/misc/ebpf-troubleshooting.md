@@ -215,8 +215,10 @@ interpreting a single large number:
   `pressure: not_applicable` has a fixed layout that is not safely iterable;
   `category: configured_policy` identifies a policy-sized map whose capacity
   comes from the compiled policy; `pressure: configured` is retained as the
-  corresponding neutral result. `recovery_failed` means key iteration itself
-  failed. Do not
+  corresponding neutral result. `occupancy_mode` describes how the count was
+  obtained, while `eviction_mode` and `admission_critical` describe whether
+  entries may be reclaimed and whether full capacity can reject new flows.
+  `recovery_failed` means key iteration itself failed. Do not
   interpret any of these states as zero occupancy. A top-level `error` means
   map enumeration or inspection was denied before all maps could be observed.
 
