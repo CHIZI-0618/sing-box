@@ -134,6 +134,7 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 				Status: "pass",
 				Maps: []adapter.EBPFMapDiagnostics{{
 					ID: 7, Name: "sb_tcp_redirect", Category: "runtime", Type: "LRUHash", MaxEntries: 4096, Entries: 3, Pressure: "healthy", Supported: true,
+					OccupancyMode: "exact_scan", EvictionMode: "lru_safe_cache", AdmissionCritical: true,
 				}},
 			},
 		}},
@@ -203,7 +204,10 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 		response.KernelRuntime.Programs[0].Id != 42 || response.KernelRuntime.MapOccupancy == nil ||
 		len(response.KernelRuntime.MapOccupancy.Maps) != 1 || response.KernelRuntime.MapOccupancy.Maps[0].Entries != 3 ||
 		response.KernelRuntime.MapOccupancy.Maps[0].Pressure != "healthy" ||
-		response.KernelRuntime.MapOccupancy.Maps[0].Category != "runtime" {
+		response.KernelRuntime.MapOccupancy.Maps[0].Category != "runtime" ||
+		response.KernelRuntime.MapOccupancy.Maps[0].OccupancyMode != "exact_scan" ||
+		response.KernelRuntime.MapOccupancy.Maps[0].EvictionMode != "lru_safe_cache" ||
+		!response.KernelRuntime.MapOccupancy.Maps[0].AdmissionCritical {
 		t.Fatalf("kernel runtime = %+v", response.KernelRuntime)
 	}
 }

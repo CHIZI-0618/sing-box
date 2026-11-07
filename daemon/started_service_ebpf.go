@@ -56,18 +56,21 @@ func marshalEBPFKernelRuntime(source adapter.EBPFKernelRuntimeDiagnostics) *EBPF
 	}
 	for _, item := range source.MapOccupancy.Maps {
 		destination.MapOccupancy.Maps = append(destination.MapOccupancy.Maps, &EBPFMapDiagnostics{
-			Id:         item.ID,
-			Name:       item.Name,
-			Category:   item.Category,
-			Type:       item.Type,
-			MaxEntries: item.MaxEntries,
-			KeySize:    item.KeySize,
-			ValueSize:  item.ValueSize,
-			Flags:      item.Flags,
-			Entries:    item.Entries,
-			Pressure:   item.Pressure,
-			Supported:  item.Supported,
-			Error:      item.Error,
+			Id:                item.ID,
+			Name:              item.Name,
+			Category:          item.Category,
+			Type:              item.Type,
+			MaxEntries:        item.MaxEntries,
+			KeySize:           item.KeySize,
+			ValueSize:         item.ValueSize,
+			Flags:             item.Flags,
+			Entries:           item.Entries,
+			Pressure:          item.Pressure,
+			Supported:         item.Supported,
+			Error:             item.Error,
+			OccupancyMode:     item.OccupancyMode,
+			EvictionMode:      item.EvictionMode,
+			AdmissionCritical: item.AdmissionCritical,
 		})
 	}
 	return destination
