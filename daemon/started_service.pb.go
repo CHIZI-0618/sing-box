@@ -7954,6 +7954,8 @@ type EBPFInboundDiagnostics struct {
 	LocalSelfBypassReclaimedSockets uint64                         `protobuf:"varint,99,opt,name=localSelfBypassReclaimedSockets,proto3" json:"localSelfBypassReclaimedSockets,omitempty"`
 	LocalSelfBypassReclaimFailures  uint64                         `protobuf:"varint,100,opt,name=localSelfBypassReclaimFailures,proto3" json:"localSelfBypassReclaimFailures,omitempty"`
 	LocalSelfBypassReclaimLastAt    *int64                         `protobuf:"varint,101,opt,name=localSelfBypassReclaimLastAt,proto3,oneof" json:"localSelfBypassReclaimLastAt,omitempty"`
+	LocalSelfBypassStorageFailures  uint64                         `protobuf:"varint,102,opt,name=localSelfBypassStorageFailures,proto3" json:"localSelfBypassStorageFailures,omitempty"`
+	LocalSelfBypassCookieFallbacks  uint64                         `protobuf:"varint,103,opt,name=localSelfBypassCookieFallbacks,proto3" json:"localSelfBypassCookieFallbacks,omitempty"`
 	unknownFields                   protoimpl.UnknownFields
 	sizeCache                       protoimpl.SizeCache
 }
@@ -8586,6 +8588,20 @@ func (x *EBPFInboundDiagnostics) GetLocalSelfBypassReclaimFailures() uint64 {
 func (x *EBPFInboundDiagnostics) GetLocalSelfBypassReclaimLastAt() int64 {
 	if x != nil && x.LocalSelfBypassReclaimLastAt != nil {
 		return *x.LocalSelfBypassReclaimLastAt
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassStorageFailures() uint64 {
+	if x != nil {
+		return x.LocalSelfBypassStorageFailures
+	}
+	return 0
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassCookieFallbacks() uint64 {
+	if x != nil {
+		return x.LocalSelfBypassCookieFallbacks
 	}
 	return 0
 }
@@ -9968,7 +9984,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bcategory\x18\f \x01(\tR\bcategory\x12$\n" +
 	"\roccupancyMode\x18\r \x01(\tR\roccupancyMode\x12\"\n" +
 	"\fevictionMode\x18\x0e \x01(\tR\fevictionMode\x12,\n" +
-	"\x11admissionCritical\x18\x0f \x01(\bR\x11admissionCritical\"\xab'\n" +
+	"\x11admissionCritical\x18\x0f \x01(\bR\x11admissionCritical\"\xbb(\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -10058,7 +10074,9 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x1elocalSelfBypassReclaimAttempts\x18b \x01(\x04R\x1elocalSelfBypassReclaimAttempts\x12H\n" +
 	"\x1flocalSelfBypassReclaimedSockets\x18c \x01(\x04R\x1flocalSelfBypassReclaimedSockets\x12F\n" +
 	"\x1elocalSelfBypassReclaimFailures\x18d \x01(\x04R\x1elocalSelfBypassReclaimFailures\x12G\n" +
-	"\x1clocalSelfBypassReclaimLastAt\x18e \x01(\x03H\bR\x1clocalSelfBypassReclaimLastAt\x88\x01\x01B\x0e\n" +
+	"\x1clocalSelfBypassReclaimLastAt\x18e \x01(\x03H\bR\x1clocalSelfBypassReclaimLastAt\x88\x01\x01\x12F\n" +
+	"\x1elocalSelfBypassStorageFailures\x18f \x01(\x04R\x1elocalSelfBypassStorageFailures\x12F\n" +
+	"\x1elocalSelfBypassCookieFallbacks\x18g \x01(\x04R\x1elocalSelfBypassCookieFallbacksB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +

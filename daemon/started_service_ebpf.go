@@ -95,6 +95,8 @@ func marshalEBPFDiagnostics(source adapter.EBPFRuntimeDiagnostics) *EBPFInboundD
 		LocalSelfBypassReclaimedSockets: source.LocalSelfBypassReclaimedSockets,
 		LocalSelfBypassReclaimFailures:  source.LocalSelfBypassReclaimFailures,
 		LocalSelfBypassReclaimLastAt:    optionalUnixMillis(source.LocalSelfBypassReclaimLastAt),
+		LocalSelfBypassStorageFailures:  source.LocalSelfBypassStorageFailures,
+		LocalSelfBypassCookieFallbacks:  source.LocalSelfBypassCookieFallbacks,
 		LocalUdpCleanupMode:             source.LocalUDPCleanupMode,
 		LocalUdpUserspaceCleanupMode:    source.LocalUDPUserspaceCleanupMode,
 		LocalUdpStorageMode:             source.LocalUDPStorageMode,

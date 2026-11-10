@@ -951,6 +951,8 @@ message EBPFInboundDiagnostics {
   uint64 localSelfBypassReclaimedSockets = 99;
   uint64 localSelfBypassReclaimFailures = 100;
   optional int64 localSelfBypassReclaimLastAt = 101;
+  uint64 localSelfBypassStorageFailures = 102;
+  uint64 localSelfBypassCookieFallbacks = 103;
 }
 
 message EBPFAttachmentDiagnostics {
