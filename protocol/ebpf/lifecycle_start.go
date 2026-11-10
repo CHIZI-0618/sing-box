@@ -164,6 +164,13 @@ func (i *Inbound) startInbound() error {
 		"process_tracking": i.processTrackingMode(),
 		"tc_priority":      i.tcPriority,
 	}
+	if selfBypass := i.selfBypassDiagnostics(); selfBypass.Mode != "" {
+		tcFields["self_bypass_owner"] = selfBypass.OwnerBackend
+		tcFields["self_bypass_metadata"] = selfBypass.MetadataBackend
+		tcFields["self_bypass_cleanup"] = selfBypass.CleanupBackend
+		tcFields["self_bypass_attachment"] = selfBypass.AttachmentBackend
+		tcFields["self_bypass_fallback_cleanup"] = selfBypass.FallbackCleanup
+	}
 	if i.sharedEnabled {
 		tcFields["shared_default_interface"] = i.sharedOptions.DefaultInterface
 	}
@@ -342,6 +349,13 @@ func (i *Inbound) logCgroupRuntime(network string, backend *commonEBPF.CgroupBac
 		"self_bypass":           i.selfBypassMode(),
 		"process_tracking":      i.processTrackingMode(),
 	}
+	if selfBypass := i.selfBypassDiagnostics(); selfBypass.Mode != "" {
+		fields["self_bypass_owner"] = selfBypass.OwnerBackend
+		fields["self_bypass_metadata"] = selfBypass.MetadataBackend
+		fields["self_bypass_cleanup"] = selfBypass.CleanupBackend
+		fields["self_bypass_attachment"] = selfBypass.AttachmentBackend
+		fields["self_bypass_fallback_cleanup"] = selfBypass.FallbackCleanup
+	}
 	if cgroup := backend.CgroupPath(); cgroup != "" {
 		fields["cgroup"] = cgroup
 	}
@@ -425,6 +439,13 @@ func (i *Inbound) selfBypassMode() string {
 		return "none"
 	}
 	return i.selfBypass.Mode().String()
+}
+
+func (i *Inbound) selfBypassDiagnostics() commonEBPF.SelfBypassDiagnostics {
+	if !i.localEnabled || i.selfBypass == nil {
+		return commonEBPF.SelfBypassDiagnostics{}
+	}
+	return i.selfBypass.Diagnostics()
 }
 
 func (i *Inbound) startSelfBypass() error {

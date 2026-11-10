@@ -939,6 +939,11 @@ message EBPFInboundDiagnostics {
   uint64 tcAssignmentSweepInFlight = 84;
   reserved 85;
 	string localSelfBypassFallbackReason = 86;
+	string localSelfBypassOwner = 87;
+	string localSelfBypassMetadata = 88;
+	string localSelfBypassCleanup = 89;
+	string localSelfBypassAttachment = 90;
+	string localSelfBypassReclaim = 91;
 }
 
 message EBPFAttachmentDiagnostics {

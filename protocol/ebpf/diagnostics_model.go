@@ -129,6 +129,11 @@ type EBPFDiagnostics struct {
 	LocalDataPlane                string     `json:"local_data_plane,omitempty"`
 	LocalCgroupAttachMode         string     `json:"local_cgroup_attach_mode,omitempty"`
 	LocalSelfBypassMode           string     `json:"local_self_bypass_mode,omitempty"`
+	LocalSelfBypassOwner          string     `json:"local_self_bypass_owner_backend,omitempty"`
+	LocalSelfBypassMetadata       string     `json:"local_self_bypass_metadata_backend,omitempty"`
+	LocalSelfBypassCleanup        string     `json:"local_self_bypass_cleanup_backend,omitempty"`
+	LocalSelfBypassAttachment     string     `json:"local_self_bypass_attachment_backend,omitempty"`
+	LocalSelfBypassReclaim        string     `json:"local_self_bypass_fallback_cleanup_backend,omitempty"`
 	LocalSelfBypassCleanupMode    string     `json:"local_self_bypass_cleanup_mode,omitempty"`
 	LocalSelfBypassFallbackReason string     `json:"local_self_bypass_fallback_reason,omitempty"`
 	LocalUDPCleanupMode           string     `json:"local_udp_cleanup_mode,omitempty"`
