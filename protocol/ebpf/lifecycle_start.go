@@ -446,10 +446,11 @@ func (i *Inbound) startSelfBypass() error {
 		return nil
 	}
 	if err := i.selfBypass.AttachCgroup(commonEBPF.SelfBypassCgroupConfig{
-		EnableTCP:  i.enableTCP,
-		EnableUDP:  i.enableUDP,
-		EnableIPv6: i.localIPv6,
-		Direct:     i.localCgroupEnabled(),
+		EnableTCP:           i.enableTCP,
+		EnableUDP:           i.enableUDP,
+		EnableIPv6:          i.localIPv6,
+		Direct:              i.localCgroupEnabled(),
+		EnableSocketStorage: i.localSocketAssignEnabled(),
 	}); err != nil {
 		return err
 	}
