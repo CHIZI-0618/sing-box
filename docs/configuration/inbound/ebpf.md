@@ -389,14 +389,18 @@ and a network generation that increments at managed handover boundaries.
 The local self-bypass fields report decision, producer, visibility, cleanup,
 reclaim, and attachment independently. Local cgroup prefers
 `local_self_bypass_decision_backend=direct_tgid` with no per-socket producer or
-cleanup. If the direct object does not load, and for local socket assignment,
-the visibility backend is `cookie_hash`; its producer is
+cleanup. If the direct object does not load, local cgroup uses the cookie
+fallback. Local socket assignment first tries `sk_storage` visibility with a
+cookie shadow; if its representative TC object does not load, visibility is
+`cookie_hash`. The producer is
 `cgroup_sock_create`, `cgroup_addr`, or `userspace_control`, while cleanup is
-`socket_release` or `userspace_unregister`. Attachment is `bpf_link`,
+`sk_storage`, `socket_release`, or `userspace_unregister`. Attachment is `bpf_link`,
 `legacy_attach`, `mixed`, or `none`. `local_self_bypass_fallback_reason`
 explains a capability or object-load fallback. `proc_fd_reclaim` is reported by
 `local_self_bypass_reclaim_backend` only as map-full recovery; its attempts,
 reclaimed sockets, failures, and last run have separate diagnostic fields.
+Userspace storage write failures and cookie fallbacks also have separate
+diagnostic counters.
 The implementation does not use `SO_MARK`; it avoids conflicts with Android
 `netd`, policy routing, and firewall marks. When cgroup hooks are unavailable,
 the userspace socket-cookie map is used as the compatibility fallback.

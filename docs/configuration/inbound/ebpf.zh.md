@@ -345,13 +345,16 @@ listener 查找、delivery 接口、策略路由值、活动/待回收资源数�
 
 local 自绕过诊断分别报告 decision、producer、visibility、cleanup、reclaim 与 attachment。
 local cgroup 优先使用 `local_self_bypass_decision_backend=direct_tgid`，无需按 socket
-记录或清理；直接对象无法加载时，以及 local socket assignment 模式下，visibility 为
-`cookie_hash`，producer 为 `cgroup_sock_create`、`cgroup_addr` 或
-`userspace_control`，cleanup 为 `socket_release` 或 `userspace_unregister`。
+记录或清理；直接对象无法加载时，local cgroup 使用 cookie 回退。local socket assignment
+优先尝试 `sk_storage` visibility，并保留 cookie shadow；实际 TC storage 对象无法加载时，
+visibility 回退为 `cookie_hash`。producer 为 `cgroup_sock_create`、`cgroup_addr` 或
+`userspace_control`，cleanup 为 `sk_storage`、`socket_release` 或
+`userspace_unregister`。
 attachment 为 `bpf_link`、`legacy_attach`、`mixed` 或 `none`；
 `local_self_bypass_fallback_reason` 说明能力或对象加载回退原因。
 `local_self_bypass_reclaim_backend=proc_fd_reclaim` 仅表示 map 满时的有界恢复，尝试次数、
-回收 socket 数、失败数和最近执行时间由独立字段报告。实现不使用 `SO_MARK`，避免与
+回收 socket 数、失败数和最近执行时间由独立字段报告；用户空间 storage 写入失败和
+cookie 回退也有独立诊断计数。实现不使用 `SO_MARK`，避免与
 Android `netd`、策略路由和防火墙 mark
 冲突；当 cgroup hook 不可用时，会回退到用户空间 socket-cookie map。
 
