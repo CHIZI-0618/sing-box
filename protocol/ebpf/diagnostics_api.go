@@ -57,6 +57,8 @@ func diagnosticsForAPI(diagnostics EBPFDiagnostics) adapter.EBPFRuntimeDiagnosti
 		LocalSelfBypassReclaimAttempts:  diagnostics.LocalSelfBypassReclaimAttempts,
 		LocalSelfBypassReclaimedSockets: diagnostics.LocalSelfBypassReclaimedSockets,
 		LocalSelfBypassReclaimFailures:  diagnostics.LocalSelfBypassReclaimFailures,
+		LocalSelfBypassStorageFailures:  diagnostics.LocalSelfBypassStorageFailures,
+		LocalSelfBypassCookieFallbacks:  diagnostics.LocalSelfBypassCookieFallbacks,
 		LocalUDPCleanupMode:             diagnostics.LocalUDPCleanupMode,
 		LocalUDPUserspaceCleanupMode:    diagnostics.LocalUDPUserspaceCleanupMode,
 		LocalUDPStorageMode:             diagnostics.LocalUDPStorageMode,

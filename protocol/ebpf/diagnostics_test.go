@@ -133,6 +133,8 @@ func TestEBPFDiagnosticsPreservesSelfBypassPath(t *testing.T) {
 		LocalSelfBypassReclaimedSockets: 2,
 		LocalSelfBypassReclaimFailures:  1,
 		LocalSelfBypassReclaimLastAt:    &reclaimLastAt,
+		LocalSelfBypassStorageFailures:  4,
+		LocalSelfBypassCookieFallbacks:  5,
 	})
 	if diagnostics.LocalSelfBypassDecision != "cgroup_tgid" ||
 		diagnostics.LocalSelfBypassProducer != "userspace_control" ||
@@ -144,6 +146,8 @@ func TestEBPFDiagnosticsPreservesSelfBypassPath(t *testing.T) {
 		diagnostics.LocalSelfBypassReclaimAttempts != 3 ||
 		diagnostics.LocalSelfBypassReclaimedSockets != 2 ||
 		diagnostics.LocalSelfBypassReclaimFailures != 1 ||
+		diagnostics.LocalSelfBypassStorageFailures != 4 ||
+		diagnostics.LocalSelfBypassCookieFallbacks != 5 ||
 		diagnostics.LocalSelfBypassReclaimLastAt == nil || !diagnostics.LocalSelfBypassReclaimLastAt.Equal(reclaimLastAt) {
 		t.Fatalf("self-bypass diagnostics were not preserved: %+v", diagnostics)
 	}
@@ -204,12 +208,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 25 {
-		t.Fatalf("schema version = %d, want 25 after self-bypass lifecycle diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 26 {
+		t.Fatalf("schema version = %d, want 26 after self-bypass storage diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 25 {
-		t.Fatalf("diagnostics schema version = %d, want 25", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 26 {
+		t.Fatalf("diagnostics schema version = %d, want 26", diagnostics.SchemaVersion)
 	}
 }
 

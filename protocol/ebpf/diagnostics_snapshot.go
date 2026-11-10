@@ -73,6 +73,8 @@ func (i *Inbound) diagnosticsLocked() EBPFDiagnostics {
 			diagnostics.LocalSelfBypassReclaimAttempts = selfBypass.ReclaimAttempts
 			diagnostics.LocalSelfBypassReclaimedSockets = selfBypass.ReclaimedSockets
 			diagnostics.LocalSelfBypassReclaimFailures = selfBypass.ReclaimFailures
+			diagnostics.LocalSelfBypassStorageFailures = selfBypass.StorageWriteFails
+			diagnostics.LocalSelfBypassCookieFallbacks = selfBypass.CookieFallbacks
 			if selfBypass.ReclaimLastAt != 0 {
 				lastAt := time.Unix(0, selfBypass.ReclaimLastAt)
 				diagnostics.LocalSelfBypassReclaimLastAt = &lastAt
