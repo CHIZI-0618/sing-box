@@ -386,12 +386,20 @@ TCX/clsact attachment mode, SOCKMAP/direct listener lookup, delivery interface,
 policy-routing values, active/retired resource counts, health/reconcile times,
 and a network generation that increments at managed handover boundaries.
 
-The local self-bypass fields report the cookie-based mechanism selected by the
-cgroup lifecycle. `local_self_bypass_mode` is the active enforcement mode,
-`local_self_bypass_cleanup_mode` reports which side owns entry removal, and
-`local_self_bypass_fallback_reason` explains why a stronger hook set was not
-selected. `cgroup_socket_addr` means connect/sendmsg hooks are active while
-userspace cookie cleanup is used because `sock_release` is unavailable.
+The local self-bypass fields report independently selected lifecycle paths.
+`local_self_bypass_owner_backend` is `cgroup_tgid`, `cgroup_addr`, or
+`cookie_hash`; `local_self_bypass_metadata_backend` is `sk_storage` or
+`cookie_hash`; and `local_self_bypass_cleanup_backend` is `sk_storage`,
+`socket_release`, or `userspace_unregister`. `local_self_bypass_attachment_backend`
+reports `bpf_link`, `legacy_attach`, `mixed`, or `none`. The older
+`local_self_bypass_mode` and `local_self_bypass_cleanup_mode` fields remain a
+compatibility summary, while `local_self_bypass_fallback_reason` explains why
+a stronger hook combination was not selected. `proc_fd_reclaim` is the bounded
+last-resort cleanup reported by `local_self_bypass_fallback_cleanup_backend`.
+When
+`BPF_MAP_TYPE_SK_STORAGE` is available, its socket-local value is reclaimed by
+the kernel even if the optional `sock_release` hook is unavailable; the shared
+cookie bridge can then use `userspace_unregister` independently.
 The implementation does not use `SO_MARK`; it avoids conflicts with Android
 `netd`, policy routing, and firewall marks. When cgroup hooks are unavailable,
 the userspace socket-cookie map is used as the compatibility fallback.

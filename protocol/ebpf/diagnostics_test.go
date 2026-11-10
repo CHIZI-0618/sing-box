@@ -122,10 +122,20 @@ func TestEBPFDiagnosticsIncludesEffectiveCgroupPaths(t *testing.T) {
 func TestEBPFDiagnosticsPreservesSelfBypassPath(t *testing.T) {
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{
 		LocalSelfBypassMode:           "cgroup_socket_release",
+		LocalSelfBypassOwner:          "cgroup_tgid",
+		LocalSelfBypassMetadata:       "sk_storage",
+		LocalSelfBypassCleanup:        "sk_storage",
+		LocalSelfBypassAttachment:     "bpf_link",
+		LocalSelfBypassReclaim:        "proc_fd_reclaim",
 		LocalSelfBypassCleanupMode:    "socket_release",
 		LocalSelfBypassFallbackReason: "socket_release_unavailable",
 	})
 	if diagnostics.LocalSelfBypassMode != "cgroup_socket_release" ||
+		diagnostics.LocalSelfBypassOwner != "cgroup_tgid" ||
+		diagnostics.LocalSelfBypassMetadata != "sk_storage" ||
+		diagnostics.LocalSelfBypassCleanup != "sk_storage" ||
+		diagnostics.LocalSelfBypassAttachment != "bpf_link" ||
+		diagnostics.LocalSelfBypassReclaim != "proc_fd_reclaim" ||
 		diagnostics.LocalSelfBypassCleanupMode != "socket_release" ||
 		diagnostics.LocalSelfBypassFallbackReason != "socket_release_unavailable" {
 		t.Fatalf("self-bypass diagnostics were not preserved: %+v", diagnostics)
@@ -187,12 +197,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 23 {
-		t.Fatalf("schema version = %d, want 23 after self-bypass fallback diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 24 {
+		t.Fatalf("schema version = %d, want 24 after self-bypass cleanup diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 23 {
-		t.Fatalf("diagnostics schema version = %d, want 23", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 24 {
+		t.Fatalf("diagnostics schema version = %d, want 24", diagnostics.SchemaVersion)
 	}
 }
 

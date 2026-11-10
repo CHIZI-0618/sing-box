@@ -4,7 +4,7 @@ import "time"
 
 // EBPFDiagnosticsSchemaVersion versions the complete GetEBPFDiagnostics
 // response. It remains available even when no eBPF inbound is running.
-const EBPFDiagnosticsSchemaVersion = 23
+const EBPFDiagnosticsSchemaVersion = 24
 
 // EBPFDiagnosticsProvider exposes a running inbound's eBPF state to the
 // sing-box API without coupling the API service to the optional eBPF package.
@@ -62,6 +62,11 @@ type EBPFRuntimeDiagnostics struct {
 	LocalDataPlane                string
 	LocalCgroupAttachMode         string
 	LocalSelfBypassMode           string
+	LocalSelfBypassOwner          string
+	LocalSelfBypassMetadata       string
+	LocalSelfBypassCleanup        string
+	LocalSelfBypassAttachment     string
+	LocalSelfBypassReclaim        string
 	LocalSelfBypassCleanupMode    string
 	LocalSelfBypassFallbackReason string
 	LocalUDPCleanupMode           string

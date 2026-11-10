@@ -7946,6 +7946,11 @@ type EBPFInboundDiagnostics struct {
 	TcAssignmentSweepSuperseded   uint64                         `protobuf:"varint,83,opt,name=tcAssignmentSweepSuperseded,proto3" json:"tcAssignmentSweepSuperseded,omitempty"`
 	TcAssignmentSweepInFlight     uint64                         `protobuf:"varint,84,opt,name=tcAssignmentSweepInFlight,proto3" json:"tcAssignmentSweepInFlight,omitempty"`
 	LocalSelfBypassFallbackReason string                         `protobuf:"bytes,86,opt,name=localSelfBypassFallbackReason,proto3" json:"localSelfBypassFallbackReason,omitempty"`
+	LocalSelfBypassOwner          string                         `protobuf:"bytes,87,opt,name=localSelfBypassOwner,proto3" json:"localSelfBypassOwner,omitempty"`
+	LocalSelfBypassMetadata       string                         `protobuf:"bytes,88,opt,name=localSelfBypassMetadata,proto3" json:"localSelfBypassMetadata,omitempty"`
+	LocalSelfBypassCleanup        string                         `protobuf:"bytes,89,opt,name=localSelfBypassCleanup,proto3" json:"localSelfBypassCleanup,omitempty"`
+	LocalSelfBypassAttachment     string                         `protobuf:"bytes,90,opt,name=localSelfBypassAttachment,proto3" json:"localSelfBypassAttachment,omitempty"`
+	LocalSelfBypassReclaim        string                         `protobuf:"bytes,91,opt,name=localSelfBypassReclaim,proto3" json:"localSelfBypassReclaim,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -8522,6 +8527,41 @@ func (x *EBPFInboundDiagnostics) GetTcAssignmentSweepInFlight() uint64 {
 func (x *EBPFInboundDiagnostics) GetLocalSelfBypassFallbackReason() string {
 	if x != nil {
 		return x.LocalSelfBypassFallbackReason
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassOwner() string {
+	if x != nil {
+		return x.LocalSelfBypassOwner
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassMetadata() string {
+	if x != nil {
+		return x.LocalSelfBypassMetadata
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassCleanup() string {
+	if x != nil {
+		return x.LocalSelfBypassCleanup
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassAttachment() string {
+	if x != nil {
+		return x.LocalSelfBypassAttachment
+	}
+	return ""
+}
+
+func (x *EBPFInboundDiagnostics) GetLocalSelfBypassReclaim() string {
+	if x != nil {
+		return x.LocalSelfBypassReclaim
 	}
 	return ""
 }
@@ -9904,7 +9944,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bcategory\x18\f \x01(\tR\bcategory\x12$\n" +
 	"\roccupancyMode\x18\r \x01(\tR\roccupancyMode\x12\"\n" +
 	"\fevictionMode\x18\x0e \x01(\tR\fevictionMode\x12,\n" +
-	"\x11admissionCritical\x18\x0f \x01(\bR\x11admissionCritical\"\x87\"\n" +
+	"\x11admissionCritical\x18\x0f \x01(\bR\x11admissionCritical\"\xa3$\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -9986,7 +10026,12 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x18tcAssignmentSweepMissing\x18R \x01(\x04R\x18tcAssignmentSweepMissing\x12@\n" +
 	"\x1btcAssignmentSweepSuperseded\x18S \x01(\x04R\x1btcAssignmentSweepSuperseded\x12<\n" +
 	"\x19tcAssignmentSweepInFlight\x18T \x01(\x04R\x19tcAssignmentSweepInFlight\x12D\n" +
-	"\x1dlocalSelfBypassFallbackReason\x18V \x01(\tR\x1dlocalSelfBypassFallbackReasonB\x0e\n" +
+	"\x1dlocalSelfBypassFallbackReason\x18V \x01(\tR\x1dlocalSelfBypassFallbackReason\x122\n" +
+	"\x14localSelfBypassOwner\x18W \x01(\tR\x14localSelfBypassOwner\x128\n" +
+	"\x17localSelfBypassMetadata\x18X \x01(\tR\x17localSelfBypassMetadata\x126\n" +
+	"\x16localSelfBypassCleanup\x18Y \x01(\tR\x16localSelfBypassCleanup\x12<\n" +
+	"\x19localSelfBypassAttachment\x18Z \x01(\tR\x19localSelfBypassAttachment\x126\n" +
+	"\x16localSelfBypassReclaim\x18[ \x01(\tR\x16localSelfBypassReclaimB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
