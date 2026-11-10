@@ -29,14 +29,16 @@ func bindEBPFSelfBypassConnLifecycle(networkManager adapter.NetworkManager, conn
 		return conn
 	}
 	tracker := provider.EBPFSelfBypass()
-	if !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
+	if !tracker.NeedsUserspaceUnregister() {
 		return conn
 	}
 	if lazyConn, loaded := conn.(*slowOpenConn); loaded {
 		lazyConn.setCloseHandler(func(tcpConn *net.TCPConn) {
 			rawConn, err := tcpConn.SyscallConn()
 			if err == nil {
-				_ = tracker.UnregisterSocket(rawConn)
+				if cookie, cookieErr := tracker.SocketCookie(rawConn); cookieErr == nil {
+					_ = tracker.UnregisterSocket(commonEBPF.SocketRegistration{Cookie: cookie})
+				}
 			}
 		})
 		return conn
@@ -60,7 +62,7 @@ func bindEBPFSelfBypassPacketConnLifecycle(networkManager adapter.NetworkManager
 		return conn
 	}
 	tracker := provider.EBPFSelfBypass()
-	if !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
+	if !tracker.NeedsUserspaceUnregister() {
 		return conn
 	}
 	syscallConn, loaded := conn.(syscall.Conn)
@@ -93,7 +95,8 @@ func RegisterEBPFSelfBypassPacketConn(networkManager adapter.NetworkManager, con
 	if err != nil {
 		return err
 	}
-	return provider.EBPFSelfBypass().RegisterSocket(rawConn)
+	_, err = provider.EBPFSelfBypass().RegisterSocket(rawConn)
+	return err
 }
 
 type selfBypassConn struct {
@@ -158,7 +161,7 @@ func EBPFSelfBypassCleanup(networkManager adapter.NetworkManager, rawConn syscal
 		return nil
 	}
 	tracker := provider.EBPFSelfBypass()
-	if tracker == nil || !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
+	if tracker == nil || !tracker.NeedsUserspaceUnregister() {
 		return nil
 	}
 	// Read the cookie before returning the callback. The socket may be closed
@@ -169,12 +172,8 @@ func EBPFSelfBypassCleanup(networkManager adapter.NetworkManager, rawConn syscal
 	}
 	var once sync.Once
 	return func() {
-		once.Do(func() { _ = tracker.UnregisterCookie(cookie) })
+		once.Do(func() { _ = tracker.UnregisterSocket(commonEBPF.SocketRegistration{Cookie: cookie}) })
 	}
-}
-
-func selfBypassNeedsUserspaceCleanup(cleanupMode string) bool {
-	return cleanupMode == "userspace_unregister"
 }
 
 type selfBypassDialAttemptKey struct{}
@@ -182,31 +181,31 @@ type selfBypassDialAttemptKey struct{}
 type selfBypassDialAttempt struct {
 	tracker *commonEBPF.SelfBypass
 	access  sync.Mutex
-	pending map[uint64]struct{}
+	pending map[uint64]commonEBPF.SocketRegistration
 	done    bool
 }
 
 var errSelfBypassDialDone = E.New("eBPF self-bypass dial attempt already finished")
 
 func newSelfBypassDialAttempt(tracker *commonEBPF.SelfBypass) *selfBypassDialAttempt {
-	return &selfBypassDialAttempt{tracker: tracker, pending: make(map[uint64]struct{})}
+	return &selfBypassDialAttempt{tracker: tracker, pending: make(map[uint64]commonEBPF.SocketRegistration)}
 }
 
 func (a *selfBypassDialAttempt) register(rawConn syscall.RawConn) error {
-	cookie, err := a.tracker.RegisterSocketCookie(rawConn)
+	registration, err := a.tracker.RegisterSocket(rawConn)
 	if err != nil {
 		return err
 	}
-	if cookie == 0 {
+	if !registration.Active() {
 		return nil
 	}
 	a.access.Lock()
 	if a.done {
 		a.access.Unlock()
-		_ = a.tracker.UnregisterCookie(cookie)
+		_ = a.tracker.UnregisterSocket(registration)
 		return errSelfBypassDialDone
 	}
-	a.pending[cookie] = struct{}{}
+	a.pending[registration.Cookie] = registration
 	a.access.Unlock()
 	return nil
 }
@@ -238,14 +237,14 @@ func (a *selfBypassDialAttempt) commit(conn net.Conn) bool {
 func (a *selfBypassDialAttempt) cleanup() {
 	a.access.Lock()
 	a.done = true
-	pending := make([]uint64, 0, len(a.pending))
-	for cookie := range a.pending {
-		pending = append(pending, cookie)
+	pending := make([]commonEBPF.SocketRegistration, 0, len(a.pending))
+	for _, registration := range a.pending {
+		pending = append(pending, registration)
 	}
 	clear(a.pending)
 	a.access.Unlock()
-	for _, cookie := range pending {
-		_ = a.tracker.UnregisterCookie(cookie)
+	for _, registration := range pending {
+		_ = a.tracker.UnregisterSocket(registration)
 	}
 }
 
@@ -280,11 +279,10 @@ func appendEBPFSelfBypassDialer(networkManager adapter.NetworkManager, dialer *n
 		if attempt := selfBypassDialAttemptFromContext(ctx); attempt != nil {
 			return attempt.register(rawConn)
 		}
-		mode := tracker.Mode()
-		if mode != commonEBPF.SelfBypassUserspace && mode != commonEBPF.SelfBypassCgroupSocketAddr && mode != commonEBPF.SelfBypassUserspaceRelease {
+		if !tracker.NeedsUserspaceRegistration() {
 			return nil
 		}
-		_, err := tracker.RegisterSocketCookie(rawConn)
+		_, err := tracker.RegisterSocket(rawConn)
 		return err
 	}
 }
@@ -303,8 +301,7 @@ func (d *DefaultDialer) selfBypassTracker() *commonEBPF.SelfBypass {
 	if tracker == nil {
 		return nil
 	}
-	mode := tracker.Mode()
-	if mode != commonEBPF.SelfBypassUserspace && mode != commonEBPF.SelfBypassCgroupSocketAddr && mode != commonEBPF.SelfBypassUserspaceRelease {
+	if !tracker.NeedsUserspaceRegistration() {
 		return nil
 	}
 	return tracker
@@ -385,11 +382,11 @@ func AppendEBPFSelfBypass(networkManager adapter.NetworkManager, controlFunc con
 	}
 	tracker := provider.EBPFSelfBypass()
 	selfBypassFunc := func(_ string, _ string, rawConn syscall.RawConn) error {
-		mode := tracker.Mode()
-		if mode != commonEBPF.SelfBypassUserspace && mode != commonEBPF.SelfBypassCgroupSocketAddr && mode != commonEBPF.SelfBypassUserspaceRelease {
+		if !tracker.NeedsUserspaceRegistration() {
 			return nil
 		}
-		return tracker.RegisterSocket(rawConn)
+		_, err := tracker.RegisterSocket(rawConn)
+		return err
 	}
 	return control.Append(controlFunc, selfBypassFunc)
 }

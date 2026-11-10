@@ -4,7 +4,7 @@ import "time"
 
 // EBPFDiagnosticsSchemaVersion versions the complete GetEBPFDiagnostics
 // response. It remains available even when no eBPF inbound is running.
-const EBPFDiagnosticsSchemaVersion = 24
+const EBPFDiagnosticsSchemaVersion = 25
 
 // EBPFDiagnosticsProvider exposes a running inbound's eBPF state to the
 // sing-box API without coupling the API service to the optional eBPF package.
@@ -58,74 +58,77 @@ type EBPFRuntimeDiagnostics struct {
 	Tag           string
 	State         string
 
-	LocalEnabled                  bool
-	LocalDataPlane                string
-	LocalCgroupAttachMode         string
-	LocalSelfBypassMode           string
-	LocalSelfBypassOwner          string
-	LocalSelfBypassMetadata       string
-	LocalSelfBypassCleanup        string
-	LocalSelfBypassAttachment     string
-	LocalSelfBypassReclaim        string
-	LocalSelfBypassCleanupMode    string
-	LocalSelfBypassFallbackReason string
-	LocalUDPCleanupMode           string
-	LocalUDPUserspaceCleanupMode  string
-	LocalUDPStorageMode           string
-	LocalUDPTimeMode              string
-	LocalUDPState                 string
-	LocalUDPRecoveryMode          string
-	LocalUDPMapPressure           string
-	LocalUDPNetworkGeneration     uint32
-	LocalUDPReleaseObserver       bool
-	LocalUDPReleaseFallbackReason string
-	LocalUDPReleaseProgram        string
-	SharedEnabled                 bool
-	SharedDataPlane               string
-	FakeIPICMPReply               bool
-	TCBackendMode                 string
-	TCListenerLookupMode          string
-	TCAttachmentMode              string
-	TCDeliveryInterface           string
-	TCNetworkNamespace            string
-	TCDeliveryInterfaceIndex      int
-	TCRoutingMark                 uint32
-	TCRoutingTable                int
-	TCRoutingPriority             int
-	TCRoutingSlot                 int
-	TCAttachmentCount             int
-	TCRetiredAttachmentCount      int
-	TCRetiredDeliveryCount        int
-	TCRequiresRebuild             bool
-	TCHealthStatus                string
-	TCLastHealthCheckAt           *time.Time
-	TCLastReconcileAt             *time.Time
-	TCNetworkGeneration           uint64
-	TCReturnSweepEntries          uint64
-	TCReturnSweepCapacity         uint64
-	TCReturnSweepScanned          uint64
-	TCReturnSweepRemoved          uint64
-	TCAssignmentSweepUsageKnown   bool
-	TCReturnSweepUsageKnown       bool
-	TCAssignmentSweepFailureMap   string
-	TCAssignmentSweepScanned      uint64
-	TCAssignmentSweepRemoved      uint64
-	TCAssignmentSweepMissing      uint64
-	TCAssignmentSweepSuperseded   uint64
-	TCAssignmentSweepInFlight     uint64
-	TCAssignmentSweepComplete     bool
-	TCAssignmentSweepEntries      uint64
-	TCAssignmentSweepCapacity     uint64
-	TCAssignmentSweepPressure     bool
-	TCAssignmentSweepRuns         uint64
-	TCAssignmentSweepPartial      uint64
-	TCAssignmentSweepFailure      string
-	TCAssignmentSweepLastAt       *time.Time
-	TCAssignmentSweepPartialAt    *time.Time
-	CgroupRecoveryQueueOverflows  uint64
-	CgroupRecoveryQueueOverflowAt *time.Time
-	WaitingRoles                  []string
-	WaitingInterfaces             []string
+	LocalEnabled                    bool
+	LocalDataPlane                  string
+	LocalCgroupAttachMode           string
+	LocalSelfBypassDecision         string
+	LocalSelfBypassProducer         string
+	LocalSelfBypassVisibility       string
+	LocalSelfBypassCleanup          string
+	LocalSelfBypassReclaim          string
+	LocalSelfBypassAttachment       string
+	LocalSelfBypassFallbackReason   string
+	LocalSelfBypassReclaimAttempts  uint64
+	LocalSelfBypassReclaimedSockets uint64
+	LocalSelfBypassReclaimFailures  uint64
+	LocalSelfBypassReclaimLastAt    *time.Time
+	LocalUDPCleanupMode             string
+	LocalUDPUserspaceCleanupMode    string
+	LocalUDPStorageMode             string
+	LocalUDPTimeMode                string
+	LocalUDPState                   string
+	LocalUDPRecoveryMode            string
+	LocalUDPMapPressure             string
+	LocalUDPNetworkGeneration       uint32
+	LocalUDPReleaseObserver         bool
+	LocalUDPReleaseFallbackReason   string
+	LocalUDPReleaseProgram          string
+	SharedEnabled                   bool
+	SharedDataPlane                 string
+	FakeIPICMPReply                 bool
+	TCBackendMode                   string
+	TCListenerLookupMode            string
+	TCAttachmentMode                string
+	TCDeliveryInterface             string
+	TCNetworkNamespace              string
+	TCDeliveryInterfaceIndex        int
+	TCRoutingMark                   uint32
+	TCRoutingTable                  int
+	TCRoutingPriority               int
+	TCRoutingSlot                   int
+	TCAttachmentCount               int
+	TCRetiredAttachmentCount        int
+	TCRetiredDeliveryCount          int
+	TCRequiresRebuild               bool
+	TCHealthStatus                  string
+	TCLastHealthCheckAt             *time.Time
+	TCLastReconcileAt               *time.Time
+	TCNetworkGeneration             uint64
+	TCReturnSweepEntries            uint64
+	TCReturnSweepCapacity           uint64
+	TCReturnSweepScanned            uint64
+	TCReturnSweepRemoved            uint64
+	TCAssignmentSweepUsageKnown     bool
+	TCReturnSweepUsageKnown         bool
+	TCAssignmentSweepFailureMap     string
+	TCAssignmentSweepScanned        uint64
+	TCAssignmentSweepRemoved        uint64
+	TCAssignmentSweepMissing        uint64
+	TCAssignmentSweepSuperseded     uint64
+	TCAssignmentSweepInFlight       uint64
+	TCAssignmentSweepComplete       bool
+	TCAssignmentSweepEntries        uint64
+	TCAssignmentSweepCapacity       uint64
+	TCAssignmentSweepPressure       bool
+	TCAssignmentSweepRuns           uint64
+	TCAssignmentSweepPartial        uint64
+	TCAssignmentSweepFailure        string
+	TCAssignmentSweepLastAt         *time.Time
+	TCAssignmentSweepPartialAt      *time.Time
+	CgroupRecoveryQueueOverflows    uint64
+	CgroupRecoveryQueueOverflowAt   *time.Time
+	WaitingRoles                    []string
+	WaitingInterfaces               []string
 
 	Attachments []EBPFAttachmentDiagnostics
 

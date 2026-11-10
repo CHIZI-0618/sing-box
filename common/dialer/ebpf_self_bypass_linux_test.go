@@ -60,12 +60,14 @@ func TestSelfBypassWithoutLocalInboundIsInert(t *testing.T) {
 	}
 }
 
-func TestSelfBypassCleanupModeContract(t *testing.T) {
-	if !selfBypassNeedsUserspaceCleanup("userspace_unregister") {
-		t.Fatal("userspace unregister mode must install close cleanup")
+func TestSelfBypassLifecycleContract(t *testing.T) {
+	tracker, err := commonEBPF.NewSelfBypassWithCapacity(1)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if selfBypassNeedsUserspaceCleanup("socket_release") {
-		t.Fatal("kernel release mode must not install duplicate userspace cleanup")
+	defer tracker.Close()
+	if !tracker.NeedsUserspaceRegistration() || !tracker.NeedsUserspaceUnregister() {
+		t.Fatal("userspace producer must own registration and cleanup")
 	}
 }
 

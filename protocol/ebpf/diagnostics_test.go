@@ -120,24 +120,31 @@ func TestEBPFDiagnosticsIncludesEffectiveCgroupPaths(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsPreservesSelfBypassPath(t *testing.T) {
+	reclaimLastAt := time.Unix(123, 0)
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{
-		LocalSelfBypassMode:           "cgroup_socket_release",
-		LocalSelfBypassOwner:          "cgroup_tgid",
-		LocalSelfBypassMetadata:       "sk_storage",
-		LocalSelfBypassCleanup:        "sk_storage",
-		LocalSelfBypassAttachment:     "bpf_link",
-		LocalSelfBypassReclaim:        "proc_fd_reclaim",
-		LocalSelfBypassCleanupMode:    "socket_release",
-		LocalSelfBypassFallbackReason: "socket_release_unavailable",
+		LocalSelfBypassDecision:         "cgroup_tgid",
+		LocalSelfBypassProducer:         "userspace_control",
+		LocalSelfBypassVisibility:       "cookie_hash",
+		LocalSelfBypassCleanup:          "userspace_unregister",
+		LocalSelfBypassAttachment:       "bpf_link",
+		LocalSelfBypassReclaim:          "proc_fd_reclaim",
+		LocalSelfBypassFallbackReason:   "socket_release_unavailable",
+		LocalSelfBypassReclaimAttempts:  3,
+		LocalSelfBypassReclaimedSockets: 2,
+		LocalSelfBypassReclaimFailures:  1,
+		LocalSelfBypassReclaimLastAt:    &reclaimLastAt,
 	})
-	if diagnostics.LocalSelfBypassMode != "cgroup_socket_release" ||
-		diagnostics.LocalSelfBypassOwner != "cgroup_tgid" ||
-		diagnostics.LocalSelfBypassMetadata != "sk_storage" ||
-		diagnostics.LocalSelfBypassCleanup != "sk_storage" ||
+	if diagnostics.LocalSelfBypassDecision != "cgroup_tgid" ||
+		diagnostics.LocalSelfBypassProducer != "userspace_control" ||
+		diagnostics.LocalSelfBypassVisibility != "cookie_hash" ||
+		diagnostics.LocalSelfBypassCleanup != "userspace_unregister" ||
 		diagnostics.LocalSelfBypassAttachment != "bpf_link" ||
 		diagnostics.LocalSelfBypassReclaim != "proc_fd_reclaim" ||
-		diagnostics.LocalSelfBypassCleanupMode != "socket_release" ||
-		diagnostics.LocalSelfBypassFallbackReason != "socket_release_unavailable" {
+		diagnostics.LocalSelfBypassFallbackReason != "socket_release_unavailable" ||
+		diagnostics.LocalSelfBypassReclaimAttempts != 3 ||
+		diagnostics.LocalSelfBypassReclaimedSockets != 2 ||
+		diagnostics.LocalSelfBypassReclaimFailures != 1 ||
+		diagnostics.LocalSelfBypassReclaimLastAt == nil || !diagnostics.LocalSelfBypassReclaimLastAt.Equal(reclaimLastAt) {
 		t.Fatalf("self-bypass diagnostics were not preserved: %+v", diagnostics)
 	}
 }
@@ -197,12 +204,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 24 {
-		t.Fatalf("schema version = %d, want 24 after self-bypass cleanup diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 25 {
+		t.Fatalf("schema version = %d, want 25 after self-bypass lifecycle diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 24 {
-		t.Fatalf("diagnostics schema version = %d, want 24", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 25 {
+		t.Fatalf("diagnostics schema version = %d, want 25", diagnostics.SchemaVersion)
 	}
 }
 

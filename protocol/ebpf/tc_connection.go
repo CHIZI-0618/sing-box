@@ -380,12 +380,13 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, func
 			_ = packetConnection.Close()
 			return nil, nil, rawErr
 		}
-		if err = selfBypass.RegisterSocket(rawConn); err != nil {
+		registration, registerErr := selfBypass.RegisterSocket(rawConn)
+		if registerErr != nil {
 			_ = packetConnection.Close()
-			return nil, nil, E.Cause(err, "register TC eBPF UDP reply socket")
+			return nil, nil, E.Cause(registerErr, "register TC eBPF UDP reply socket")
 		}
 		cleanup = func() {
-			_ = selfBypass.UnregisterSocket(rawConn)
+			_ = selfBypass.UnregisterSocket(registration)
 		}
 	}
 	return udpConnection, cleanup, nil
