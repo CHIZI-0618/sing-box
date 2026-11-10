@@ -343,18 +343,16 @@ local socket assignment 和 shared `socket_assign` 还会报告实际的 TCX/cls
 listener 查找、delivery 接口、策略路由值、活动/待回收资源数量、health/reconcile 时间，
 以及在受管网络切换边界递增的网络代数。
 
-local 自绕过诊断将生命周期路径分开报告：
-`local_self_bypass_owner_backend` 为 `cgroup_tgid`、`cgroup_addr` 或 `cookie_hash`；
-`local_self_bypass_metadata_backend` 为 `sk_storage` 或 `cookie_hash`；
-`local_self_bypass_cleanup_backend` 为 `sk_storage`、`socket_release` 或
-`userspace_unregister`。`local_self_bypass_attachment_backend` 报告实际使用的
-`bpf_link`、`legacy_attach`、`mixed` 或 `none`。旧的 `local_self_bypass_mode` 和
-`local_self_bypass_cleanup_mode` 保留为兼容性摘要，`local_self_bypass_fallback_reason`
-说明为什么没有选择更强的 hook 组合；`local_self_bypass_fallback_cleanup_backend`
-会明确报告 `proc_fd_reclaim` 这一有界的最后兜底清理路径。
-当内核支持 `BPF_MAP_TYPE_SK_STORAGE` 时，socket 关闭会由内核回收 socket-local 值，
-即使可选的 `sock_release` hook 不可用，cookie bridge 也可以独立使用
-`userspace_unregister`。实现不使用 `SO_MARK`，避免与 Android `netd`、策略路由和防火墙 mark
+local 自绕过诊断分别报告 decision、producer、visibility、cleanup、reclaim 与 attachment。
+local cgroup 优先使用 `local_self_bypass_decision_backend=direct_tgid`，无需按 socket
+记录或清理；直接对象无法加载时，以及 local socket assignment 模式下，visibility 为
+`cookie_hash`，producer 为 `cgroup_sock_create`、`cgroup_addr` 或
+`userspace_control`，cleanup 为 `socket_release` 或 `userspace_unregister`。
+attachment 为 `bpf_link`、`legacy_attach`、`mixed` 或 `none`；
+`local_self_bypass_fallback_reason` 说明能力或对象加载回退原因。
+`local_self_bypass_reclaim_backend=proc_fd_reclaim` 仅表示 map 满时的有界恢复，尝试次数、
+回收 socket 数、失败数和最近执行时间由独立字段报告。实现不使用 `SO_MARK`，避免与
+Android `netd`、策略路由和防火墙 mark
 冲突；当 cgroup hook 不可用时，会回退到用户空间 socket-cookie map。
 
 诊断响应在顶层携带 `schemaVersion`，即使当前没有运行中的 eBPF 入站也会返回。客户端
