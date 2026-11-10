@@ -82,7 +82,7 @@ func TestTCPacketWriterBatchesByReplySource(t *testing.T) {
 	}
 }
 
-func TestSelfBypassRegistrationMode(t *testing.T) {
+func TestSelfBypassSocketRegistrationContract(t *testing.T) {
 	tracker, err := commonEBPF.NewSelfBypassWithCapacity(1)
 	if err != nil {
 		t.Fatal(err)
@@ -90,12 +90,12 @@ func TestSelfBypassRegistrationMode(t *testing.T) {
 	defer tracker.Close()
 
 	inbound := &Inbound{inboundResources: inboundResources{selfBypass: tracker}}
-	if !inbound.selfBypassUsesUserspaceRegistration() {
+	if !inbound.selfBypassNeedsSocketRegistration() {
 		t.Fatal("userspace self-bypass mode must register sockets")
 	}
 	inbound.selfBypassCgroup = true
-	if inbound.selfBypassUsesUserspaceRegistration() {
-		t.Fatal("automatic cgroup marking must not duplicate socket registration")
+	if !inbound.selfBypassNeedsSocketRegistration() {
+		t.Fatal("registration must follow the selected producer, not an inbound attachment flag")
 	}
 }
 

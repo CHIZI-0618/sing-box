@@ -907,8 +907,8 @@ message EBPFInboundDiagnostics {
   string localUdpMapPressure = 52;
   uint32 localUdpNetworkGeneration = 53;
   EBPFPolicyEpochDiagnostics policyEpoch = 54;
-  string localSelfBypassMode = 55;
-  string localSelfBypassCleanupMode = 56;
+  reserved 55, 56;
+  reserved "localSelfBypassMode", "localSelfBypassCleanupMode";
   bool localUdpReleaseObserver = 57;
   string localUdpReleaseFallbackReason = 58;
   string localUdpReleaseProgram = 59;
@@ -938,12 +938,19 @@ message EBPFInboundDiagnostics {
   uint64 tcAssignmentSweepSuperseded = 83;
   uint64 tcAssignmentSweepInFlight = 84;
   reserved 85;
-	string localSelfBypassFallbackReason = 86;
-	string localSelfBypassOwner = 87;
-	string localSelfBypassMetadata = 88;
-	string localSelfBypassCleanup = 89;
-	string localSelfBypassAttachment = 90;
-	string localSelfBypassReclaim = 91;
+  string localSelfBypassFallbackReason = 86;
+  reserved 87 to 91;
+  reserved "localSelfBypassOwner", "localSelfBypassMetadata";
+  string localSelfBypassDecision = 92;
+  string localSelfBypassProducer = 93;
+  string localSelfBypassVisibility = 94;
+  string localSelfBypassCleanup = 95;
+  string localSelfBypassReclaim = 96;
+  string localSelfBypassAttachment = 97;
+  uint64 localSelfBypassReclaimAttempts = 98;
+  uint64 localSelfBypassReclaimedSockets = 99;
+  uint64 localSelfBypassReclaimFailures = 100;
+  optional int64 localSelfBypassReclaimLastAt = 101;
 }
 
 message EBPFAttachmentDiagnostics {

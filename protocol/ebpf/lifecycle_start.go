@@ -160,16 +160,16 @@ func (i *Inbound) startInbound() error {
 		"network":          network,
 		"local_ipv6":       i.localIPv6,
 		"shared_ipv6":      i.sharedIPv6,
-		"self_bypass":      i.selfBypassMode(),
 		"process_tracking": i.processTrackingMode(),
 		"tc_priority":      i.tcPriority,
 	}
-	if selfBypass := i.selfBypassDiagnostics(); selfBypass.Mode != "" {
-		tcFields["self_bypass_owner"] = selfBypass.OwnerBackend
-		tcFields["self_bypass_metadata"] = selfBypass.MetadataBackend
+	if selfBypass := i.selfBypassDiagnostics(); selfBypass.DecisionBackend != "" {
+		tcFields["self_bypass_decision"] = selfBypass.DecisionBackend
+		tcFields["self_bypass_producer"] = selfBypass.ProducerBackend
+		tcFields["self_bypass_visibility"] = selfBypass.VisibilityBackend
 		tcFields["self_bypass_cleanup"] = selfBypass.CleanupBackend
 		tcFields["self_bypass_attachment"] = selfBypass.AttachmentBackend
-		tcFields["self_bypass_fallback_cleanup"] = selfBypass.FallbackCleanup
+		tcFields["self_bypass_reclaim"] = selfBypass.ReclaimBackend
 	}
 	if i.sharedEnabled {
 		tcFields["shared_default_interface"] = i.sharedOptions.DefaultInterface
@@ -346,15 +346,15 @@ func (i *Inbound) logCgroupRuntime(network string, backend *commonEBPF.CgroupBac
 		"udp_time":              backend.UDPTimeMode(),
 		"udp_storage":           backend.UDPStorageMode(),
 		"userspace_udp_cleanup": backend.UDPUserspaceCleanupMode(),
-		"self_bypass":           i.selfBypassMode(),
 		"process_tracking":      i.processTrackingMode(),
 	}
-	if selfBypass := i.selfBypassDiagnostics(); selfBypass.Mode != "" {
-		fields["self_bypass_owner"] = selfBypass.OwnerBackend
-		fields["self_bypass_metadata"] = selfBypass.MetadataBackend
+	if selfBypass := i.selfBypassDiagnostics(); selfBypass.DecisionBackend != "" {
+		fields["self_bypass_decision"] = selfBypass.DecisionBackend
+		fields["self_bypass_producer"] = selfBypass.ProducerBackend
+		fields["self_bypass_visibility"] = selfBypass.VisibilityBackend
 		fields["self_bypass_cleanup"] = selfBypass.CleanupBackend
 		fields["self_bypass_attachment"] = selfBypass.AttachmentBackend
-		fields["self_bypass_fallback_cleanup"] = selfBypass.FallbackCleanup
+		fields["self_bypass_reclaim"] = selfBypass.ReclaimBackend
 	}
 	if cgroup := backend.CgroupPath(); cgroup != "" {
 		fields["cgroup"] = cgroup
@@ -434,13 +434,6 @@ func (i *Inbound) startCgroupUDPReleaseReader(backend *commonEBPF.CgroupBackend)
 	}()
 }
 
-func (i *Inbound) selfBypassMode() string {
-	if !i.localEnabled || i.selfBypass == nil {
-		return "none"
-	}
-	return i.selfBypass.Mode().String()
-}
-
 func (i *Inbound) selfBypassDiagnostics() commonEBPF.SelfBypassDiagnostics {
 	if !i.localEnabled || i.selfBypass == nil {
 		return commonEBPF.SelfBypassDiagnostics{}
@@ -456,6 +449,7 @@ func (i *Inbound) startSelfBypass() error {
 		EnableTCP:  i.enableTCP,
 		EnableUDP:  i.enableUDP,
 		EnableIPv6: i.localIPv6,
+		Direct:     i.localCgroupEnabled(),
 	}); err != nil {
 		return err
 	}

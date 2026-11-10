@@ -31,7 +31,7 @@ func (i *Inbound) closeListeners() error {
 }
 
 func (i *Inbound) unregisterListenerSockets(current *listener.Listener) error {
-	if !i.selfBypassUsesUserspaceRegistration() {
+	if i.selfBypass == nil || !i.selfBypass.NeedsUserspaceUnregister() {
 		return nil
 	}
 	var unregisterErr error
@@ -41,7 +41,12 @@ func (i *Inbound) unregisterListenerSockets(current *listener.Listener) error {
 			unregisterErr = E.Errors(unregisterErr, err)
 			return
 		}
-		unregisterErr = E.Errors(unregisterErr, i.selfBypass.UnregisterSocket(rawConn))
+		cookie, err := i.selfBypass.SocketCookie(rawConn)
+		if err != nil {
+			unregisterErr = E.Errors(unregisterErr, err)
+			return
+		}
+		unregisterErr = E.Errors(unregisterErr, i.selfBypass.UnregisterSocket(commonEBPF.SocketRegistration{Cookie: cookie}))
 	}
 	if tcpListener := current.TCPListener(); tcpListener != nil {
 		if conn, loaded := tcpListener.(syscall.Conn); loaded {
@@ -246,7 +251,7 @@ func (i *Inbound) registerListenerSocket(current *listener.Listener) error {
 		return nil
 	}
 	var registerErr error
-	var registered []syscall.RawConn
+	var registered []commonEBPF.SocketRegistration
 	register := func(conn syscall.Conn) {
 		if registerErr != nil {
 			return
@@ -256,8 +261,9 @@ func (i *Inbound) registerListenerSocket(current *listener.Listener) error {
 			registerErr = err
 			return
 		}
-		if registerErr = i.selfBypass.RegisterSocket(rawConn); registerErr == nil {
-			registered = append(registered, rawConn)
+		var registration commonEBPF.SocketRegistration
+		if registration, registerErr = i.selfBypass.RegisterSocket(rawConn); registerErr == nil && registration.Active() {
+			registered = append(registered, registration)
 		}
 	}
 	if tcpListener := current.TCPListener(); tcpListener != nil {
@@ -278,28 +284,13 @@ func (i *Inbound) registerListenerSocket(current *listener.Listener) error {
 	return registerErr
 }
 
-// selfBypassUsesUserspaceRegistration distinguishes the cgroup fallback that
-// still needs socket-cookie insertion from modes whose cgroup hooks mark the
-// socket themselves. UserspaceRelease deliberately combines userspace
-// registration with a kernel sock_release cleanup hook.
-func (i *Inbound) selfBypassUsesUserspaceRegistration() bool {
-	if i.selfBypass == nil {
-		return false
-	}
-	if !i.selfBypassCgroup {
-		return true
-	}
-	return i.selfBypass.Mode() == commonEBPF.SelfBypassCgroupSocketAddr ||
-		i.selfBypass.Mode() == commonEBPF.SelfBypassUserspaceRelease
-}
-
 // selfBypassNeedsSocketRegistration reports whether listener sockets need
 // userspace cookie registration.
 func (i *Inbound) selfBypassNeedsSocketRegistration() bool {
 	if i.selfBypass == nil {
 		return false
 	}
-	return i.selfBypassUsesUserspaceRegistration()
+	return i.selfBypass.NeedsUserspaceRegistration()
 }
 
 func redirectAddressFromOOB(oob []byte) (netip.Addr, error) {

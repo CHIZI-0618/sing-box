@@ -63,14 +63,20 @@ func (i *Inbound) diagnosticsLocked() EBPFDiagnostics {
 		diagnostics.LocalDataPlane = i.localDataPlane
 		if runtime.selfBypass != nil {
 			selfBypass := runtime.selfBypass.Diagnostics()
-			diagnostics.LocalSelfBypassMode = selfBypass.Mode
-			diagnostics.LocalSelfBypassOwner = selfBypass.OwnerBackend
-			diagnostics.LocalSelfBypassMetadata = selfBypass.MetadataBackend
+			diagnostics.LocalSelfBypassDecision = selfBypass.DecisionBackend
+			diagnostics.LocalSelfBypassProducer = selfBypass.ProducerBackend
+			diagnostics.LocalSelfBypassVisibility = selfBypass.VisibilityBackend
 			diagnostics.LocalSelfBypassCleanup = selfBypass.CleanupBackend
 			diagnostics.LocalSelfBypassAttachment = selfBypass.AttachmentBackend
-			diagnostics.LocalSelfBypassReclaim = selfBypass.FallbackCleanup
-			diagnostics.LocalSelfBypassCleanupMode = runtime.selfBypass.CleanupMode()
+			diagnostics.LocalSelfBypassReclaim = selfBypass.ReclaimBackend
 			diagnostics.LocalSelfBypassFallbackReason = selfBypass.FallbackReason
+			diagnostics.LocalSelfBypassReclaimAttempts = selfBypass.ReclaimAttempts
+			diagnostics.LocalSelfBypassReclaimedSockets = selfBypass.ReclaimedSockets
+			diagnostics.LocalSelfBypassReclaimFailures = selfBypass.ReclaimFailures
+			if selfBypass.ReclaimLastAt != 0 {
+				lastAt := time.Unix(0, selfBypass.ReclaimLastAt)
+				diagnostics.LocalSelfBypassReclaimLastAt = &lastAt
+			}
 		}
 	}
 	if backend := runtime.cgroupBackend; backend != nil && !backend.IsClosed() {
