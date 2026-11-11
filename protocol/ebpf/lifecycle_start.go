@@ -26,6 +26,15 @@ func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// the final owner when Box.Start aborts or the box is closed.
 		i.ctx = scope.Context()
 		scope.Add(i.Close)
+		if err := i.claimSelfBypass(); err != nil {
+			return err
+		}
+		if err := retryRetainedInbounds(); err != nil {
+			return err
+		}
+		if i.udpNat != nil {
+			i.udpNat.start()
+		}
 		if i.localCgroupEnabled() || i.sharedRewriteEnabled() {
 			if err := i.selectRedirectPrefixes(); err != nil {
 				return err
@@ -542,4 +551,23 @@ func combineStartError(startErr error, cleanupErr error) error {
 		return startErr
 	}
 	return E.Errors(startErr, E.Cause(cleanupErr, "cleanup eBPF inbound"))
+}
+
+// claimSelfBypass takes over the self-bypass prepared for this inbound once
+// its cleanup is registered with the lifecycle scope. Until then the box
+// closes an unclaimed tracker itself.
+func (i *Inbound) claimSelfBypass() error {
+	if i.selfBypass == nil {
+		return nil
+	}
+	claimer, loaded := i.networkManager.(interface {
+		ClaimEBPFSelfBypass(*commonEBPF.SelfBypass) bool
+	})
+	if !loaded {
+		return nil
+	}
+	if !claimer.ClaimEBPFSelfBypass(i.selfBypass) {
+		return E.New("eBPF self-bypass was released before the inbound initialized")
+	}
+	return nil
 }
