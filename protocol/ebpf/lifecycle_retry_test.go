@@ -5,20 +5,18 @@ package ebpf
 import (
 	"context"
 	"errors"
-	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/internal/ebpfcleanup"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 )
 
 func retainedInboundsContain(inbound *Inbound) bool {
-	retainedInbounds.access.Lock()
-	defer retainedInbounds.access.Unlock()
-	return slices.Contains(retainedInbounds.inbounds, inbound)
+	return ebpfcleanup.Contains(inbound.retainedCleanupEntry())
 }
 
 type retainingSharedRuntime struct {

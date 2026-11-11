@@ -3,54 +3,31 @@
 package ebpf
 
 import (
-	"slices"
-	"sync"
-
+	"github.com/sagernet/sing-box/internal/ebpfcleanup"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-// retainedInbounds holds inbounds whose Close kept kernel resources after a
-// failed detach or removal. The adapter scope runs each cleanup only once, so
-// a later box, such as after a reload or service restart, retries them before
-// attaching new resources that would conflict with the stale ones.
-//
-// Only the next eBPF inbound retries them. Without one, as when the service
-// stops or the next configuration has no eBPF inbound, they stay recorded
-// until the process exits. The kernel then releases resources held by file
-// descriptors, but not local routes or legacy cgroup attachments.
-var retainedInbounds struct {
-	access   sync.Mutex
-	inbounds []*Inbound
-}
-
+// The process-level registry is also retried by every Box before startup and
+// during final cleanup. Keeping the direct inbound retry preserves the same
+// guarantee for callers that drive an inbound lifecycle without a Box.
 func retainForRetry(inbound *Inbound) {
-	retainedInbounds.access.Lock()
-	defer retainedInbounds.access.Unlock()
-	if !slices.Contains(retainedInbounds.inbounds, inbound) {
-		retainedInbounds.inbounds = append(retainedInbounds.inbounds, inbound)
-	}
+	ebpfcleanup.Retain(inbound.retainedCleanupEntry())
 }
 
 func releaseRetained(inbound *Inbound) {
-	retainedInbounds.access.Lock()
-	defer retainedInbounds.access.Unlock()
-	retainedInbounds.inbounds = slices.DeleteFunc(retainedInbounds.inbounds, func(it *Inbound) bool {
-		return it == inbound
+	ebpfcleanup.Release(inbound.retainedCleanupEntry())
+}
+
+func (i *Inbound) retainedCleanupEntry() *ebpfcleanup.Entry {
+	i.retainedCleanupOnce.Do(func() {
+		i.retainedCleanup = ebpfcleanup.New(i.Close)
 	})
+	return i.retainedCleanup
 }
 
 func retryRetainedInbounds() error {
-	retainedInbounds.access.Lock()
-	inbounds := slices.Clone(retainedInbounds.inbounds)
-	retainedInbounds.access.Unlock()
-	var errors []error
-	for _, inbound := range inbounds {
-		if err := inbound.Close(); err != nil {
-			errors = append(errors, err)
-		}
-	}
-	if len(errors) > 0 {
-		return E.Cause(E.Errors(errors...), "clean up resources retained by a previous eBPF inbound")
+	if err := ebpfcleanup.Retry(); err != nil {
+		return E.Cause(err, "clean up resources retained by a previous eBPF inbound")
 	}
 	return nil
 }

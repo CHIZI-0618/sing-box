@@ -490,9 +490,13 @@ func New(options Options) (*Box, error) {
 		scope:               adapter.NewScope(ctx, logFactory.Logger()),
 	}
 	// Registered first so that it runs last on Close, after the inbounds:
-	// release a prepared eBPF self-bypass that no inbound claimed.
+	// release a prepared eBPF self-bypass that no inbound claimed and retry
+	// resources retained by failed eBPF closes before this box disappears.
 	instance.scope.Add(func() error {
-		return dialer.CloseUnclaimedEBPFSelfBypass(networkManager)
+		return E.Errors(
+			dialer.CloseUnclaimedEBPFSelfBypass(networkManager),
+			retryRetainedEBPFResourcesOnClose(),
+		)
 	})
 	return instance, nil
 }
@@ -543,6 +547,12 @@ func (s *Box) startInternalServices(stage adapter.StartStage) error {
 }
 
 func (s *Box) preStart() error {
+	// This applies to every box, including a replacement configuration without
+	// an eBPF inbound. Do not start new network resources while stale hooks or
+	// routes from a previous box remain.
+	if err := retryRetainedEBPFResources(); err != nil {
+		return err
+	}
 	monitor := taskmonitor.New(s.logger, C.StartTimeout)
 	monitor.Start("start logger")
 	err := s.logFactory.Start()

@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/internal/ebpfcleanup"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
@@ -173,6 +174,8 @@ type Inbound struct {
 	fakeIPIPv4Prefix          netip.Prefix
 	fakeIPIPv6Prefix          netip.Prefix
 	fakeIPICMPReply           bool
+	retainedCleanupOnce       sync.Once
+	retainedCleanup           *ebpfcleanup.Entry
 	sharedIncludeMAC          []commonEBPF.MACAddress
 	sharedExcludeMAC          []commonEBPF.MACAddress
 	localInitialDestinations  []commonEBPF.CIDRDecision
