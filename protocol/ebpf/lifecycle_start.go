@@ -29,6 +29,9 @@ func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		if err := i.claimSelfBypass(); err != nil {
 			return err
 		}
+		if err := retryRetainedInbounds(); err != nil {
+			return err
+		}
 		if i.udpNat != nil {
 			i.udpNat.start()
 		}
