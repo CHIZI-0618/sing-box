@@ -4,6 +4,7 @@ package box_test
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
@@ -12,9 +13,19 @@ import (
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/internal/ebpfcleanup"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
 )
+
+func newLifecycleTestBox(t *testing.T) *box.Box {
+	t.Helper()
+	instance, err := box.New(box.Options{Context: include.Context(context.Background())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return instance
+}
 
 // A box that is created and closed without starting, as for a configuration
 // check, must not leave eBPF goroutines or an unclaimed self-bypass behind.
@@ -58,5 +69,47 @@ func TestBoxCloseBeforeStartReleasesEBPF(t *testing.T) {
 			t.Fatal("eBPF UDP NAT cleanup goroutine leaked by a box that never started")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestBoxCloseRetriesRetainedEBPFResources(t *testing.T) {
+	instance := newLifecycleTestBox(t)
+	attempts := 0
+	var entry *ebpfcleanup.Entry
+	entry = ebpfcleanup.New(func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("injected cleanup failure")
+		}
+		ebpfcleanup.Release(entry)
+		return nil
+	})
+	ebpfcleanup.Retain(entry)
+	t.Cleanup(func() { ebpfcleanup.Release(entry) })
+	if err := instance.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || ebpfcleanup.Contains(entry) {
+		t.Fatalf("retained cleanup attempts=%d retained=%v", attempts, ebpfcleanup.Contains(entry))
+	}
+}
+
+func TestBoxWithoutEBPFRefusesStaleResources(t *testing.T) {
+	instance := newLifecycleTestBox(t)
+	expected := errors.New("injected cleanup failure")
+	attempts := 0
+	entry := ebpfcleanup.New(func() error {
+		attempts++
+		return expected
+	})
+	ebpfcleanup.Retain(entry)
+	t.Cleanup(func() { ebpfcleanup.Release(entry) })
+	if err := instance.PreStart(); !errors.Is(err, expected) {
+		t.Fatalf("unexpected pre-start error: %v", err)
+	}
+	// PreStart makes one safety check, then its failed-start Close performs the
+	// bounded final retries even though this box has no eBPF inbound.
+	if attempts != 1+3 || !ebpfcleanup.Contains(entry) {
+		t.Fatalf("retained cleanup attempts=%d retained=%v", attempts, ebpfcleanup.Contains(entry))
 	}
 }
