@@ -12,11 +12,36 @@ import (
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	box "github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/internal/ebpfcleanup"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/service"
 )
+
+var errInjectedPlatformInitialize = errors.New("injected platform initialization failure")
+
+type failingLifecyclePlatform struct {
+	adapter.PlatformInterface
+	networkManager adapter.NetworkManager
+	selfBypass     *commonEBPF.SelfBypass
+}
+
+func (*failingLifecyclePlatform) UsePlatformDefaultInterfaceMonitor() bool { return false }
+func (*failingLifecyclePlatform) UnderNetworkExtension() bool              { return false }
+func (*failingLifecyclePlatform) UsePlatformConnectionOwnerFinder() bool   { return false }
+
+func (p *failingLifecyclePlatform) Initialize(networkManager adapter.NetworkManager) error {
+	p.networkManager = networkManager
+	provider, loaded := networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if loaded {
+		p.selfBypass = provider.EBPFSelfBypass()
+	}
+	return errInjectedPlatformInitialize
+}
 
 func newLifecycleTestBox(t *testing.T) *box.Box {
 	t.Helper()
@@ -69,6 +94,31 @@ func TestBoxCloseBeforeStartReleasesEBPF(t *testing.T) {
 			t.Fatal("eBPF UDP NAT cleanup goroutine leaked by a box that never started")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestBoxNewFailureReleasesPreparedSelfBypass(t *testing.T) {
+	ctx := include.Context(context.Background())
+	platform := new(failingLifecyclePlatform)
+	service.MustRegister[adapter.PlatformInterface](ctx, platform)
+	var options option.Options
+	if err := json.UnmarshalContext(ctx, []byte(`{"inbounds":[{"type":"ebpf","tag":"ebpf-in"}]}`), &options); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := box.New(box.Options{Context: ctx, Options: options}); !errors.Is(err, errInjectedPlatformInitialize) {
+		t.Fatalf("unexpected box construction error: %v", err)
+	}
+	if platform.selfBypass == nil {
+		t.Fatal("platform initialization did not observe the prepared self-bypass")
+	}
+	if !platform.selfBypass.IsClosed() {
+		t.Fatal("box construction failure left the prepared self-bypass open")
+	}
+	provider, loaded := platform.networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if !loaded || provider.EBPFSelfBypass() != nil {
+		t.Fatal("box construction failure left the self-bypass published")
 	}
 }
 
