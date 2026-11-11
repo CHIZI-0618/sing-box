@@ -478,7 +478,7 @@ func New(options Options) (*Box, error) {
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
 	}
-	return &Box{
+	instance := &Box{
 		network:             networkManager,
 		endpoint:            endpointManager,
 		inbound:             inboundManager,
@@ -498,7 +498,13 @@ func New(options Options) (*Box, error) {
 		internalService:     internalServices,
 		ntpService:          ntpService,
 		scope:               adapter.NewScope(ctx, logFactory.Logger()),
-	}, nil
+	}
+	// Registered first so that it runs last on Close, after the inbounds:
+	// release a prepared eBPF self-bypass that no inbound claimed.
+	instance.scope.Add(func() error {
+		return dialer.CloseUnclaimedEBPFSelfBypass(networkManager)
+	})
+	return instance, nil
 }
 
 func (s *Box) PreStart() error {

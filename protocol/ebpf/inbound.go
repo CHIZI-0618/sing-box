@@ -405,7 +405,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	inbound.udpTimeout = udpTimeout
 	inbound.udpFragment = options.UDPFragment != nil && *options.UDPFragment
 	if inbound.enableUDP && (inbound.localEnabled || inbound.sharedSocketAssignEnabled()) {
-		inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
+		inbound.udpNat = newIdleUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
 	}
 	return inbound, nil
 }

@@ -49,9 +49,25 @@ type udpNATService struct {
 	pendingReleaseCapacityRejected atomic.Uint64
 	closed                         atomic.Bool
 	closeOnce                      sync.Once
+	startAccess                    sync.Mutex
+	started                        bool
 }
 
 func newUDPNATService(
+	handler N.UDPConnectionHandlerEx,
+	prepare udpNATPrepareFunc,
+	timeout time.Duration,
+) *udpNATService {
+	service := newIdleUDPNATService(handler, prepare, timeout)
+	service.start()
+	return service
+}
+
+// newIdleUDPNATService builds the service without its cleanup goroutine, so an
+// inbound can be constructed and closed, as for a configuration check, without
+// leaving a goroutine behind. start launches the goroutine once the inbound
+// has registered its cleanup with the lifecycle scope.
+func newIdleUDPNATService(
 	handler N.UDPConnectionHandlerEx,
 	prepare udpNATPrepareFunc,
 	timeout time.Duration,
@@ -86,9 +102,18 @@ func newUDPNATService(
 	cache.SetOnEvict(func(_ udpSessionKey, conn *udpNATConn) {
 		conn.closeFromCache()
 	})
-	service.cleanupWait.Add(1)
-	go service.cleanupLoop()
 	return service
+}
+
+func (s *udpNATService) start() {
+	s.startAccess.Lock()
+	defer s.startAccess.Unlock()
+	if s.started || s.closed.Load() {
+		return
+	}
+	s.started = true
+	s.cleanupWait.Add(1)
+	go s.cleanupLoop()
 }
 
 func (s *udpNATService) NewPacket(
@@ -364,7 +389,9 @@ func (s *udpNATService) Close() error {
 		return nil
 	}
 	s.closeOnce.Do(func() {
+		s.startAccess.Lock()
 		s.closed.Store(true)
+		s.startAccess.Unlock()
 		close(s.cleanupDone)
 		s.cleanupWait.Wait()
 		s.cacheAccess.Lock()

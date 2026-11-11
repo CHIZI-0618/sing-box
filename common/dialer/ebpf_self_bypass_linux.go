@@ -325,6 +325,19 @@ func (d *DefaultDialer) dialWithSelfBypass(ctx context.Context, dialer net.Diale
 	return conn, nil
 }
 
+// CloseUnclaimedEBPFSelfBypass releases a prepared self-bypass that no eBPF
+// inbound claimed during initialization. The box registers it at construction,
+// so it runs last when the box closes.
+func CloseUnclaimedEBPFSelfBypass(networkManager adapter.NetworkManager) error {
+	closer, loaded := networkManager.(interface {
+		CloseUnclaimedEBPFSelfBypass() error
+	})
+	if !loaded {
+		return nil
+	}
+	return closer.CloseUnclaimedEBPFSelfBypass()
+}
+
 func PrepareEBPFSelfBypass(networkManager adapter.NetworkManager, inbounds []option.Inbound) error {
 	localInstances := 0
 	for _, inbound := range inbounds {

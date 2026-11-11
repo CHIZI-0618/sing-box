@@ -8,9 +8,16 @@ import (
 )
 
 func (i *Inbound) Close() error {
+	// Record the inbound before releasing anything: a concurrent initialization
+	// then waits for this Close instead of missing resources it retains.
+	retainForRetry(i)
 	i.lifecycleAccess.Lock()
 	defer i.lifecycleAccess.Unlock()
-	return i.closeResources()
+	err := i.closeResources()
+	if !i.retainsResources() {
+		releaseRetained(i)
+	}
+	return err
 }
 
 func (i *Inbound) cleanupStartFailure() error {

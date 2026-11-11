@@ -40,6 +40,10 @@ func PrepareEBPFSelfBypass(adapter.NetworkManager, []option.Inbound) error {
 	return nil
 }
 
+func CloseUnclaimedEBPFSelfBypass(adapter.NetworkManager) error {
+	return nil
+}
+
 func AppendEBPFSelfBypass(_ adapter.NetworkManager, controlFunc control.Func) control.Func {
 	return controlFunc
 }
