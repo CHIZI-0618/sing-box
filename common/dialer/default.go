@@ -293,15 +293,9 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 				}
 			}
 			if !address.IsIPv6() {
-				if d.selfBypassTracker() != nil {
-					return d.dialWithSelfBypass(ctx, d.dialer4.Dialer, network, address.String())
-				}
-				return DialSlowContext(&d.dialer4, ctx, d.netns, network, address)
+				return d.dialSlowWithSelfBypass(&d.dialer4, ctx, network, address)
 			} else {
-				if d.selfBypassTracker() != nil {
-					return d.dialWithSelfBypass(ctx, d.dialer6.Dialer, network, address.String())
-				}
-				return DialSlowContext(&d.dialer6, ctx, d.netns, network, address)
+				return d.dialSlowWithSelfBypass(&d.dialer6, ctx, network, address)
 			}
 		})
 		return d.trackConn(ctx, address, conn, err)

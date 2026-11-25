@@ -10,6 +10,9 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/control"
+	M "github.com/sagernet/sing/common/metadata"
+
+	"github.com/database64128/tfo-go/v2"
 )
 
 func appendEBPFSelfBypassDialer(_ adapter.NetworkManager, _ *net.Dialer) {}
@@ -18,6 +21,10 @@ func (d *DefaultDialer) selfBypassTracker() any { return nil }
 
 func (d *DefaultDialer) dialWithSelfBypass(ctx context.Context, dialer net.Dialer, network, address string) (net.Conn, error) {
 	return dialer.DialContext(ctx, network, address)
+}
+
+func (d *DefaultDialer) dialSlowWithSelfBypass(dialer *tfo.Dialer, ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return DialSlowContext(dialer, ctx, d.netns, network, destination)
 }
 
 func bindEBPFSelfBypassConnLifecycle(_ adapter.NetworkManager, conn net.Conn) net.Conn {
