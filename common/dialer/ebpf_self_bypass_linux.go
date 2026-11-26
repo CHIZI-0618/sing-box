@@ -15,6 +15,10 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+
+	"github.com/database64128/tfo-go/v2"
 )
 
 // bindEBPFSelfBypassConnLifecycle pairs userspace socket registration with the
@@ -323,6 +327,45 @@ func (d *DefaultDialer) dialWithSelfBypass(ctx context.Context, dialer net.Diale
 		attempt.cleanup()
 	}
 	return conn, nil
+}
+
+func (d *DefaultDialer) dialSlowWithSelfBypass(dialer *tfo.Dialer, ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	tracker := d.selfBypassTracker()
+	if tracker == nil {
+		return DialSlowContext(dialer, ctx, d.netns, network, destination)
+	}
+	if dialer.DisableTFO || N.NetworkName(network) != N.NetworkTCP {
+		address := destination.AddrString()
+		switch N.NetworkName(network) {
+		case N.NetworkTCP, N.NetworkUDP:
+			address = destination.String()
+		}
+		return d.dialWithSelfBypass(ctx, dialer.Dialer, network, address)
+	}
+	dialCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	return &slowOpenConn{
+		dialer:      dialer,
+		ctx:         dialCtx,
+		cancel:      cancel,
+		netns:       d.netns,
+		network:     network,
+		destination: destination,
+		create:      make(chan struct{}),
+		done:        make(chan struct{}),
+		dialFunc: func(dialCtx context.Context, dialer *tfo.Dialer, network string, address string, payload []byte) (net.Conn, error) {
+			attempt := newSelfBypassDialAttempt(tracker)
+			attemptCtx := context.WithValue(dialCtx, selfBypassDialAttemptKey{}, attempt)
+			conn, err := dialer.DialContext(attemptCtx, network, address, payload)
+			if err != nil {
+				attempt.cleanup()
+				return conn, err
+			}
+			if attempt.commit(conn) {
+				attempt.cleanup()
+			}
+			return conn, nil
+		},
+	}, nil
 }
 
 // CloseUnclaimedEBPFSelfBypass releases a prepared self-bypass that no eBPF
