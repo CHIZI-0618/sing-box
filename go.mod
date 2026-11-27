@@ -4,7 +4,7 @@ go 1.26.11
 
 require (
 	filippo.io/age v1.3.1
-	github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261127053931-92d31a2f37e4
+	github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261127063831-099d82746a43
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
 	github.com/caddyserver/zerossl v0.1.5
