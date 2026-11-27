@@ -5,10 +5,25 @@ package ebpf
 import (
 	"container/heap"
 	"context"
+	"net/netip"
 	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 )
+
+type cgroupRecoveryBackend interface {
+	SweepUDPRecovery(maxIdle time.Duration, fallbackBudget uint32) (commonEBPF.UDPRecoverySweepResult, error)
+	DeleteUDPRecovery(listenerDestination netip.AddrPort, socketCookie uint64, networkGeneration uint32, releasedAtNS uint64) (bool, error)
+	UDPReleaseNotificationDrops() (uint64, error)
+	IsClosed() bool
+}
+
+type cgroupRecoveryTiming struct {
+	maxIdle          time.Duration
+	continuation     time.Duration
+	fallbackInterval time.Duration
+	watchdogInterval time.Duration
+}
 
 const (
 	cgroupRecoveryMaxIdle          = 30 * time.Second
@@ -66,7 +81,14 @@ func (i *Inbound) startCgroupRecoveryScheduler(backend *commonEBPF.CgroupBackend
 	if backend.UDPUserspaceCleanupMode() == "ringbuf" {
 		i.cgroupRecoveryEvents = make(chan commonEBPF.UDPReleaseEvent, cgroupRecoveryQueueSize)
 		i.cgroupRecoverySweepWake = make(chan struct{}, 1)
+		i.cgroupRecoveryExpiryWake = make(chan struct{}, 1)
 		i.cgroupRecoveryReaderError = make(chan struct{}, 1)
+		if i.cgroupRecoveryExpiryPending {
+			i.cgroupRecoveryExpiryPending = false
+			i.cgroupRecoveryExpiryWake <- struct{}{}
+		}
+	} else {
+		i.cgroupRecoveryExpiryPending = false
 	}
 	go i.runCgroupRecoveryScheduler(ctx, backend, done)
 }
@@ -74,6 +96,7 @@ func (i *Inbound) startCgroupRecoveryScheduler(backend *commonEBPF.CgroupBackend
 func (i *Inbound) stopCgroupRecoveryScheduler() {
 	i.cgroupRecoveryAccess.Lock()
 	if i.cgroupRecoveryCancel == nil {
+		i.cgroupRecoveryExpiryPending = false
 		i.cgroupRecoveryAccess.Unlock()
 		return
 	}
@@ -87,6 +110,8 @@ func (i *Inbound) stopCgroupRecoveryScheduler() {
 	i.cgroupRecoveryAccess.Lock()
 	i.cgroupRecoveryEvents = nil
 	i.cgroupRecoverySweepWake = nil
+	i.cgroupRecoveryExpiryWake = nil
+	i.cgroupRecoveryExpiryPending = false
 	i.cgroupRecoveryReaderError = nil
 	i.cgroupRecoveryAccess.Unlock()
 }
@@ -126,6 +151,24 @@ func (i *Inbound) requestCgroupRecoverySweep() {
 	}
 }
 
+func (i *Inbound) requestCgroupRecoveryExpirySweep() {
+	i.cgroupRecoveryAccess.Lock()
+	wake := i.cgroupRecoveryExpiryWake
+	if wake == nil {
+		// Listeners start before Attach() starts the recovery scheduler; retain
+		// pre-start requests so startup traffic rejected during that window is
+		// still reclaimed once the scheduler initializes.
+		i.cgroupRecoveryExpiryPending = true
+		i.cgroupRecoveryAccess.Unlock()
+		return
+	}
+	i.cgroupRecoveryAccess.Unlock()
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
+}
+
 func (i *Inbound) signalCgroupRecoveryReaderError() {
 	i.cgroupRecoveryAccess.Lock()
 	readerError := i.cgroupRecoveryReaderError
@@ -140,22 +183,40 @@ func (i *Inbound) signalCgroupRecoveryReaderError() {
 }
 
 func (i *Inbound) runCgroupRecoveryScheduler(ctx context.Context, backend *commonEBPF.CgroupBackend, done chan<- struct{}) {
+	i.runCgroupRecoverySchedulerLoop(ctx, backend, done, cgroupRecoveryTiming{
+		maxIdle:          cgroupRecoveryMaxIdle,
+		continuation:     cgroupRecoveryContinuation,
+		fallbackInterval: cgroupRecoveryFallbackInterval,
+		watchdogInterval: cgroupRecoveryWatchdogInterval,
+	})
+}
+
+func (i *Inbound) runCgroupRecoverySchedulerLoop(ctx context.Context, backend cgroupRecoveryBackend, done chan<- struct{}, timing cgroupRecoveryTiming) {
 	defer close(done)
 	i.cgroupRecoveryAccess.Lock()
 	events := i.cgroupRecoveryEvents
 	sweepWake := i.cgroupRecoverySweepWake
+	expiryWake := i.cgroupRecoveryExpiryWake
 	readerError := i.cgroupRecoveryReaderError
+	pendingExpiry := i.cgroupRecoveryExpiryPending
+	i.cgroupRecoveryExpiryPending = false
 	i.cgroupRecoveryAccess.Unlock()
 	if events == nil {
-		i.runCgroupRecoveryFallback(ctx, backend)
+		i.runCgroupRecoveryFallback(ctx, backend, timing)
 		return
+	}
+	if pendingExpiry && expiryWake != nil {
+		select {
+		case expiryWake <- struct{}{}:
+		default:
+		}
 	}
 	deadlines := make(cgroupRecoveryDeadlineHeap, 0, cgroupRecoveryQueueSize)
 	heap.Init(&deadlines)
 	timer := time.NewTimer(time.Hour)
 	stopCgroupRecoveryTimer(timer)
 	defer timer.Stop()
-	watchdog := time.NewTicker(cgroupRecoveryWatchdogInterval)
+	watchdog := time.NewTicker(timing.watchdogInterval)
 	defer watchdog.Stop()
 	var fallbackTicker *time.Ticker
 	var fallbackC <-chan time.Time
@@ -173,10 +234,27 @@ func (i *Inbound) runCgroupRecoveryScheduler(ctx context.Context, backend *commo
 	stopCgroupRecoveryTimer(lossFollowup)
 	defer lossFollowup.Stop()
 	var lossFollowupC <-chan time.Time
-	scheduleLossFollowup := func() {
+	var latestFollowupDue time.Time
+	var passStartedAt time.Time
+	var followupPending bool
+	armLossFollowup := func(delay time.Duration) {
 		stopCgroupRecoveryTimer(lossFollowup)
-		lossFollowup.Reset(cgroupRecoveryMaxIdle)
+		lossFollowup.Reset(max(delay, time.Millisecond))
 		lossFollowupC = lossFollowup.C
+	}
+	scheduleLossFollowup := func() {
+		due := time.Now().Add(timing.maxIdle)
+		armDue := due
+		if !latestFollowupDue.IsZero() && latestFollowupDue.Before(armDue) &&
+			(passStartedAt.IsZero() || latestFollowupDue.After(passStartedAt)) {
+			armDue = latestFollowupDue
+		}
+		if due.After(latestFollowupDue) {
+			latestFollowupDue = due
+		}
+		if lossFollowupC == nil {
+			armLossFollowup(time.Until(armDue))
+		}
 	}
 	resetContinuation := func(delay time.Duration) {
 		stopCgroupRecoveryTimer(continuation)
@@ -188,26 +266,51 @@ func (i *Inbound) runCgroupRecoveryScheduler(ctx context.Context, backend *commo
 		continuationC = nil
 	}
 	runSweep := func(reason string) {
-		result, err := backend.SweepUDPRecovery(cgroupRecoveryMaxIdle, cgroupRecoverySweepBudget)
+		if passStartedAt.IsZero() {
+			passStartedAt = time.Now()
+		}
+		result, err := backend.SweepUDPRecovery(timing.maxIdle, cgroupRecoverySweepBudget)
 		if err != nil {
 			if !backend.IsClosed() {
 				i.logger.Debug("sweep cgroup eBPF UDP recovery after ", reason, ": ", err)
 				// A notification was already lost, so a transient map error
 				// cannot return us to the healthy event-only state. Retry with
 				// bounded backoff until one complete scan restores confidence.
-				resetContinuation(cgroupRecoveryFallbackInterval)
+				resetContinuation(timing.fallbackInterval)
 			} else {
 				clearContinuation()
+				passStartedAt = time.Time{}
+				latestFollowupDue = time.Time{}
+				followupPending = false
+				stopCgroupRecoveryTimer(lossFollowup)
+				lossFollowupC = nil
 			}
 			return
 		}
 		if !result.Complete {
-			resetContinuation(cgroupRecoveryContinuation)
-		} else {
-			clearContinuation()
+			resetContinuation(timing.continuation)
+			return
 		}
+		clearContinuation()
+		completedPassAt := passStartedAt
+		passStartedAt = time.Time{}
+		if !latestFollowupDue.IsZero() && latestFollowupDue.After(completedPassAt) {
+			if followupPending {
+				followupPending = false
+				armLossFollowup(time.Millisecond)
+			} else if lossFollowupC == nil {
+				armLossFollowup(time.Until(latestFollowupDue))
+			}
+			return
+		}
+		followupPending = false
+		latestFollowupDue = time.Time{}
+		stopCgroupRecoveryTimer(lossFollowup)
+		lossFollowupC = nil
 	}
-	lastKernelDrops, _ := backend.UDPReleaseNotificationDrops()
+	// Start from zero so kernel ring-buffer drops incurred between Attach() and
+	// this goroutine's first poll still trigger recovery on the first watchdog tick.
+	var lastKernelDrops uint64
 	resetTimer := func() {
 		if len(deadlines) == 0 {
 			timerC = nil
@@ -226,20 +329,26 @@ func (i *Inbound) runCgroupRecoveryScheduler(ctx context.Context, backend *commo
 		case <-ctx.Done():
 			return
 		case event := <-events:
-			heap.Push(&deadlines, cgroupRecoveryDeadline{event: event, deadline: time.Now().Add(cgroupRecoveryMaxIdle)})
+			heap.Push(&deadlines, cgroupRecoveryDeadline{event: event, deadline: time.Now().Add(timing.maxIdle)})
 			resetTimer()
 		case <-sweepWake:
 			scheduleLossFollowup()
 			runSweep("userspace release queue overflow")
+		case <-expiryWake:
+			scheduleLossFollowup()
 		case <-continuationC:
 			continuationC = nil
 			runSweep("partial scan continuation")
 		case <-lossFollowupC:
 			lossFollowupC = nil
-			runSweep("release notification loss deadline")
+			if passStartedAt.IsZero() {
+				runSweep("cgroup UDP recovery deadline")
+			} else {
+				followupPending = true
+			}
 		case <-readerError:
 			if fallbackTicker == nil {
-				fallbackTicker = time.NewTicker(cgroupRecoveryFallbackInterval)
+				fallbackTicker = time.NewTicker(timing.fallbackInterval)
 				fallbackC = fallbackTicker.C
 			}
 			runSweep("release event reader failure")
@@ -252,7 +361,7 @@ func (i *Inbound) runCgroupRecoveryScheduler(ctx context.Context, backend *commo
 				_, err := backend.DeleteUDPRecovery(entry.event.Listener, entry.event.SocketCookie, entry.event.NetworkGeneration, entry.event.ReleasedAtNS)
 				if err != nil && !backend.IsClosed() {
 					i.logger.Debug("delete expired cgroup eBPF UDP recovery entry: ", err)
-					resetContinuation(cgroupRecoveryContinuation)
+					resetContinuation(timing.continuation)
 				}
 			}
 			resetTimer()
@@ -275,8 +384,8 @@ func (i *Inbound) runCgroupRecoveryScheduler(ctx context.Context, backend *commo
 	}
 }
 
-func (i *Inbound) runCgroupRecoveryFallback(ctx context.Context, backend *commonEBPF.CgroupBackend) {
-	timer := time.NewTimer(cgroupRecoveryFallbackInterval)
+func (i *Inbound) runCgroupRecoveryFallback(ctx context.Context, backend cgroupRecoveryBackend, timing cgroupRecoveryTiming) {
+	timer := time.NewTimer(timing.fallbackInterval)
 	defer timer.Stop()
 	for {
 		select {
@@ -284,13 +393,13 @@ func (i *Inbound) runCgroupRecoveryFallback(ctx context.Context, backend *common
 			return
 		case <-timer.C:
 		}
-		result, err := backend.SweepUDPRecovery(cgroupRecoveryMaxIdle, cgroupRecoverySweepBudget)
+		result, err := backend.SweepUDPRecovery(timing.maxIdle, cgroupRecoverySweepBudget)
 		if err != nil && !backend.IsClosed() {
 			i.logger.Debug("sweep stale cgroup eBPF UDP recovery entries: ", err)
 		}
-		delay := cgroupRecoveryFallbackInterval
+		delay := timing.fallbackInterval
 		if err == nil && !result.Complete {
-			delay = cgroupRecoveryContinuation
+			delay = timing.continuation
 		}
 		timer.Reset(delay)
 	}

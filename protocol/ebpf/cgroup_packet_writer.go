@@ -36,6 +36,7 @@ func (w *cgroupPacketWriter) ensureReplyBinding(destination netip.AddrPort) (udp
 	}
 	if !w.inbound.udpClientTable.setCgroupReplyBinding(w.key, w.clientState, destination, redirect) {
 		_ = backend.DeleteRedirect(commonEBPF.ProtocolUDP, netip.AddrPortFrom(redirect, w.inbound.listeners.selectedPort()))
+		w.inbound.requestCgroupRecoveryExpirySweep()
 		return udpRedirectBinding{}, E.New("cgroup eBPF UDP reply binding was rejected")
 	}
 	binding, loaded := w.clientState.redirectBinding(destination)

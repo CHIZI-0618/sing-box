@@ -301,16 +301,43 @@ func (w *tcPacketWriter) replySocketFactory() func(netip.AddrPort) (*net.UDPConn
 
 var _ N.PacketBatchWriter = (*tcPacketWriter)(nil)
 
+type cgroupRedirectBackend interface {
+	LookupOriginal(protocol uint8, listenerDestination netip.AddrPort) (commonEBPF.OriginalDestination, error)
+	DeleteRedirect(protocol uint8, listenerDestination netip.AddrPort) error
+	IsClosed() bool
+}
+
 func (i *Inbound) deleteCgroupUDPRedirects(addresses []netip.Addr) {
 	backend := i.cgroupBackendInstance()
 	if backend == nil {
 		return
 	}
+	i.deleteCgroupUDPRedirectsWith(backend, addresses)
+}
+
+func (i *Inbound) deleteCgroupUDPRedirectsWith(backend cgroupRedirectBackend, addresses []netip.Addr) {
+	if backend == nil || len(addresses) == 0 {
+		return
+	}
+	port := i.listeners.selectedPort()
+	var retainedRecovery bool
 	for _, address := range addresses {
-		destination := netip.AddrPortFrom(address, i.listeners.selectedPort())
+		destination := netip.AddrPortFrom(address, port)
+		_, lookupErr := backend.LookupOriginal(commonEBPF.ProtocolUDP, destination)
+		if errors.Is(lookupErr, unix.ENOENT) {
+			continue
+		}
 		if err := backend.DeleteRedirect(commonEBPF.ProtocolUDP, destination); err != nil && !errors.Is(err, unix.ENOENT) {
 			i.udpWarnings.cleanup.warn(i.logger, "delete cgroup eBPF UDP redirect: ", err)
+			if lookupErr == nil && !backend.IsClosed() {
+				retainedRecovery = true
+			}
+			continue
 		}
+		retainedRecovery = true
+	}
+	if retainedRecovery {
+		i.requestCgroupRecoveryExpirySweep()
 	}
 }
 

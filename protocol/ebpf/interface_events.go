@@ -56,6 +56,8 @@ func (i *Inbound) InterfaceUpdated(ctx context.Context) {
 	if backend := i.cgroupBackendInstance(); backend != nil {
 		if err := backend.ResetNetworkState(); err != nil {
 			i.interfaceWarnings.reconcile.warn(i.logger, "reset cgroup eBPF network state after network change: ", err)
+		} else {
+			i.requestCgroupRecoveryExpirySweep()
 		}
 	}
 	if backend := i.tcBackend(); backend != nil {
