@@ -213,7 +213,7 @@ func (d *interfaceDialer) DialContext(ctx context.Context, network string, desti
 	if destination.Addr.Zone() == "" && isLinkScoped(destination.Addr) {
 		destination.Addr = destination.Addr.WithZone(strconv.Itoa(d.interfaceIndex))
 	}
-	conn, err := d.dialer.DialContext(ctx, network, destination.String())
+	conn, err := d.parent.dialWithSelfBypass(ctx, d.dialer, network, destination.String())
 	return d.parent.trackConn(ctx, destination, conn, err)
 }
 

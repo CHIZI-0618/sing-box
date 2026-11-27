@@ -116,6 +116,23 @@ func TestAppendDialerControlPreservesControlContext(t *testing.T) {
 	}
 }
 
+func TestUDPListenerControlIncludesUserspaceSelfBypass(t *testing.T) {
+	tracker, err := commonEBPF.NewSelfBypassWithCapacity(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	dialer := &DefaultDialer{networkManager: &selfBypassTestNetworkManager{tracker: tracker}}
+	listenerControl, _ := dialer.UDPListenerControl()
+	if listenerControl == nil {
+		t.Fatal("external UDP listeners need a self-bypass control")
+	}
+	if dialer.udpListener.Control != nil {
+		t.Fatal("ordinary UDP listeners should still register after bind")
+	}
+}
+
 type selfBypassTestNetworkManager struct {
 	adapter.NetworkManager
 	tracker *commonEBPF.SelfBypass

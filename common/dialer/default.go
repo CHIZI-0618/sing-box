@@ -484,13 +484,19 @@ func (d *DefaultDialer) listenSerialInterfacePacket(ctx context.Context, destina
 	return d.trackPacketConn(ctx, destination, packetConn, nil)
 }
 
-func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
+func (d *DefaultDialer) UDPListenerBaseControl() (control.Func, bool) {
 	egressEnabled := d.autoDetectBindFunc != nil && d.netns == ""
 	listenerControl := d.udpListener.Control
 	if egressEnabled && d.networkManager.AutoRedirectOutputMark() == 0 {
 		listenerControl = control.Append(listenerControl, d.autoDetectBindFunc)
 	}
 	return listenerControl, egressEnabled
+}
+
+func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
+	listenerControl, egressEnabled := d.UDPListenerBaseControl()
+	// External listeners bypass trackPacketConn and only expose a pre-bind control.
+	return AppendEBPFSelfBypass(d.networkManager, listenerControl), egressEnabled
 }
 
 func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, conn net.Conn, err error) (net.Conn, error) {
