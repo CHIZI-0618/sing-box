@@ -279,10 +279,10 @@ local socket assignment 可使用 `--local-interface <name>` 只读检查接口�
 cgroup 可使用 `--cgroup-path <path>` 检查指定 cgroup v2 路径，省略时检查当前进程所在的路径。
 这些检查不会创建 qdisc、挂载 hook 或修改系统状态。
 
-命令末尾会显示 `sb_` map 的一次性 occupancy 诊断；不支持安全遍历的 map 会标为
-`not_applicable`。影响准入的运行时状态 map 使用 `healthy`、`warning`、`degraded` 阈值；容量按当前
-编译策略条目数确定的 map 使用 `configured`，填满是预期状态，不代表运行时压力；
-LRU 安全缓存使用 `managed`，无法分类或采集失败分别使用 `unknown`、`unavailable`。该诊断不会在 sing-box 运行期间周期执行，也不会改变 map
+命令末尾会显示可见 `sb_` map 的一次性 occupancy 计数。主机级枚举没有运行时 owner，
+因此语义分类和压力使用 `unknown`，不会根据 map 名称猜测；不支持安全遍历的 map 使用
+`not_applicable`，采集失败使用 `unavailable`。每个入站的 owner-aware 诊断则按排障文档使用
+`healthy`、`warning`、`degraded`、`configured` 和 `managed`。两类诊断都不会修改 map
 或数据面。
 
 探测会针对所选协议、地址族、数据面和 shared 接口。local socket assignment 模式会报告必需的 TC socket-cookie

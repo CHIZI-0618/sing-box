@@ -349,13 +349,13 @@ interface and any existing clsact qdisc. For local cgroup, `--cgroup-path
 cgroup is checked. These checks do not create qdiscs, attach hooks, or modify
 system state.
 
-The command also prints a one-shot occupancy diagnostic for visible `sb_` maps.
-Admission-sensitive runtime maps use `healthy`, `warning`, and `degraded` thresholds. Maps
-whose capacity is derived from the current compiled policy use `configured`;
-being full is expected and is not runtime pressure. Fixed-layout maps that
-cannot be safely iterated use `not_applicable`; LRU safe caches use `managed`,
-and unclassified or failed measurements use `unknown` or `unavailable`. This diagnostic never runs periodically while sing-box
-is active and does not modify maps or data paths.
+The command also prints a one-shot occupancy count for visible `sb_` maps.
+Because this host-wide enumeration has no runtime owner, it reports semantic
+classification and pressure as `unknown` instead of guessing from map names;
+fixed-layout maps that cannot be safely iterated use `not_applicable`, and a
+failed measurement uses `unavailable`. Owner-aware per-inbound diagnostics use
+`healthy`, `warning`, `degraded`, `configured`, and `managed` as described in
+the troubleshooting guide. Neither diagnostic modifies maps or data paths.
 
 The probe uses the selected protocols, address families, data planes, and shared interface.
 For local socket assignment mode it reports the required TC socket-cookie helper and the optional
