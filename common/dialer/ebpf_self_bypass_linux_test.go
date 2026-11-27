@@ -4,6 +4,7 @@ package dialer
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"syscall"
@@ -72,21 +73,35 @@ func TestSelfBypassLifecycleContract(t *testing.T) {
 }
 
 func TestAppendDialerControlPreservesControlContext(t *testing.T) {
-	var baseCalled, extraCalled bool
+	var order []string
 	dialer := &net.Dialer{
 		ControlContext: func(context.Context, string, string, syscall.RawConn) error {
-			baseCalled = true
+			order = append(order, "base")
 			return nil
 		},
 	}
 	appendDialerControl(dialer, func(string, string, syscall.RawConn) error {
-		extraCalled = true
+		order = append(order, "extra")
 		return nil
 	})
 	if err := dialer.ControlContext(context.Background(), "tcp", "127.0.0.1:1", nil); err != nil {
 		t.Fatal(err)
 	}
-	if !baseCalled || !extraCalled {
-		t.Fatalf("control hooks were not chained: base=%v extra=%v", baseCalled, extraCalled)
+	if len(order) != 2 || order[0] != "extra" || order[1] != "base" {
+		t.Fatalf("unexpected control order: %v", order)
+	}
+
+	bindErr := errors.New("bind failed")
+	baseCalled := false
+	dialer.ControlContext = func(context.Context, string, string, syscall.RawConn) error {
+		baseCalled = true
+		return nil
+	}
+	appendDialerControl(dialer, func(string, string, syscall.RawConn) error { return bindErr })
+	if err := dialer.ControlContext(context.Background(), "tcp", "127.0.0.1:1", nil); !errors.Is(err, bindErr) {
+		t.Fatalf("unexpected control error: %v", err)
+	}
+	if baseCalled {
+		t.Fatal("base control must not register self-bypass after interface binding fails")
 	}
 }

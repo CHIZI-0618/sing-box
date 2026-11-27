@@ -63,7 +63,7 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 			select {
 			case results <- dialResult{Conn: conn, primary: primary}:
 			case <-returned:
-				_ = bindEBPFSelfBypassConnLifecycle(d.networkManager, conn).Close()
+				_ = conn.Close()
 			}
 		}
 	}
@@ -154,7 +154,7 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 				if primary && N.NetworkName(network) == N.NetworkTCP && time.Since(startAt) <= fallbackDelay {
 					resetFastFallback(time.Time{})
 				}
-				_ = bindEBPFSelfBypassConnLifecycle(d.networkManager, conn).Close()
+				_ = conn.Close()
 			}
 		}
 	}
