@@ -3,7 +3,6 @@
 package udpio
 
 import (
-	"errors"
 	"io"
 	"net"
 	"os"
@@ -71,58 +70,79 @@ func (w *oobPacketBatchReadWaiter) InitializeReadWaiter(options N.ReadWaitOption
 		w.control[index] = make([]byte, w.oobSize)
 	}
 	w.readFunc = func(fd uintptr) bool {
-		for index := range w.messages {
-			buffer := w.buffers[index]
-			if buffer == nil {
-				buffer = w.options.NewPacketBuffer()
-				w.buffers[index] = buffer
-			}
-			w.names[index] = unix.RawSockaddrAny{}
-			w.iovecs[index] = buffer.Iovec(buffer.FreeLen())
-			w.messages[index] = mmsghdr{}
-			w.messages[index].msgHdr.Name = (*byte)(unsafe.Pointer(&w.names[index]))
-			w.messages[index].msgHdr.Namelen = unix.SizeofSockaddrAny
-			w.messages[index].msgHdr.Iov = &w.iovecs[index]
-			w.messages[index].msgHdr.SetIovlen(1)
-			w.oobs[index] = nil
-			w.messages[index].msgHdr.Control = &w.control[index][0]
-			w.messages[index].msgHdr.SetControllen(len(w.control[index]))
-		}
 		for {
-			var errno syscall.Errno
-			w.readN, errno = recvmmsg(int(fd), w.messages, 0)
-			switch errno {
-			case 0:
-				w.readErr = nil
-			case syscall.EINTR:
-				continue
-			case syscall.EAGAIN:
-				return false
-			default:
-				if errno == syscall.EWOULDBLOCK {
-					return false
+			for index := range w.messages {
+				buffer := w.buffers[index]
+				if buffer == nil {
+					buffer = w.options.NewPacketBuffer()
+					w.buffers[index] = buffer
 				}
-				w.readErr = os.NewSyscallError("recvmmsg", errno)
+				w.names[index] = unix.RawSockaddrAny{}
+				w.iovecs[index] = buffer.Iovec(buffer.FreeLen())
+				w.messages[index] = mmsghdr{}
+				w.messages[index].msgHdr.Name = (*byte)(unsafe.Pointer(&w.names[index]))
+				w.messages[index].msgHdr.Namelen = unix.SizeofSockaddrAny
+				w.messages[index].msgHdr.Iov = &w.iovecs[index]
+				w.messages[index].msgHdr.SetIovlen(1)
+				w.oobs[index] = nil
+				w.messages[index].msgHdr.Control = &w.control[index][0]
+				w.messages[index].msgHdr.SetControllen(len(w.control[index]))
 			}
-			break
-		}
-		if w.readN == 0 && w.readErr == nil {
-			w.readErr = io.EOF
-		}
-		for index := 0; index < w.readN; index++ {
-			message := &w.messages[index]
-			if message.msgHdr.Flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 {
-				w.readErr = errors.New("packet payload or ancillary data was truncated")
+			var rawN int
+			for {
+				var errno syscall.Errno
+				rawN, errno = recvmmsg(int(fd), w.messages, 0)
+				switch errno {
+				case 0:
+					w.readErr = nil
+				case syscall.EINTR:
+					continue
+				case syscall.EAGAIN:
+					return false
+				default:
+					if errno == syscall.EWOULDBLOCK {
+						return false
+					}
+					w.readErr = os.NewSyscallError("recvmmsg", errno)
+				}
 				break
 			}
-			buffer := w.buffers[index]
-			buffer.Truncate(int(message.msgLen))
-			w.options.PostReturn(buffer)
-			oobLen := min(int(message.msgHdr.Controllen), len(w.control[index]))
-			w.oobs[index] = w.control[index][:oobLen]
-			w.sources[index] = M.SocksaddrFromRawSockaddrAny(&w.names[index])
+			if w.readErr != nil {
+				w.readN = 0
+				return true
+			}
+			if rawN == 0 {
+				w.readN = 0
+				w.readErr = io.EOF
+				return true
+			}
+			validN := 0
+			for index := 0; index < rawN; index++ {
+				message := &w.messages[index]
+				if message.msgHdr.Flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 {
+					w.buffers[index].Release()
+					w.buffers[index] = nil
+					continue
+				}
+				buffer := w.buffers[index]
+				buffer.Truncate(int(message.msgLen))
+				w.options.PostReturn(buffer)
+				oobLen := min(int(message.msgHdr.Controllen), len(w.control[index]))
+				if validN != index {
+					w.buffers[validN] = buffer
+					w.buffers[index] = nil
+				}
+				w.oobs[validN] = w.control[index][:oobLen]
+				w.sources[validN] = M.SocksaddrFromRawSockaddrAny(&w.names[index])
+				validN++
+			}
+			if validN == 0 {
+				w.readN = 0
+				return true
+			}
+			w.readN = validN
+			return true
 		}
-		return true
 	}
 	return false
 }
@@ -132,15 +152,21 @@ func (w *oobPacketBatchReadWaiter) WaitReadOOBPackets() (buffers []*buf.Buffer, 
 		return nil, nil, nil, os.ErrInvalid
 	}
 	defer w.releaseBuffers()
-	err = w.rawConn.Read(w.readFunc)
-	if err != nil {
-		return
-	}
-	if w.readErr != nil {
-		if w.readErr == io.EOF {
-			return nil, nil, nil, io.EOF
+	for {
+		err = w.rawConn.Read(w.readFunc)
+		if err != nil {
+			return
 		}
-		return nil, nil, nil, E.Cause(w.readErr, "raw read")
+		if w.readErr != nil {
+			if w.readErr == io.EOF {
+				return nil, nil, nil, io.EOF
+			}
+			return nil, nil, nil, E.Cause(w.readErr, "raw read")
+		}
+		if w.readN == 0 {
+			continue
+		}
+		break
 	}
 	clear(w.returned)
 	buffers = w.returned[:w.readN]

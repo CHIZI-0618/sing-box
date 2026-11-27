@@ -264,3 +264,71 @@ func TestOOBBatchBufferOwnershipAcrossReads(t *testing.T) {
 		t.Fatal("reinitialization released caller-owned buffers")
 	}
 }
+
+func TestOOBPacketBatchSkipsTruncatedMessagesAndContinues(t *testing.T) {
+	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	if err = enableIPv4PacketInfo(receiver); err != nil {
+		t.Fatal(err)
+	}
+	if err = receiver.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	target := receiver.LocalAddr().(*net.UDPAddr).AddrPort()
+
+	reader, ok := NewOOBPacketBatchReadWaiter(receiver, 256)
+	if !ok {
+		t.Fatal("no batch reader")
+	}
+	reader.InitializeReadWaiter(N.ReadWaitOptions{
+		BatchSize: 4,
+		MTU:       8,
+	})
+
+	// 1. Mixed batch: oversized (MSG_TRUNC) followed by a valid packet.
+	if _, err = sender.WriteToUDPAddrPort([]byte("0123456789-oversized"), target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = sender.WriteToUDPAddrPort([]byte("ok-1"), target); err != nil {
+		t.Fatal(err)
+	}
+	readBuffers, readOOBs, _, err := reader.WaitReadOOBPackets()
+	if err != nil {
+		t.Fatalf("truncated packet must not fail batch read: %v", err)
+	}
+	if len(readBuffers) != 1 || string(readBuffers[0].Bytes()) != "ok-1" {
+		buf.ReleaseMulti(readBuffers)
+		t.Fatalf("expected single valid packet ok-1, got %d packets", len(readBuffers))
+	}
+	if !containsPacketInfo(readOOBs[0], unix.IPPROTO_IP, unix.IP_PKTINFO) {
+		buf.ReleaseMulti(readBuffers)
+		t.Fatal("expected IP_PKTINFO on surviving packet")
+	}
+	buf.ReleaseMulti(readBuffers)
+
+	// 2. Truncated-only batch followed asynchronously by a valid packet on the next batch.
+	if _, err = sender.WriteToUDPAddrPort([]byte("0123456789-oversized-2"), target); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		_, _ = sender.WriteToUDPAddrPort([]byte("ok-2"), target)
+	}()
+	nextBuffers, _, _, err := reader.WaitReadOOBPackets()
+	if err != nil {
+		t.Fatalf("truncated-only batch must keep waiting and deliver next packet: %v", err)
+	}
+	if len(nextBuffers) != 1 || string(nextBuffers[0].Bytes()) != "ok-2" {
+		buf.ReleaseMulti(nextBuffers)
+		t.Fatalf("expected ok-2 on next batch, got %d packets", len(nextBuffers))
+	}
+	buf.ReleaseMulti(nextBuffers)
+}
