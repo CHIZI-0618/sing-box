@@ -214,9 +214,13 @@ interpreting a single large number:
   intentionally allowed through, not that the parser silently lost it;
 - shared ingress/egress pass counters cover all explicit pass exits and help
   reveal asymmetric bypass or reply-path behavior;
-- UDP `capacity_evictions`, `queue_drops`, pending-release rejection, and
-  release-notification drops are distinct pressure signals. They do not all
-  mean that the BPF assignment map is missing;
+- UDP `capacity_evictions`, `queue_drops`, and pending-release rejection are
+  distinct pressure signals. For cgroup UDP recovery,
+  `cgroup_recovery_ringbuf_drops` means the kernel ring buffer rejected a
+  release event, while `cgroup_recovery_queue_overflows` means sing-box read
+  the event but its bounded userspace scheduler queue was full. Both paths are
+  covered by a bounded recovery sweep; neither alone means that the BPF
+  assignment map is missing;
 - map occupancy is collected only on an explicit diagnostic request. A map with
   `pressure: not_applicable` has a fixed layout that is not safely iterable;
   `category: configured_policy` identifies a policy-sized map whose capacity

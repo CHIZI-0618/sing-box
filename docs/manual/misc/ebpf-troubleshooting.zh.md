@@ -175,8 +175,11 @@ health check/reconcile 时间以及网络代数。它们来自运行中的资源
 - fragment-pass 增加表示 IPv4 分片或非 atomic IPv6 分片按设计放行，并非 parser
   静默漏流量；
 - shared ingress/egress pass 覆盖所有显式放行出口，可用于识别不对称绕过或回复路径；
-- UDP `capacity_evictions`、`queue_drops`、pending-release 拒绝和 release 通知丢失是
-  不同压力信号，并不都代表 BPF assignment map 缺项；
+- UDP `capacity_evictions`、`queue_drops` 和 pending-release 拒绝是不同压力信号。
+  对于 cgroup UDP recovery，`cgroup_recovery_ringbuf_drops` 表示内核 ring buffer
+  拒绝了 release 事件；`cgroup_recovery_queue_overflows` 表示 sing-box 已从内核读到
+  事件，但有界用户空间调度队列已满。两者都有有界 recovery sweep 兜底，单独出现均不
+  代表 BPF assignment map 缺项；
 - map occupancy 只在显式请求诊断时采集。map 的 `pressure: not_applicable` 表示其布局固定，
   不能安全遍历；`category: configured_policy` 表示容量来自已编译的策略，填满是预期状态，
   `pressure: configured` 只是对应的中性结果；`occupancy_mode` 表示占用统计方式，
