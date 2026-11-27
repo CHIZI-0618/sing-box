@@ -228,14 +228,17 @@ interpreting a single large number:
   corresponding neutral result. `occupancy_mode` describes how the count was
   obtained, while `eviction_mode` and `admission_critical` describe whether
   entries may be reclaimed and whether full capacity can reject new flows.
-  `recovery_failed` means key iteration itself failed. Do not
-  interpret any of these states as zero occupancy. A top-level `error` means
-  map enumeration or inspection was denied before all maps could be observed.
+  `pressure: managed` means an LRU cache may normally remain near capacity and
+  is not admission pressure. `category: unknown` and `pressure: unknown` mean
+  the resource owner did not provide enough metadata to interpret capacity;
+  an iteration failure uses `unavailable`. Do not interpret any of these
+  states as zero occupancy. A top-level `error` means owner snapshot or
+  inspection failed before all maps could be observed.
 
-Program/map enumeration uses the `sb_` naming convention and can see another
-visible sing-ebpf process in the same kernel. Per-inbound attachments, policy
-state, userspace sessions, and counters remain the correct instance-specific
-evidence.
+Per-inbound diagnostics use resource IDs and semantic metadata supplied by the
+running sing-ebpf owners; map names are labels, not classification keys. The
+host-wide probe still uses the `sb_` naming convention and can see another
+visible sing-ebpf process in the same kernel.
 
 ## Startup and attachment failures
 

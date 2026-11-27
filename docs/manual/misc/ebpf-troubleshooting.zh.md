@@ -184,11 +184,13 @@ health check/reconcile 时间以及网络代数。它们来自运行中的资源
   不能安全遍历；`category: configured_policy` 表示容量来自已编译的策略，填满是预期状态，
   `pressure: configured` 只是对应的中性结果；`occupancy_mode` 表示占用统计方式，
   `eviction_mode` 与 `admission_critical` 表示条目能否被回收以及满表是否会拒绝新流量。
-  `recovery_failed` 表示键遍历本身失败。上述状态都不表示占用为零。顶层 `error` 表示在
-  完成所有 map 检查前，map 枚举或检查权限被拒绝。
+  `pressure: managed` 表示 LRU 缓存接近满容量可以是正常状态，不构成准入压力；
+  `category: unknown` 与 `pressure: unknown` 表示资源 owner 未提供足够的语义元数据，
+  无法解释容量；键遍历失败使用 `unavailable`。上述状态都不表示占用为零。顶层 `error`
+  表示在完成所有 map 检查前，owner 快照或检查失败。
 
-program/map 枚举按 `sb_` 命名约定筛选，同一内核中其他可见的 sing-ebpf 进程也可能
-出现；每个入站自身的 attachment、策略状态、用户态会话和计数才是实例级证据。
+每个入站的诊断使用运行中 sing-ebpf owner 提供的资源 ID 与语义元数据；map 名称只是标签，
+不再作为分类依据。主机级探测仍按 `sb_` 命名约定筛选，因此可能看到同一内核中的其他实例。
 
 ## 启动与挂载失败
 

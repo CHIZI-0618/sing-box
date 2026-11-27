@@ -350,11 +350,11 @@ cgroup is checked. These checks do not create qdiscs, attach hooks, or modify
 system state.
 
 The command also prints a one-shot occupancy diagnostic for visible `sb_` maps.
-Runtime state maps use `healthy`, `warning`, and `degraded` thresholds. Maps
+Admission-sensitive runtime maps use `healthy`, `warning`, and `degraded` thresholds. Maps
 whose capacity is derived from the current compiled policy use `configured`;
 being full is expected and is not runtime pressure. Fixed-layout maps that
-cannot be safely iterated use `not_applicable`, while an actual iteration error
-uses `recovery_failed`. This diagnostic never runs periodically while sing-box
+cannot be safely iterated use `not_applicable`; LRU safe caches use `managed`,
+and unclassified or failed measurements use `unknown` or `unavailable`. This diagnostic never runs periodically while sing-box
 is active and does not modify maps or data paths.
 
 The probe uses the selected protocols, address families, data planes, and shared interface.
