@@ -953,6 +953,7 @@ message EBPFInboundDiagnostics {
   optional int64 localSelfBypassReclaimLastAt = 101;
   uint64 localSelfBypassStorageFailures = 102;
   uint64 localSelfBypassCookieFallbacks = 103;
+  uint64 cgroupRecoveryRingbufDrops = 104;
 }
 
 message EBPFAttachmentDiagnostics {
@@ -1018,7 +1019,8 @@ message EBPFUDPNATDiagnostics {
   uint64 socketReleaseEvents = 5;
   uint64 socketReleaseMatched = 6;
   uint64 pendingReleaseCapacityRejected = 7;
-  uint64 releaseNotificationDrops = 8;
+  reserved 8;
+  reserved "releaseNotificationDrops";
   uint64 redirectAdmissionFailures = 9;
   uint64 udpTokenAdmissionFailures = 10;
   uint64 udpTokenReverseFailures = 11;

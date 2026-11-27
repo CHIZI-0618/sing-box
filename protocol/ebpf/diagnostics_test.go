@@ -208,12 +208,12 @@ func TestEBPFDiagnosticsIncludesEffectiveTCState(t *testing.T) {
 }
 
 func TestEBPFDiagnosticsSchemaVersionIncludesEffectiveRuntimeFields(t *testing.T) {
-	if adapter.EBPFDiagnosticsSchemaVersion != 26 {
-		t.Fatalf("schema version = %d, want 26 after self-bypass storage diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
+	if adapter.EBPFDiagnosticsSchemaVersion != 27 {
+		t.Fatalf("schema version = %d, want 27 after cgroup recovery diagnostics update", adapter.EBPFDiagnosticsSchemaVersion)
 	}
 	diagnostics := diagnosticsForAPI(EBPFDiagnostics{SchemaVersion: adapter.EBPFDiagnosticsSchemaVersion, LocalCgroupAttachMode: "link_create"})
-	if diagnostics.SchemaVersion != 26 {
-		t.Fatalf("diagnostics schema version = %d, want 26", diagnostics.SchemaVersion)
+	if diagnostics.SchemaVersion != 27 {
+		t.Fatalf("diagnostics schema version = %d, want 27", diagnostics.SchemaVersion)
 	}
 }
 
@@ -557,6 +557,19 @@ func TestDiagnosticsWriteTextIncludesTheKeyFields(t *testing.T) {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("text output still reports removed counter %q; got:\n%s", unwanted, text)
 		}
+	}
+	if strings.Contains(text, "Cgroup UDP recovery:") {
+		t.Fatalf("non-cgroup text output includes cgroup recovery state; got:\n%s", text)
+	}
+	diagnostics.LocalDataPlane = localDataPlaneCgroup
+	diagnostics.CgroupRecoveryRingbufDrops = 2
+	diagnostics.CgroupRecoveryQueueOverflows = 3
+	buffer.Reset()
+	if err := diagnostics.WriteText(&buffer); err != nil {
+		t.Fatalf("WriteText cgroup: %v", err)
+	}
+	if !strings.Contains(buffer.String(), "Cgroup UDP recovery: kernel_ringbuf_drops=2 userspace_queue_overflows=3") {
+		t.Fatalf("cgroup text output did not distinguish recovery loss sources; got:\n%s", buffer.String())
 	}
 }
 

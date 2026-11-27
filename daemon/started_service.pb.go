@@ -7950,6 +7950,7 @@ type EBPFInboundDiagnostics struct {
 	LocalSelfBypassReclaimLastAt    *int64                         `protobuf:"varint,101,opt,name=localSelfBypassReclaimLastAt,proto3,oneof" json:"localSelfBypassReclaimLastAt,omitempty"`
 	LocalSelfBypassStorageFailures  uint64                         `protobuf:"varint,102,opt,name=localSelfBypassStorageFailures,proto3" json:"localSelfBypassStorageFailures,omitempty"`
 	LocalSelfBypassCookieFallbacks  uint64                         `protobuf:"varint,103,opt,name=localSelfBypassCookieFallbacks,proto3" json:"localSelfBypassCookieFallbacks,omitempty"`
+	CgroupRecoveryRingbufDrops      uint64                         `protobuf:"varint,104,opt,name=cgroupRecoveryRingbufDrops,proto3" json:"cgroupRecoveryRingbufDrops,omitempty"`
 	unknownFields                   protoimpl.UnknownFields
 	sizeCache                       protoimpl.SizeCache
 }
@@ -8600,6 +8601,13 @@ func (x *EBPFInboundDiagnostics) GetLocalSelfBypassCookieFallbacks() uint64 {
 	return 0
 }
 
+func (x *EBPFInboundDiagnostics) GetCgroupRecoveryRingbufDrops() uint64 {
+	if x != nil {
+		return x.CgroupRecoveryRingbufDrops
+	}
+	return 0
+}
+
 type EBPFAttachmentDiagnostics struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InterfaceName  string                 `protobuf:"bytes,1,opt,name=interfaceName,proto3" json:"interfaceName,omitempty"`
@@ -9101,7 +9109,6 @@ type EBPFUDPNATDiagnostics struct {
 	SocketReleaseEvents            uint64                 `protobuf:"varint,5,opt,name=socketReleaseEvents,proto3" json:"socketReleaseEvents,omitempty"`
 	SocketReleaseMatched           uint64                 `protobuf:"varint,6,opt,name=socketReleaseMatched,proto3" json:"socketReleaseMatched,omitempty"`
 	PendingReleaseCapacityRejected uint64                 `protobuf:"varint,7,opt,name=pendingReleaseCapacityRejected,proto3" json:"pendingReleaseCapacityRejected,omitempty"`
-	ReleaseNotificationDrops       uint64                 `protobuf:"varint,8,opt,name=releaseNotificationDrops,proto3" json:"releaseNotificationDrops,omitempty"`
 	RedirectAdmissionFailures      uint64                 `protobuf:"varint,9,opt,name=redirectAdmissionFailures,proto3" json:"redirectAdmissionFailures,omitempty"`
 	UdpTokenAdmissionFailures      uint64                 `protobuf:"varint,10,opt,name=udpTokenAdmissionFailures,proto3" json:"udpTokenAdmissionFailures,omitempty"`
 	UdpTokenReverseFailures        uint64                 `protobuf:"varint,11,opt,name=udpTokenReverseFailures,proto3" json:"udpTokenReverseFailures,omitempty"`
@@ -9187,13 +9194,6 @@ func (x *EBPFUDPNATDiagnostics) GetSocketReleaseMatched() uint64 {
 func (x *EBPFUDPNATDiagnostics) GetPendingReleaseCapacityRejected() uint64 {
 	if x != nil {
 		return x.PendingReleaseCapacityRejected
-	}
-	return 0
-}
-
-func (x *EBPFUDPNATDiagnostics) GetReleaseNotificationDrops() uint64 {
-	if x != nil {
-		return x.ReleaseNotificationDrops
 	}
 	return 0
 }
@@ -9978,7 +9978,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bcategory\x18\f \x01(\tR\bcategory\x12$\n" +
 	"\roccupancyMode\x18\r \x01(\tR\roccupancyMode\x12\"\n" +
 	"\fevictionMode\x18\x0e \x01(\tR\fevictionMode\x12,\n" +
-	"\x11admissionCritical\x18\x0f \x01(\bR\x11admissionCritical\"\xbb(\n" +
+	"\x11admissionCritical\x18\x0f \x01(\bR\x11admissionCritical\"\xfb(\n" +
 	"\x16EBPFInboundDiagnostics\x12\x1e\n" +
 	"\n" +
 	"observedAt\x18\x02 \x01(\x03R\n" +
@@ -10070,7 +10070,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x1elocalSelfBypassReclaimFailures\x18d \x01(\x04R\x1elocalSelfBypassReclaimFailures\x12G\n" +
 	"\x1clocalSelfBypassReclaimLastAt\x18e \x01(\x03H\bR\x1clocalSelfBypassReclaimLastAt\x88\x01\x01\x12F\n" +
 	"\x1elocalSelfBypassStorageFailures\x18f \x01(\x04R\x1elocalSelfBypassStorageFailures\x12F\n" +
-	"\x1elocalSelfBypassCookieFallbacks\x18g \x01(\x04R\x1elocalSelfBypassCookieFallbacksB\x0e\n" +
+	"\x1elocalSelfBypassCookieFallbacks\x18g \x01(\x04R\x1elocalSelfBypassCookieFallbacks\x12>\n" +
+	"\x1acgroupRecoveryRingbufDrops\x18h \x01(\x04R\x1acgroupRecoveryRingbufDropsB\x0e\n" +
 	"\f_lastErrorAtB\x11\n" +
 	"\x0f_lastRecoveryAtB\x0e\n" +
 	"\f_nextRetryAtB\x16\n" +
@@ -10132,7 +10133,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x11tcReturnConflicts\x18\x15 \x01(\x04R\x11tcReturnConflicts\x126\n" +
 	"\x16tcReturnLookupFailures\x18\x16 \x01(\x04R\x16tcReturnLookupFailuresJ\x04\b\t\x10\n" +
 	"J\x04\b\n" +
-	"\x10\v\"\x93\x06\n" +
+	"\x10\v\"\xf7\x05\n" +
 	"\x15EBPFUDPNATDiagnostics\x12&\n" +
 	"\x0eactiveSessions\x18\x01 \x01(\x03R\x0eactiveSessions\x12(\n" +
 	"\x0fcreatedSessions\x18\x02 \x01(\x04R\x0fcreatedSessions\x12,\n" +
@@ -10142,15 +10143,14 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"queueDrops\x120\n" +
 	"\x13socketReleaseEvents\x18\x05 \x01(\x04R\x13socketReleaseEvents\x122\n" +
 	"\x14socketReleaseMatched\x18\x06 \x01(\x04R\x14socketReleaseMatched\x12F\n" +
-	"\x1ependingReleaseCapacityRejected\x18\a \x01(\x04R\x1ependingReleaseCapacityRejected\x12:\n" +
-	"\x18releaseNotificationDrops\x18\b \x01(\x04R\x18releaseNotificationDrops\x12<\n" +
+	"\x1ependingReleaseCapacityRejected\x18\a \x01(\x04R\x1ependingReleaseCapacityRejected\x12<\n" +
 	"\x19redirectAdmissionFailures\x18\t \x01(\x04R\x19redirectAdmissionFailures\x12<\n" +
 	"\x19udpTokenAdmissionFailures\x18\n" +
 	" \x01(\x04R\x19udpTokenAdmissionFailures\x128\n" +
 	"\x17udpTokenReverseFailures\x18\v \x01(\x04R\x17udpTokenReverseFailures\x12:\n" +
 	"\x18udpPeerAdmissionFailures\x18\f \x01(\x04R\x18udpPeerAdmissionFailures\x12:\n" +
 	"\x18tcpPeerAdmissionFailures\x18\r \x01(\x04R\x18tcpPeerAdmissionFailures\x12B\n" +
-	"\x1cudpRecoveryAdmissionFailures\x18\x0e \x01(\x04R\x1cudpRecoveryAdmissionFailures\"\xda\x01\n" +
+	"\x1cudpRecoveryAdmissionFailures\x18\x0e \x01(\x04R\x1cudpRecoveryAdmissionFailuresJ\x04\b\b\x10\tR\x18releaseNotificationDrops\"\xda\x01\n" +
 	"\x1aEBPFPolicyEpochDiagnostics\x12&\n" +
 	"\x0elocalConfirmed\x18\x01 \x01(\x04R\x0elocalConfirmed\x12$\n" +
 	"\rlocalExpected\x18\x02 \x01(\x04R\rlocalExpected\x12(\n" +

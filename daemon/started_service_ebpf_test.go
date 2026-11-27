@@ -106,6 +106,8 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 			LocalUDPReleaseObserver:       false,
 			LocalUDPReleaseFallbackReason: "release_notification_program_load_failed",
 			LocalUDPReleaseProgram:        "sb_ebpf_rel",
+			CgroupRecoveryRingbufDrops:    1,
+			CgroupRecoveryQueueOverflows:  2,
 			PolicyEpoch: adapter.EBPFPolicyEpochDiagnostics{
 				LocalConfirmed:  11,
 				LocalExpected:   12,
@@ -117,13 +119,12 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 			Counters: adapter.EBPFCounters{TCSharedFragmentPasses: 9,
 				TCReturnUpdateFailures: 2, TCReturnConflicts: 3, TCReturnLookupFailures: 4},
 			UDPNAT: adapter.EBPFUDPNATDiagnostics{
-				ActiveSessions:           3,
-				CreatedSessions:          7,
-				CapacityEvictions:        1,
-				QueueDrops:               2,
-				SocketReleaseEvents:      5,
-				SocketReleaseMatched:     4,
-				ReleaseNotificationDrops: 1,
+				ActiveSessions:       3,
+				CreatedSessions:      7,
+				CapacityEvictions:    1,
+				QueueDrops:           2,
+				SocketReleaseEvents:  5,
+				SocketReleaseMatched: 4,
 			},
 		}, runtime: adapter.EBPFKernelRuntimeDiagnostics{
 			ObservedAt: observedAt,
@@ -181,9 +182,11 @@ func TestGetEBPFDiagnosticsUsesSingBoxAPI(t *testing.T) {
 	if diagnostics.Counters == nil || diagnostics.Counters.TcSharedFragmentPasses != 9 {
 		t.Fatalf("counters = %+v", diagnostics.Counters)
 	}
-	if diagnostics.UdpNAT == nil || diagnostics.UdpNAT.ActiveSessions != 3 ||
-		diagnostics.UdpNAT.CreatedSessions != 7 || diagnostics.UdpNAT.ReleaseNotificationDrops != 1 {
+	if diagnostics.UdpNAT == nil || diagnostics.UdpNAT.ActiveSessions != 3 || diagnostics.UdpNAT.CreatedSessions != 7 {
 		t.Fatalf("UDP NAT diagnostics = %+v", diagnostics.UdpNAT)
+	}
+	if diagnostics.CgroupRecoveryRingbufDrops != 1 || diagnostics.CgroupRecoveryQueueOverflows != 2 {
+		t.Fatalf("cgroup recovery diagnostics = %+v", diagnostics)
 	}
 	if diagnostics.LocalUdpState != "release_notification" || diagnostics.LocalUdpRecoveryMode != "reverse_index" ||
 		diagnostics.LocalUdpMapPressure != "healthy" || diagnostics.LocalUdpNetworkGeneration != 17 ||

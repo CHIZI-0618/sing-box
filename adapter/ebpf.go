@@ -4,7 +4,7 @@ import "time"
 
 // EBPFDiagnosticsSchemaVersion versions the complete GetEBPFDiagnostics
 // response. It remains available even when no eBPF inbound is running.
-const EBPFDiagnosticsSchemaVersion = 26
+const EBPFDiagnosticsSchemaVersion = 27
 
 // EBPFDiagnosticsProvider exposes a running inbound's eBPF state to the
 // sing-box API without coupling the API service to the optional eBPF package.
@@ -127,6 +127,7 @@ type EBPFRuntimeDiagnostics struct {
 	TCAssignmentSweepFailure        string
 	TCAssignmentSweepLastAt         *time.Time
 	TCAssignmentSweepPartialAt      *time.Time
+	CgroupRecoveryRingbufDrops      uint64
 	CgroupRecoveryQueueOverflows    uint64
 	CgroupRecoveryQueueOverflowAt   *time.Time
 	WaitingRoles                    []string
@@ -180,7 +181,6 @@ type EBPFUDPNATDiagnostics struct {
 	SocketReleaseEvents            uint64
 	SocketReleaseMatched           uint64
 	PendingReleaseCapacityRejected uint64
-	ReleaseNotificationDrops       uint64
 	RedirectAdmissionFailures      uint64
 	UDPTokenAdmissionFailures      uint64
 	UDPTokenReverseFailures        uint64

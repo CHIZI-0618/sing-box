@@ -307,7 +307,7 @@ func (i *Inbound) diagnosticsLocked() EBPFDiagnostics {
 	}
 	if backend := runtime.cgroupBackend; backend != nil {
 		if drops, err := backend.UDPReleaseNotificationDrops(); err == nil {
-			diagnostics.UDPNAT.ReleaseNotificationDrops = drops
+			diagnostics.CgroupRecoveryRingbufDrops = drops
 		}
 		readStat := func(stat commonEBPF.CgroupUDPStat) uint64 {
 			value, err := backend.UDPReleaseStat(stat)

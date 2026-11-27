@@ -87,7 +87,6 @@ type UDPNATDiagnostics struct {
 	SocketReleaseEvents            uint64 `json:"socket_release_events"`
 	SocketReleaseMatched           uint64 `json:"socket_release_matched"`
 	PendingReleaseCapacityRejected uint64 `json:"pending_release_capacity_rejected"`
-	ReleaseNotificationDrops       uint64 `json:"release_notification_drops"`
 	RedirectAdmissionFailures      uint64 `json:"redirect_admission_failures,omitempty"`
 	UDPTokenAdmissionFailures      uint64 `json:"udp_token_admission_failures,omitempty"`
 	UDPTokenReverseFailures        uint64 `json:"udp_token_reverse_failures,omitempty"`
@@ -104,7 +103,6 @@ func (d *UDPNATDiagnostics) add(other UDPNATDiagnostics) {
 	d.SocketReleaseEvents += other.SocketReleaseEvents
 	d.SocketReleaseMatched += other.SocketReleaseMatched
 	d.PendingReleaseCapacityRejected += other.PendingReleaseCapacityRejected
-	d.ReleaseNotificationDrops += other.ReleaseNotificationDrops
 	d.RedirectAdmissionFailures += other.RedirectAdmissionFailures
 	d.UDPTokenAdmissionFailures += other.UDPTokenAdmissionFailures
 	d.UDPTokenReverseFailures += other.UDPTokenReverseFailures
@@ -194,10 +192,16 @@ type EBPFDiagnostics struct {
 	TCAssignmentSweepFailure        string     `json:"tc_assignment_sweep_failure,omitempty"`
 	TCAssignmentSweepLastAt         *time.Time `json:"tc_assignment_sweep_last_at,omitempty"`
 	TCAssignmentSweepPartialAt      *time.Time `json:"tc_assignment_sweep_partial_at,omitempty"`
-	CgroupRecoveryQueueOverflows    uint64     `json:"cgroup_recovery_queue_overflows,omitempty"`
-	CgroupRecoveryQueueOverflowAt   *time.Time `json:"cgroup_recovery_queue_overflow_at,omitempty"`
-	WaitingRoles                    []string   `json:"waiting_roles,omitempty"`
-	WaitingInterfaces               []string   `json:"waiting_interfaces,omitempty"`
+	// CgroupRecoveryRingbufDrops counts release notifications rejected by the
+	// kernel ring buffer. CgroupRecoveryQueueOverflows counts notifications
+	// read successfully from that ring buffer but rejected by
+	// sing-box's bounded scheduler queue. Keeping them separate identifies
+	// which side requires capacity or scheduling attention.
+	CgroupRecoveryRingbufDrops    uint64     `json:"cgroup_recovery_ringbuf_drops,omitempty"`
+	CgroupRecoveryQueueOverflows  uint64     `json:"cgroup_recovery_queue_overflows,omitempty"`
+	CgroupRecoveryQueueOverflowAt *time.Time `json:"cgroup_recovery_queue_overflow_at,omitempty"`
+	WaitingRoles                  []string   `json:"waiting_roles,omitempty"`
+	WaitingInterfaces             []string   `json:"waiting_interfaces,omitempty"`
 
 	Attachments []EBPFAttachmentDiagnostics `json:"attachments,omitempty"`
 
