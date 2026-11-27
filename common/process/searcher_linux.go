@@ -90,15 +90,22 @@ func (s *linuxSearcher) FindProcessInfo(ctx context.Context, network string, sou
 	processPaths, err := s.findProcessPaths(inode, uid)
 	if err != nil {
 		s.logger.DebugContext(ctx, "find process path: ", err)
-	} else if C.IsAndroid {
-		processInfo.ProcessPaths = common.Filter(processPaths, func(processPath string) bool {
-			return !strings.HasPrefix(processPath, "/system/bin/app_process")
-		})
 	} else {
-		processInfo.ProcessPaths = processPaths
+		processInfo.ProcessPaths = filterProcessPaths(processPaths)
 	}
 	completeProcessInfo(processInfo, s.packageManager)
 	return processInfo, nil
+}
+
+// Android applications are forked from zygote, so their executable is
+// app_process and identifies no application.
+func filterProcessPaths(processPaths []string) []string {
+	if !C.IsAndroid {
+		return processPaths
+	}
+	return common.Filter(processPaths, func(processPath string) bool {
+		return !strings.HasPrefix(processPath, "/system/bin/app_process")
+	})
 }
 
 // FindProcessInfoByPID resolves process metadata without scanning socket file
@@ -110,7 +117,7 @@ func FindProcessInfoByPID(processID uint32, userID uint32, packageManager tun.Pa
 	}
 	processPath, err := os.Readlink(filepath.Join(pathProc, strconv.FormatUint(uint64(processID), 10), "exe"))
 	if err == nil {
-		processInfo.ProcessPaths = []string{processPath}
+		processInfo.ProcessPaths = filterProcessPaths([]string{strings.TrimSuffix(processPath, " (deleted)")})
 	}
 	completeProcessInfo(processInfo, packageManager)
 	return processInfo, err
