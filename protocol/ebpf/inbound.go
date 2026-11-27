@@ -88,6 +88,8 @@ type inboundWorkers struct {
 	cgroupRecoveryCancel      context.CancelFunc
 	cgroupRecoveryDone        chan struct{}
 	cgroupRecoveryEvents      chan commonEBPF.UDPReleaseEvent
+	cgroupRecoverySweepWake   chan struct{}
+	cgroupRecoveryReaderError chan struct{}
 	interfaceMonitor          tcInterfaceMonitor
 	tcAssignmentWake          chan struct{}
 	tcAssignmentJanitorAccess sync.Mutex

@@ -434,11 +434,12 @@ func (i *Inbound) startCgroupUDPReleaseReader(backend *commonEBPF.CgroupBackend)
 			if err != nil {
 				if !errors.Is(err, os.ErrClosed) {
 					i.logger.Warn("read cgroup eBPF UDP socket-release event: ", err)
+					i.signalCgroupRecoveryReaderError()
 				}
 				return
 			}
 			i.udpNat.ReleaseSocket(event.SocketCookie)
-			i.enqueueCgroupRecoveryEvent(backend, event)
+			i.enqueueCgroupRecoveryEvent(event)
 		}
 	}()
 }
