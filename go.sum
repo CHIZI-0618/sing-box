@@ -10,14 +10,6 @@ filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q
 filippo.io/hpke v0.4.0 h1:p575VVQ6ted4pL+it6M00V/f2qTZITO0zgmdKCkd5+A=
 filippo.io/hpke v0.4.0/go.mod h1:EmAN849/P3qdeK+PCMkDpDm83vRHM5cDipBJ8xbQLVY=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.1.0.20261109070610-bec0ab9440e5 h1:WQ3Ftxsf/ltd+/D+swPFeGFKz1y0LEGxsYOudSFUpN0=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.1.0.20261109070610-bec0ab9440e5/go.mod h1:M69uFpO3TVVwRP1IAaS9rIol7mgJA0Q+eoU7wap5qxI=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110021549-ad2b04aee294 h1:FLcUFhD1LGXRkkszHZx2S+6P0ePZIGNUyYw6aGLbYmU=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110021549-ad2b04aee294/go.mod h1:M69uFpO3TVVwRP1IAaS9rIol7mgJA0Q+eoU7wap5qxI=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110170720-23e295aea1b3 h1:L3pCidKQ5xVr/FLF/P3AltljHdurQomnBoe39uSxjrA=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110170720-23e295aea1b3/go.mod h1:M69uFpO3TVVwRP1IAaS9rIol7mgJA0Q+eoU7wap5qxI=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110173005-b46abfe6ad1a h1:an9lKlbqfCfoWdtPN/00SgfazfL0VM35kk3KMLMeOCk=
-github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110173005-b46abfe6ad1a/go.mod h1:M69uFpO3TVVwRP1IAaS9rIol7mgJA0Q+eoU7wap5qxI=
 github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110183705-02db5a557177 h1:3ejVta+MlfGnnirXf405k8EQ7W03myVG24z+uER5ai0=
 github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.2.0.20261110183705-02db5a557177/go.mod h1:M69uFpO3TVVwRP1IAaS9rIol7mgJA0Q+eoU7wap5qxI=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
