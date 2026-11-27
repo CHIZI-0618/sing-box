@@ -41,7 +41,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: 1.26.8
+          go-version: 1.26.11
 
       # Keep the ordinary build independent from the optional eBPF dialer
       # integration. These packages must compile without with_ebpf as well.
