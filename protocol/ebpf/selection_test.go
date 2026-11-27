@@ -99,3 +99,29 @@ func TestPolicyTargetsFollowSelectedScope(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredDataPlaneCombinationsRemainIndependent(t *testing.T) {
+	enabled := true
+	for _, local := range []string{localDataPlaneCgroup, localDataPlaneSocketAssign} {
+		for _, shared := range []string{sharedDataPlanePacketRewrite, sharedDataPlaneSocketAssign} {
+			name := local + "+" + shared
+			t.Run(name, func(t *testing.T) {
+				planes, err := normalizeDataPlanes(option.EBPFInboundOptions{
+					Local:  option.EBPFLocalOptions{Enabled: &enabled, DataPlane: local, DNSMode: dnsModeRespectPolicy},
+					Shared: option.EBPFSharedOptions{Enabled: &enabled, DataPlane: shared, DNSMode: dnsModeHijack, Interface: []string{"eth1"}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !planes.localEnabled || !planes.sharedEnabled || planes.localDataPlane != local || planes.sharedDataPlane != shared {
+					t.Fatalf("normalized data planes = %+v", planes)
+				}
+				for _, mode := range []string{"", dnsModeRespectPolicy, dnsModeHijack, dnsModeOff} {
+					if _, err = normalizeDNSMode(mode); err != nil {
+						t.Fatalf("DNS mode %q depends on data-plane combination: %v", mode, err)
+					}
+				}
+			})
+		}
+	}
+}

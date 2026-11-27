@@ -18,22 +18,13 @@ type maintenanceScheduleConfig struct {
 	maxFailures  uint
 }
 
-var (
-	tcAssignmentMaintenanceSchedule = maintenanceScheduleConfig{
-		watchdog:     time.Minute,
-		continuation: 100 * time.Millisecond,
-		cooldown:     5 * time.Second,
-		pressure:     time.Second,
-		maxFailures:  maintenanceMaxFailures,
-	}
-	sharedFlowMaintenanceSchedule = maintenanceScheduleConfig{
-		watchdog:     time.Minute,
-		continuation: 100 * time.Millisecond,
-		cooldown:     5 * time.Second,
-		pressure:     time.Second,
-		maxFailures:  maintenanceMaxFailures,
-	}
-)
+var dataPlaneMaintenanceSchedule = maintenanceScheduleConfig{
+	watchdog:     time.Minute,
+	continuation: 100 * time.Millisecond,
+	cooldown:     5 * time.Second,
+	pressure:     time.Second,
+	maxFailures:  maintenanceMaxFailures,
+}
 
 type mapPressureHysteresis struct {
 	enterPercent uint64
@@ -105,6 +96,19 @@ func newMaintenanceJob(config maintenanceScheduleConfig) maintenanceJob {
 
 func (j *maintenanceJob) reset(delay time.Duration) {
 	resetMaintenanceTimer(&j.timer, &j.continuation, delay)
+}
+
+// ready applies the common coalescing rule before a bounded scan. A wake that
+// arrives during cooldown or continuation leaves the existing deadline in
+// place instead of turning high packet activity into timer churn.
+func (j *maintenanceJob) ready(now time.Time) bool {
+	if delay := j.schedule.delay(now); delay > 0 {
+		if j.continuation == nil {
+			j.reset(delay)
+		}
+		return false
+	}
+	return true
 }
 
 func (j *maintenanceJob) finish(now time.Time, complete, pressure bool, err error) {

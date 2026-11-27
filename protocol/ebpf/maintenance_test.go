@@ -12,32 +12,49 @@ import (
 
 func TestTCMaintenanceCoalescesEventsAndContinuesPartialScans(t *testing.T) {
 	now := time.Unix(1, 0)
-	schedule := maintenanceSchedule{config: tcAssignmentMaintenanceSchedule}
+	schedule := maintenanceSchedule{config: dataPlaneMaintenanceSchedule}
 	if schedule.delay(now) != 0 || schedule.finish(now, true, false, nil) != 0 {
 		t.Fatal("normal completed sweep should wait for activity or watchdog")
 	}
 	for n := 1; n < 50; n++ {
 		elapsed := time.Duration(n) * 100 * time.Millisecond
-		if got := schedule.delay(now.Add(elapsed)); got != tcAssignmentMaintenanceSchedule.cooldown-elapsed {
+		if got := schedule.delay(now.Add(elapsed)); got != dataPlaneMaintenanceSchedule.cooldown-elapsed {
 			t.Fatalf("wake %d postponed deadline: %v", n, got)
 		}
 	}
-	now = now.Add(tcAssignmentMaintenanceSchedule.cooldown)
+	now = now.Add(dataPlaneMaintenanceSchedule.cooldown)
 	if schedule.delay(now) != 0 {
 		t.Fatal("pending event was not released")
 	}
-	if got := schedule.finish(now, false, false, nil); got != tcAssignmentMaintenanceSchedule.continuation {
+	if got := schedule.finish(now, false, false, nil); got != dataPlaneMaintenanceSchedule.continuation {
 		t.Fatalf("partial scan delay = %v", got)
 	}
-	if got := schedule.finish(now, true, true, nil); got != tcAssignmentMaintenanceSchedule.pressure {
+	if got := schedule.finish(now, true, true, nil); got != dataPlaneMaintenanceSchedule.pressure {
 		t.Fatalf("pressure delay = %v", got)
 	}
-	if schedule.finish(now, false, true, errors.New("scan failed")) != tcAssignmentMaintenanceSchedule.cooldown || schedule.delay(now) != tcAssignmentMaintenanceSchedule.cooldown {
+	if schedule.finish(now, false, true, errors.New("scan failed")) != dataPlaneMaintenanceSchedule.cooldown || schedule.delay(now) != dataPlaneMaintenanceSchedule.cooldown {
 		t.Fatal("scan failure must not cause a short-delay retry loop")
 	}
-	if schedule.finish(now, false, true, errors.New("scan failed")) != 2*tcAssignmentMaintenanceSchedule.cooldown {
+	if schedule.finish(now, false, true, errors.New("scan failed")) != 2*dataPlaneMaintenanceSchedule.cooldown {
 		t.Fatal("repeated failure must back off")
 	}
+}
+
+func TestMaintenanceJobKeepsExistingDeadline(t *testing.T) {
+	now := time.Now()
+	job := newMaintenanceJob(dataPlaneMaintenanceSchedule)
+	job.schedule.next = now.Add(time.Second)
+	if job.ready(now) {
+		t.Fatal("maintenance job ran before its deadline")
+	}
+	timer := job.timer
+	if timer == nil || job.continuation == nil {
+		t.Fatal("maintenance job did not arm its continuation")
+	}
+	if job.ready(now.Add(100*time.Millisecond)) || job.timer != timer {
+		t.Fatal("repeated wake replaced the active maintenance deadline")
+	}
+	job.stop()
 }
 
 func TestTCAssignmentPressureHysteresis(t *testing.T) {

@@ -214,21 +214,19 @@ func (i *Inbound) EBPFKernelRuntime() adapter.EBPFKernelRuntimeDiagnostics {
 	// Snapshot handles while lifecycle ownership is stable, then enumerate only
 	// those IDs outside the lifecycle lock.
 	i.lifecycleAccess.Lock()
-	owners := []commonEBPF.RuntimeResources{
-		i.cgroupBackendInstance().RuntimeResources(),
-		i.tcBackend().RuntimeResources(),
-		i.selfBypass.RuntimeResources(),
+	owners := []kernelRuntimeOwner{
+		i.cgroupBackendInstance(),
+		i.tcBackend(),
+		i.selfBypass,
 	}
-	if tracker, ok := i.processTracker.(interface {
-		RuntimeResources() commonEBPF.RuntimeResources
-	}); ok {
-		owners = append(owners, tracker.RuntimeResources())
+	if tracker, ok := i.processTracker.(kernelRuntimeOwner); ok {
+		owners = append(owners, tracker)
 	}
 	if shared := i.sharedRewriteInstance(); shared != nil {
-		owners = append(owners, shared.sharedBackendInstance().RuntimeResources())
+		owners = append(owners, shared.sharedBackendInstance())
 	}
 	i.lifecycleAccess.Unlock()
-	diagnostics := kernelRuntimeForAPI(now, commonEBPF.InspectRuntimeResources(owners...))
+	diagnostics := kernelRuntimeForAPI(now, inspectKernelRuntimeOwners(owners...))
 	i.kernelRuntimeAPIAt = now
 	i.kernelRuntimeAPIValue = diagnostics
 	return diagnostics

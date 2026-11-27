@@ -19,8 +19,7 @@ const (
 )
 
 func (i *Inbound) maintainTCAssignments(job *maintenanceJob) {
-	if delay := job.schedule.delay(time.Now()); delay > 0 {
-		job.reset(delay)
+	if !job.ready(time.Now()) {
 		return
 	}
 	complete, err := i.sweepTCAssignmentMaintenance()
@@ -71,9 +70,9 @@ func (i *Inbound) requestTCAssignmentMaintenance() {
 
 func (i *Inbound) runTCAssignmentJanitor(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
-	ticker := time.NewTicker(tcAssignmentMaintenanceSchedule.watchdog)
+	ticker := time.NewTicker(dataPlaneMaintenanceSchedule.watchdog)
 	defer ticker.Stop()
-	job := newMaintenanceJob(tcAssignmentMaintenanceSchedule)
+	job := newMaintenanceJob(dataPlaneMaintenanceSchedule)
 	for {
 		// Leave one wake queued during a cooldown/continuation instead of
 		// waking this goroutine and resetting its timer for every UDP packet.

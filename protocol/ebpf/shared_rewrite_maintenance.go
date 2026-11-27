@@ -39,11 +39,11 @@ func (s *sharedRewrite) stopFlowJanitor() {
 
 func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
-	tcTicker := time.NewTicker(tcAssignmentMaintenanceSchedule.watchdog)
+	tcTicker := time.NewTicker(dataPlaneMaintenanceSchedule.watchdog)
 	defer tcTicker.Stop()
 	// Independent jobs share scheduling semantics, never one another's state.
-	tcJob := newMaintenanceJob(tcAssignmentMaintenanceSchedule)
-	flowJob := newMaintenanceJob(sharedFlowMaintenanceSchedule)
+	tcJob := newMaintenanceJob(dataPlaneMaintenanceSchedule)
+	flowJob := newMaintenanceJob(dataPlaneMaintenanceSchedule)
 	defer func() {
 		tcJob.stop()
 		flowJob.stop()
@@ -131,13 +131,8 @@ func (s *sharedRewrite) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			continue
 		}
 		now := time.Now()
-		if sweepRequested {
-			if delay := flowJob.schedule.delay(now); delay > 0 {
-				if flowJob.continuation == nil {
-					flowJob.reset(delay)
-				}
-				sweepRequested = false
-			}
+		if sweepRequested && !flowJob.ready(now) {
+			sweepRequested = false
 		}
 		if !sweepRequested {
 			_, flushErr := backend.FlushReleasedTCPFlows(now, sharedFlowReleaseFlushBudget)
