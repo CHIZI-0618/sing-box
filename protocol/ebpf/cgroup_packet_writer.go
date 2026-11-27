@@ -59,18 +59,18 @@ func (w *cgroupPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destination
 		buf.ReleaseMulti(buffers)
 		return os.ErrInvalid
 	}
-	packetInfos := make([][]byte, len(buffers))
-	sources := make([]netip.Addr, len(buffers))
+	scratch := acquireUDPBatchMetadata(len(buffers))
+	defer releaseUDPBatchMetadata(scratch)
 	for index, destination := range destinations {
 		binding, err := w.ensureReplyBinding(destination.AddrPort())
 		if err != nil {
 			buf.ReleaseMulti(buffers)
 			return err
 		}
-		packetInfos[index] = binding.packetInfo
-		sources[index] = binding.redirectAddress
+		scratch.packetInfos[index] = binding.packetInfo
+		scratch.sources[index] = binding.redirectAddress
 	}
-	return w.inbound.listeners.writeUDPBatch(buffers, packetInfos, w.key.Source, sources)
+	return w.inbound.listeners.writeUDPBatch(buffers, scratch.packetInfos, w.key.Source, scratch.sources)
 }
 
 var _ N.PacketBatchWriter = (*cgroupPacketWriter)(nil)

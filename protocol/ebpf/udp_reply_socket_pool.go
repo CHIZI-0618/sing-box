@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"container/heap"
 	"context"
 	"errors"
 	"net"
@@ -24,6 +25,12 @@ const (
 	// Idle sockets are reclaimed at their next actual expiry deadline in
 	// addition to capacity-triggered eviction in get().
 	udpReplySocketIdleTimeout = 5 * time.Minute
+
+	// An entry can reach its idle deadline while a send is still in flight.
+	// Recheck it soon without moving its actual last-used timestamp or waking in
+	// a tight loop. Production timeouts use one second; shorter test/runtime
+	// timeouts keep their own cadence.
+	udpReplySocketInUseRetry = time.Second
 )
 
 var errUDPReplySocketCapacity = errors.New("UDP eBPF reply socket pool is at capacity")
@@ -56,16 +63,48 @@ type udpReplySocketPool struct {
 }
 
 type udpReplySocketShard struct {
-	access  sync.Mutex
-	sockets map[netip.AddrPort]*udpReplySocketEntry
+	access    sync.Mutex
+	sockets   map[netip.AddrPort]*udpReplySocketEntry
+	deadlines udpReplySocketDeadlineHeap
 }
 
 type udpReplySocketEntry struct {
+	source   netip.AddrPort
 	conn     *net.UDPConn
 	writer   N.PacketBatchWriter
 	cleanup  func()
 	lastUsed atomic.Int64 // UnixNano, updated on every get()
-	inUse    atomic.Int32 // active senders; eviction skips entries > 0
+	// scheduledLastUsed is the heap key. It may lag lastUsed, so activity keeps
+	// the next wake conservative without requiring heap.Fix on every packet.
+	scheduledLastUsed int64 // protected by the owning shard lock
+	heapIndex         int
+	inUse             atomic.Int32 // active senders; eviction skips entries > 0
+}
+
+type udpReplySocketDeadlineHeap []*udpReplySocketEntry
+
+func (h udpReplySocketDeadlineHeap) Len() int { return len(h) }
+func (h udpReplySocketDeadlineHeap) Less(left, right int) bool {
+	return h[left].scheduledLastUsed < h[right].scheduledLastUsed
+}
+func (h udpReplySocketDeadlineHeap) Swap(left, right int) {
+	h[left], h[right] = h[right], h[left]
+	h[left].heapIndex = left
+	h[right].heapIndex = right
+}
+func (h *udpReplySocketDeadlineHeap) Push(value any) {
+	entry := value.(*udpReplySocketEntry)
+	entry.heapIndex = len(*h)
+	*h = append(*h, entry)
+}
+func (h *udpReplySocketDeadlineHeap) Pop() any {
+	items := *h
+	last := len(items) - 1
+	entry := items[last]
+	items[last] = nil
+	entry.heapIndex = -1
+	*h = items[:last]
+	return entry
 }
 
 // udpReplySocketPoolStats exposes current usage, its high-water mark, and how
@@ -140,12 +179,16 @@ func (p *udpReplySocketPool) get(
 	if err != nil {
 		return nil, nil, err
 	}
+	now := time.Now().UnixNano()
 	entry := &udpReplySocketEntry{
-		conn:    socket,
-		writer:  bufio.NewPacketBatchWriter(bufio.NewPacketConn(socket)),
-		cleanup: cleanup,
+		source:            source,
+		conn:              socket,
+		writer:            bufio.NewPacketBatchWriter(bufio.NewPacketConn(socket)),
+		cleanup:           cleanup,
+		scheduledLastUsed: now,
+		heapIndex:         -1,
 	}
-	entry.lastUsed.Store(time.Now().UnixNano())
+	entry.lastUsed.Store(now)
 	entry.inUse.Store(1)
 	if p.closed.Load() {
 		if cleanup != nil {
@@ -159,6 +202,7 @@ func (p *udpReplySocketPool) get(
 		shard.sockets = make(map[netip.AddrPort]*udpReplySocketEntry)
 	}
 	shard.sockets[source] = entry
+	heap.Push(&shard.deadlines, entry)
 	shard.access.Unlock()
 	p.addCount(1)
 	p.requestSweep()
@@ -198,11 +242,11 @@ func (p *udpReplySocketPool) evictOldestIdle() bool {
 		for index := range p.shards {
 			shard := &p.shards[index]
 			shard.access.Lock()
-			for source, entry := range shard.sockets {
+			for _, entry := range shard.deadlines {
 				lastUsed := entry.lastUsed.Load()
 				if entry.inUse.Load() == 0 && (selectedEntry == nil || lastUsed < selectedLastUsed) {
 					selectedShard = index
-					selectedSource = source
+					selectedSource = entry.source
 					selectedEntry = entry
 					selectedLastUsed = lastUsed
 				}
@@ -214,10 +258,12 @@ func (p *udpReplySocketPool) evictOldestIdle() bool {
 		}
 		shard := &p.shards[selectedShard]
 		shard.access.Lock()
-		if shard.sockets[selectedSource] != selectedEntry || selectedEntry.inUse.Load() != 0 || selectedEntry.lastUsed.Load() != selectedLastUsed {
+		if shard.sockets[selectedSource] != selectedEntry || selectedEntry.inUse.Load() != 0 ||
+			selectedEntry.lastUsed.Load() != selectedLastUsed || selectedEntry.heapIndex < 0 {
 			shard.access.Unlock()
 			continue
 		}
+		heap.Remove(&shard.deadlines, selectedEntry.heapIndex)
 		if selectedEntry.cleanup != nil {
 			selectedEntry.cleanup()
 		}
@@ -343,36 +389,51 @@ func (p *udpReplySocketPool) sweepIdleAt(now time.Time, idleTimeout time.Duratio
 	if p.closed.Load() {
 		return time.Time{}, false
 	}
-	deadline := now.Add(-idleTimeout).UnixNano()
 	var next time.Time
 	for index := range p.shards {
 		shard := &p.shards[index]
 		shard.access.Lock()
-		for source, entry := range shard.sockets {
+		for len(shard.deadlines) > 0 {
+			entry := shard.deadlines[0]
+			expires := time.Unix(0, entry.scheduledLastUsed).Add(idleTimeout)
+			if expires.After(now) {
+				if next.IsZero() || expires.Before(next) {
+					next = expires
+				}
+				break
+			}
 			lastUsed := entry.lastUsed.Load()
-			expires := time.Unix(0, lastUsed).Add(idleTimeout)
+			if lastUsed != entry.scheduledLastUsed {
+				entry.scheduledLastUsed = lastUsed
+				heap.Fix(&shard.deadlines, entry.heapIndex)
+				continue
+			}
 			if entry.inUse.Load() > 0 {
-				if !expires.After(now) {
-					expires = now.Add(idleTimeout)
+				// An old but active entry must not pin the heap root and hide
+				// other expired sockets. Move only its heap key: lastUsed remains
+				// the actual access time used by capacity eviction.
+				retry := min(idleTimeout, udpReplySocketInUseRetry)
+				if retry <= 0 {
+					retry = time.Nanosecond
 				}
-				if next.IsZero() || expires.Before(next) {
-					next = expires
-				}
+				entry.scheduledLastUsed = now.Add(retry - idleTimeout).UnixNano()
+				heap.Fix(&shard.deadlines, entry.heapIndex)
 				continue
 			}
-			if lastUsed > deadline {
-				if next.IsZero() || expires.Before(next) {
-					next = expires
-				}
-				continue
-			}
+			heap.Pop(&shard.deadlines)
 			if entry.cleanup != nil {
 				entry.cleanup()
 			}
 			_ = entry.conn.Close()
-			delete(shard.sockets, source)
+			delete(shard.sockets, entry.source)
 			p.stats.count.Add(-1)
 			p.stats.evicted.Add(1)
+		}
+		if len(shard.deadlines) > 0 {
+			expires := time.Unix(0, shard.deadlines[0].scheduledLastUsed).Add(idleTimeout)
+			if next.IsZero() || expires.Before(next) {
+				next = expires
+			}
 		}
 		shard.access.Unlock()
 	}
@@ -410,6 +471,11 @@ func (p *udpReplySocketPool) closeSockets() error {
 			delete(shard.sockets, source)
 			p.stats.count.Add(-1)
 		}
+		for _, entry := range shard.deadlines {
+			entry.heapIndex = -1
+		}
+		clear(shard.deadlines)
+		shard.deadlines = shard.deadlines[:0]
 		shard.access.Unlock()
 	}
 	p.requestSweep()

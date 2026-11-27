@@ -207,6 +207,70 @@ func TestUDPReplySocketPoolSweepsIdleSockets(t *testing.T) {
 	}
 }
 
+func TestUDPReplySocketPoolRefreshesLazyHeapDeadline(t *testing.T) {
+	var pool udpReplySocketPool
+	t.Cleanup(func() { _ = pool.close() })
+
+	destination := destinationOnShard(&pool, 3, 0)
+	entry, release, err := pool.get(destination, newLoopbackUDPSocket)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	release()
+
+	idleTimeout := time.Second
+	originalLastUsed := entry.scheduledLastUsed
+	refreshedLastUsed := originalLastUsed + int64(500*time.Millisecond)
+	entry.lastUsed.Store(refreshedLastUsed)
+	next, available := pool.sweepIdleAt(time.Unix(0, originalLastUsed).Add(idleTimeout), idleTimeout)
+	if !available {
+		t.Fatal("refreshed entry did not retain a future heap deadline")
+	}
+	wantNext := time.Unix(0, refreshedLastUsed).Add(idleTimeout)
+	if !next.Equal(wantNext) {
+		t.Fatalf("next deadline = %v, want %v", next, wantNext)
+	}
+	if got := pool.snapshot().Count; got != 1 {
+		t.Fatalf("pool count = %d after stale deadline correction, want 1", got)
+	}
+
+	pool.sweepIdleAt(wantNext, idleTimeout)
+	if got := pool.snapshot().Count; got != 0 {
+		t.Fatalf("pool count = %d at refreshed deadline, want 0", got)
+	}
+}
+
+func TestUDPReplySocketPoolInUseRetryPreservesLastUsed(t *testing.T) {
+	var pool udpReplySocketPool
+	t.Cleanup(func() { _ = pool.close() })
+
+	destination := destinationOnShard(&pool, 3, 0)
+	entry, release, err := pool.get(destination, newLoopbackUDPSocket)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	lastUsed := entry.lastUsed.Load()
+	idleTimeout := 5 * time.Minute
+	now := time.Unix(0, lastUsed).Add(idleTimeout)
+	next, available := pool.sweepIdleAt(now, idleTimeout)
+	if !available {
+		t.Fatal("in-use entry did not retain a retry deadline")
+	}
+	if got := entry.lastUsed.Load(); got != lastUsed {
+		t.Fatalf("in-use retry changed lastUsed from %d to %d", lastUsed, got)
+	}
+	wantNext := now.Add(udpReplySocketInUseRetry)
+	if !next.Equal(wantNext) {
+		t.Fatalf("in-use retry deadline = %v, want %v", next, wantNext)
+	}
+
+	release()
+	pool.sweepIdleAt(wantNext, idleTimeout)
+	if got := pool.snapshot().Count; got != 0 {
+		t.Fatalf("pool count = %d after in-use retry elapsed, want 0", got)
+	}
+}
+
 func TestUDPReplySocketPoolReusesBatchWriter(t *testing.T) {
 	var pool udpReplySocketPool
 	t.Cleanup(func() { _ = pool.close() })

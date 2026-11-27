@@ -249,31 +249,27 @@ func (w *tcPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []
 		buf.ReleaseMulti(buffers)
 		return os.ErrInvalid
 	}
-	type packetGroup struct {
-		buffers      []*buf.Buffer
-		destinations []M.Socksaddr
-	}
-	groups := make(map[netip.AddrPort]*packetGroup)
+	scratch := acquireUDPPacketGroups()
+	defer releaseUDPPacketGroups(scratch)
 	client := M.SocksaddrFromNetIP(w.key.Source)
 	for index, destination := range destinations {
 		destinationAddress := destination.AddrPort()
-		group := groups[destinationAddress]
-		if group == nil {
+		group, created := scratch.group(destinationAddress)
+		if created {
 			// All packets in this group share one session and destination.
 			// Validate/retain once per batch, never cache across batches.
 			if _, err := w.ensureReplyBinding(destinationAddress); err != nil {
 				buf.ReleaseMulti(buffers)
 				return err
 			}
-			group = &packetGroup{}
-			groups[destinationAddress] = group
 		}
 		group.buffers = append(group.buffers, buffers[index])
 		group.destinations = append(group.destinations, client)
 	}
 	var batchErr error
-	for source, group := range groups {
-		entry, release, err := w.inbound.udpReplySockets.get(source, w.replySocketFactory())
+	for index := range scratch.groups {
+		group := &scratch.groups[index]
+		entry, release, err := w.inbound.udpReplySockets.get(group.source, w.replySocketFactory())
 		if err != nil {
 			w.logReplySocketError(err)
 			buf.ReleaseMulti(group.buffers)

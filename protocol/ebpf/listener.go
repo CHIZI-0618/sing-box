@@ -293,22 +293,19 @@ func (s *internalListenerSet) writeUDPBatch(
 	}
 	s.access.RLock()
 	defer s.access.RUnlock()
-	type packetGroup struct {
-		buffers      []*buf.Buffer
-		packetInfos  [][]byte
-		destinations []M.Socksaddr
-	}
-	var ipv4Group, ipv6Group packetGroup
+	scratch := acquireUDPListenerBatch()
+	defer releaseUDPListenerBatch(scratch)
+	clientDestination := M.SocksaddrFromNetIP(client)
 	for index, source := range sources {
-		group := &ipv4Group
+		group := &scratch.ipv4
 		if source.Is6() {
-			group = &ipv6Group
+			group = &scratch.ipv6
 		}
 		group.buffers = append(group.buffers, buffers[index])
 		group.packetInfos = append(group.packetInfos, packetInfos[index])
-		group.destinations = append(group.destinations, M.SocksaddrFromNetIP(client))
+		group.destinations = append(group.destinations, clientDestination)
 	}
-	writeGroup := func(group packetGroup, current *listener.Listener, batchWriter udpio.OOBPacketBatchWriter) error {
+	writeGroup := func(group *udpListenerBatchGroup, current *listener.Listener, batchWriter udpio.OOBPacketBatchWriter) error {
 		if len(group.buffers) == 0 {
 			return nil
 		}
@@ -327,11 +324,11 @@ func (s *internalListenerSet) writeUDPBatch(
 		}
 		return nil
 	}
-	if err := writeGroup(ipv4Group, s.udp4, s.udp4Batch); err != nil {
-		buf.ReleaseMulti(ipv6Group.buffers)
+	if err := writeGroup(&scratch.ipv4, s.udp4, s.udp4Batch); err != nil {
+		buf.ReleaseMulti(scratch.ipv6.buffers)
 		return err
 	}
-	return writeGroup(ipv6Group, s.udp6, s.udp6Batch)
+	return writeGroup(&scratch.ipv6, s.udp6, s.udp6Batch)
 }
 
 func (s *internalListenerSet) String() string {

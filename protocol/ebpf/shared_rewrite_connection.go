@@ -201,18 +201,18 @@ func (w *sharedPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destination
 	}
 	w.sharedRewrite.lifecycleAccess.RLock()
 	defer w.sharedRewrite.lifecycleAccess.RUnlock()
-	packetInfos := make([][]byte, len(buffers))
-	sources := make([]netip.Addr, len(buffers))
+	scratch := acquireUDPBatchMetadata(len(buffers))
+	defer releaseUDPBatchMetadata(scratch)
 	for index, destination := range destinations {
 		binding, err := w.ensureReplyBinding(destination.AddrPort())
 		if err != nil {
 			buf.ReleaseMulti(buffers)
 			return E.Cause(err, "recover missing shared-network UDP token for ", destination)
 		}
-		packetInfos[index] = binding.packetInfo
-		sources[index] = binding.address
+		scratch.packetInfos[index] = binding.packetInfo
+		scratch.sources[index] = binding.address
 	}
-	return w.sharedRewrite.listeners.writeUDPBatch(buffers, packetInfos, w.key.Source, sources)
+	return w.sharedRewrite.listeners.writeUDPBatch(buffers, scratch.packetInfos, w.key.Source, scratch.sources)
 }
 
 func (w *sharedPacketWriter) ensureReplyBinding(destination netip.AddrPort) (sharedUDPRedirectBinding, error) {
